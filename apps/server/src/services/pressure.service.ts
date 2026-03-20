@@ -19,13 +19,51 @@ interface TickState {
   totalVolumeProcessed: number;
   firstTickTime: number;
   candleScores: number[]; // ring buffer, max 3
+  tickCount: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function closeCandle(state: TickState, timestamp: number): void {
+function getPressureForState(state: TickState): PressureResult | null {
+  if (state.candleScores.length < 3) return null;
+
+  const scores = state.candleScores;
+  let value =
+    scores[0] * 0.2 +
+    scores[1] * 0.3 +
+    scores[2] * 0.5;
+
+  const allPositive = scores.every((s) => s > 0);
+  const allNegative = scores.every((s) => s < 0);
+  if (allPositive || allNegative) value *= 1.15;
+
+  value = clamp(value, -1, 1);
+
+  if (Math.abs(value) < 0.3) value = 0;
+
+  let signal: PressureSignal;
+  if (value > 0.6) signal = "STRONG_BUY";
+  else if (value > 0.3) signal = "BUY";
+  else if (value < -0.6) signal = "STRONG_SELL";
+  else if (value < -0.3) signal = "SELL";
+  else signal = "NEUTRAL";
+
+  let trend: PressureTrend;
+  if (allPositive) trend = "rising";
+  else if (allNegative) trend = "falling";
+  else trend = "mixed";
+
+  return {
+    value,
+    signal,
+    trend,
+    confidence: Math.abs(value),
+  };
+}
+
+function closeCandle(symbol: string, state: TickState, timestamp: number): void {
   const totalVolume = state.buyerVolume + state.sellerVolume;
   const deltaStrength = totalVolume > 0 ? state.delta / totalVolume : 0;
 
@@ -45,6 +83,16 @@ function closeCandle(state: TickState, timestamp: number): void {
 
   state.candleScores.push(combined);
   if (state.candleScores.length > 3) state.candleScores.shift();
+
+  const candleNum = state.candleScores.length;
+  console.log(`[Pressure] ${symbol} candle #${candleNum} closed (score: ${combined.toFixed(2)}, delta: ${state.delta >= 0 ? "+" : ""}${state.delta})`);
+
+  if (candleNum === 3) {
+    const result = getPressureForState(state);
+    if (result) {
+      console.log(`[Pressure] ${symbol} ready — signal: ${result.signal} (${result.value.toFixed(2)})`);
+    }
+  }
 
   // Reset for next candle
   state.buyerVolume = 0;
@@ -75,8 +123,18 @@ export function createPressureEngine() {
         totalVolumeProcessed: 0,
         firstTickTime: tick.timestamp,
         candleScores: [],
+        tickCount: 1,
       });
+      console.log(`[Pressure] Tracking ${symbol} (${stateMap.size} symbols total)`);
       return;
+    }
+
+    state.tickCount++;
+    state.currentPrice = tick.last_price;
+
+    // Check candle close FIRST — must fire on every tick
+    if (tick.timestamp - state.candleOpenTime >= 60_000) {
+      closeCandle(symbol, state, tick.timestamp);
     }
 
     const volumeDiff = tick.volume - state.prevVolume;
@@ -84,7 +142,6 @@ export function createPressureEngine() {
       // Volume reset or duplicate — just update price tracking
       state.prevPrice = tick.last_price;
       state.prevVolume = tick.volume;
-      state.currentPrice = tick.last_price;
       return;
     }
 
@@ -99,12 +156,6 @@ export function createPressureEngine() {
 
     state.candleVolume += volumeDiff;
     state.totalVolumeProcessed += volumeDiff;
-    state.currentPrice = tick.last_price;
-
-    // Check candle close (1-minute candles)
-    if (tick.timestamp - state.candleOpenTime >= 60_000) {
-      closeCandle(state, tick.timestamp);
-    }
 
     state.prevPrice = tick.last_price;
     state.prevVolume = tick.volume;
@@ -112,42 +163,8 @@ export function createPressureEngine() {
 
   function getPressure(symbol: string): PressureResult | null {
     const state = stateMap.get(symbol);
-    if (!state || state.candleScores.length < 3) return null;
-
-    const scores = state.candleScores;
-    let value =
-      scores[0] * 0.2 +
-      scores[1] * 0.3 +
-      scores[2] * 0.5;
-
-    // Consistency boost: all same sign
-    const allPositive = scores.every((s) => s > 0);
-    const allNegative = scores.every((s) => s < 0);
-    if (allPositive || allNegative) value *= 1.15;
-
-    value = clamp(value, -1, 1);
-
-    // Noise filter
-    if (Math.abs(value) < 0.3) value = 0;
-
-    let signal: PressureSignal;
-    if (value > 0.6) signal = "STRONG_BUY";
-    else if (value > 0.3) signal = "BUY";
-    else if (value < -0.6) signal = "STRONG_SELL";
-    else if (value < -0.3) signal = "SELL";
-    else signal = "NEUTRAL";
-
-    let trend: PressureTrend;
-    if (allPositive) trend = "rising";
-    else if (allNegative) trend = "falling";
-    else trend = "mixed";
-
-    return {
-      value,
-      signal,
-      trend,
-      confidence: Math.abs(value),
-    };
+    if (!state) return null;
+    return getPressureForState(state);
   }
 
   function getAllPressure(): Record<string, PressureResult> {
@@ -159,11 +176,34 @@ export function createPressureEngine() {
     return result;
   }
 
+  function getStats(): Record<string, {
+    ticksSeen: number;
+    candleScores: number[];
+    totalVolume: number;
+    elapsedMinutes: number;
+  }> {
+    const result: Record<string, {
+      ticksSeen: number;
+      candleScores: number[];
+      totalVolume: number;
+      elapsedMinutes: number;
+    }> = {};
+    for (const [symbol, state] of stateMap) {
+      result[symbol] = {
+        ticksSeen: state.tickCount,
+        candleScores: [...state.candleScores],
+        totalVolume: state.totalVolumeProcessed,
+        elapsedMinutes: Math.round((Date.now() - state.firstTickTime) / 60_000 * 10) / 10,
+      };
+    }
+    return result;
+  }
+
   function reset(): void {
     stateMap.clear();
   }
 
-  return { processTick, getPressure, getAllPressure, reset };
+  return { processTick, getPressure, getAllPressure, getStats, reset };
 }
 
 export type PressureEngine = ReturnType<typeof createPressureEngine>;
