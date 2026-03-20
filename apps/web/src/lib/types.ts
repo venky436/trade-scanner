@@ -80,3 +80,12 @@ export interface PressureResult {
   trend: PressureTrend;
   confidence: number;
 }
+
+export type MomentumSignal = "STRONG_UP" | "UP" | "FLAT" | "DOWN" | "STRONG_DOWN";
+export type MomentumAcceleration = "INCREASING" | "DECREASING" | "STABLE";
+
+export interface MomentumResult {
+  value: number;
+  signal: MomentumSignal;
+  acceleration: MomentumAcceleration;
+}

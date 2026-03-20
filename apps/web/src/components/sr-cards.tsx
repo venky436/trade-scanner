@@ -3,12 +3,13 @@
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { StockData, SupportResistanceResult, Reaction, DirectionHint, PressureResult, PressureSignal, PatternSignal, PatternName } from "@/lib/types";
+import type { StockData, SupportResistanceResult, Reaction, DirectionHint, PressureResult, PressureSignal, PatternSignal, PatternName, MomentumResult, MomentumSignal } from "@/lib/types";
 
 interface SRCardsProps {
   stockMap: Map<string, StockData>;
   levels: Record<string, SupportResistanceResult>;
   patterns: Record<string, PatternSignal>;
+  momentum: Record<string, MomentumResult>;
 }
 
 interface RankedStock {
@@ -21,9 +22,10 @@ interface RankedStock {
   isActionable: boolean;
   pressure?: PressureResult;
   pattern?: PatternSignal;
+  momentum?: MomentumResult;
 }
 
-export function SRCards({ stockMap, levels, patterns }: SRCardsProps) {
+export function SRCards({ stockMap, levels, patterns, momentum }: SRCardsProps) {
   const { nearResistance, nearSupport } = useMemo(() => {
     const resistance: RankedStock[] = [];
     const support: RankedStock[] = [];
@@ -46,6 +48,7 @@ export function SRCards({ stockMap, levels, patterns }: SRCardsProps) {
             isActionable: sr.resistanceZone.isActionable,
             pressure: stock?.pressure,
             pattern: patterns[symbol],
+            momentum: momentum[symbol],
           });
         }
       }
@@ -63,6 +66,7 @@ export function SRCards({ stockMap, levels, patterns }: SRCardsProps) {
             isActionable: sr.supportZone.isActionable,
             pressure: stock?.pressure,
             pattern: patterns[symbol],
+            momentum: momentum[symbol],
           });
         }
       }
@@ -76,7 +80,7 @@ export function SRCards({ stockMap, levels, patterns }: SRCardsProps) {
       nearResistance: resistance.slice(0, 3),
       nearSupport: support.slice(0, 3),
     };
-  }, [stockMap, levels, patterns]);
+  }, [stockMap, levels, patterns, momentum]);
 
   if (nearResistance.length === 0 && nearSupport.length === 0) return null;
 
@@ -142,6 +146,7 @@ function SRCard({
                   <ReactionBadge reaction={item.reaction} />
                   {item.pressure && <PressureBadge signal={item.pressure.signal} />}
                   {item.pattern && <PatternBadge pattern={item.pattern} />}
+                  {item.momentum && <MomentumBadge momentum={item.momentum} />}
                 </div>
                 <div className="text-right flex items-center gap-1.5">
                   <DirectionArrow hint={item.directionHint} />
@@ -239,6 +244,38 @@ function PatternBadge({ pattern }: { pattern: PatternSignal }) {
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${colorClass}`}>
       {patternLabels[pattern.pattern]}
+    </span>
+  );
+}
+
+const momentumStyles: Record<MomentumSignal, string> = {
+  STRONG_UP: "bg-green-500/20 text-green-300",
+  UP: "bg-green-500/15 text-green-400",
+  FLAT: "bg-zinc-500/15 text-zinc-400",
+  DOWN: "bg-red-500/15 text-red-400",
+  STRONG_DOWN: "bg-red-500/20 text-red-300",
+};
+
+const momentumLabels: Record<MomentumSignal, string> = {
+  STRONG_UP: "S.UP",
+  UP: "UP",
+  FLAT: "FLAT",
+  DOWN: "DOWN",
+  STRONG_DOWN: "S.DOWN",
+};
+
+const accelArrow: Record<string, string> = {
+  INCREASING: "\u2197",
+  DECREASING: "\u2198",
+  STABLE: "",
+};
+
+function MomentumBadge({ momentum }: { momentum: MomentumResult }) {
+  if (momentum.signal === "FLAT") return null;
+  const arrow = accelArrow[momentum.acceleration];
+  return (
+    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${momentumStyles[momentum.signal]}`}>
+      {momentumLabels[momentum.signal]}{arrow && ` ${arrow}`}
     </span>
   );
 }

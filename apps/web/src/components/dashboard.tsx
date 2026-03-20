@@ -7,13 +7,14 @@ import { StockTable } from "./stock-table";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { SRCards } from "./sr-cards";
 import { useMarketData } from "@/hooks/use-market-data";
-import type { SortKey, SortDirection, SupportResistanceResult, PatternSignal } from "@/lib/types";
+import type { SortKey, SortDirection, SupportResistanceResult, PatternSignal, MomentumResult } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
 
 // Module-level cache so S/R levels survive component remounts (navigation)
 let srLevelsCache: Record<string, SupportResistanceResult> = {};
 let patternsCache: Record<string, PatternSignal> = {};
+let momentumCache: Record<string, MomentumResult> = {};
 
 export function Dashboard() {
   const { stockMap, isConnected } = useMarketData();
@@ -23,6 +24,7 @@ export function Dashboard() {
   const [kiteConnected, setKiteConnected] = useState(false);
   const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>(srLevelsCache);
   const [patterns, setPatterns] = useState<Record<string, PatternSignal>>(patternsCache);
+  const [momentum, setMomentum] = useState<Record<string, MomentumResult>>(momentumCache);
 
   // Poll auth status until connected
   useEffect(() => {
@@ -94,6 +96,10 @@ export function Dashboard() {
           patternsCache = data.patterns;
           setPatterns(data.patterns);
         }
+        if (active && data.momentum) {
+          momentumCache = data.momentum;
+          setMomentum(data.momentum);
+        }
       } catch (err) {
         console.warn("[Pattern] fetch error:", err);
       }
@@ -153,7 +159,7 @@ export function Dashboard() {
         onSearchChange={setSearchQuery}
       />
       {Object.keys(srLevels).length > 0 && (
-        <SRCards stockMap={stockMap} levels={srLevels} patterns={patterns} />
+        <SRCards stockMap={stockMap} levels={srLevels} patterns={patterns} momentum={momentum} />
       )}
       <Card className="border-border/50">
         <CardContent className="p-0">
