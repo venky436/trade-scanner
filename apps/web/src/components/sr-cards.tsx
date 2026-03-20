@@ -3,29 +3,30 @@
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { StockData, SupportResistanceResult, Reaction, DirectionHint, PressureResult, PressureSignal, PatternSignal, PatternName, MomentumResult, MomentumSignal } from "@/lib/types";
+import type { StockData, SupportResistanceResult, DirectionHint, PressureResult, PressureSignal, PatternSignal, PatternName, MomentumResult, MomentumSignal, SignalResult, SignalType, SignalConfidence } from "@/lib/types";
 
 interface SRCardsProps {
   stockMap: Map<string, StockData>;
   levels: Record<string, SupportResistanceResult>;
-  patterns: Record<string, PatternSignal>;
-  momentum: Record<string, MomentumResult>;
 }
+
+type ReactionType = "APPROACHING" | "REJECTING" | "BREAKING" | null;
 
 interface RankedStock {
   symbol: string;
   price: number;
   level: number;
   distancePercent: number;
-  reaction: Reaction;
+  reaction: ReactionType;
   directionHint: DirectionHint;
   isActionable: boolean;
   pressure?: PressureResult;
   pattern?: PatternSignal;
   momentum?: MomentumResult;
+  signal?: SignalResult;
 }
 
-export function SRCards({ stockMap, levels, patterns, momentum }: SRCardsProps) {
+export function SRCards({ stockMap, levels }: SRCardsProps) {
   const { nearResistance, nearSupport } = useMemo(() => {
     const resistance: RankedStock[] = [];
     const support: RankedStock[] = [];
@@ -43,12 +44,13 @@ export function SRCards({ stockMap, levels, patterns, momentum }: SRCardsProps) 
             price,
             level: sr.resistance,
             distancePercent: dist,
-            reaction: sr.resistanceZone.reaction,
+            reaction: stock?.reaction ?? null,
             directionHint: sr.resistanceZone.directionHint,
             isActionable: sr.resistanceZone.isActionable,
             pressure: stock?.pressure,
-            pattern: patterns[symbol],
-            momentum: momentum[symbol],
+            pattern: stock?.pattern,
+            momentum: stock?.momentum,
+            signal: stock?.signal,
           });
         }
       }
@@ -61,12 +63,13 @@ export function SRCards({ stockMap, levels, patterns, momentum }: SRCardsProps) 
             price,
             level: sr.support,
             distancePercent: dist,
-            reaction: sr.supportZone.reaction,
+            reaction: stock?.reaction ?? null,
             directionHint: sr.supportZone.directionHint,
             isActionable: sr.supportZone.isActionable,
             pressure: stock?.pressure,
-            pattern: patterns[symbol],
-            momentum: momentum[symbol],
+            pattern: stock?.pattern,
+            momentum: stock?.momentum,
+            signal: stock?.signal,
           });
         }
       }
@@ -80,7 +83,7 @@ export function SRCards({ stockMap, levels, patterns, momentum }: SRCardsProps) 
       nearResistance: resistance.slice(0, 3),
       nearSupport: support.slice(0, 3),
     };
-  }, [stockMap, levels, patterns, momentum]);
+  }, [stockMap, levels]);
 
   if (nearResistance.length === 0 && nearSupport.length === 0) return null;
 
@@ -143,6 +146,7 @@ function SRCard({
                   <span className="text-muted-foreground text-xs">
                     {item.price.toFixed(2)}
                   </span>
+                  {item.signal && <SignalBadge signal={item.signal} />}
                   <ReactionBadge reaction={item.reaction} />
                   {item.pressure && <PressureBadge signal={item.pressure.signal} />}
                   {item.pattern && <PatternBadge pattern={item.pattern} />}
@@ -166,18 +170,52 @@ function SRCard({
   );
 }
 
-function ReactionBadge({ reaction }: { reaction: Reaction }) {
-  if (reaction === "NEUTRAL") return null;
-  const isApproaching = reaction === "APPROACHING";
+const signalStyles: Record<string, { base: string; high: string; low: string }> = {
+  BUY: {
+    base: "bg-green-500/15 text-green-400",
+    high: "bg-green-500/25 text-green-300 ring-1 ring-green-500/30",
+    low: "bg-green-500/10 text-green-500/60",
+  },
+  SELL: {
+    base: "bg-red-500/15 text-red-400",
+    high: "bg-red-500/25 text-red-300 ring-1 ring-red-500/30",
+    low: "bg-red-500/10 text-red-500/60",
+  },
+};
+
+const signalLabels: Record<SignalType, string> = {
+  BOUNCE: "BOUNCE",
+  REJECTION: "REJECTION",
+  BREAKOUT: "BREAKOUT",
+  BREAKDOWN: "BREAKDOWN",
+};
+
+function SignalBadge({ signal }: { signal: SignalResult }) {
+  if (signal.action === "WAIT" || !signal.type) return null;
+  const styles = signalStyles[signal.action];
+  const colorClass =
+    signal.confidence === "HIGH" ? styles.high :
+    signal.confidence === "LOW" ? styles.low :
+    styles.base;
   return (
-    <span
-      className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-        isApproaching
-          ? "bg-yellow-500/15 text-yellow-400"
-          : "bg-blue-500/15 text-blue-400"
-      }`}
-    >
-      {isApproaching ? "APPROACHING" : "REJECTING"}
+    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${colorClass}`}>
+      {signalLabels[signal.type]}
+    </span>
+  );
+}
+
+function ReactionBadge({ reaction }: { reaction: ReactionType }) {
+  if (!reaction) return null;
+
+  const styles: Record<string, string> = {
+    APPROACHING: "bg-yellow-500/15 text-yellow-400",
+    REJECTING: "bg-blue-500/15 text-blue-400",
+    BREAKING: "bg-purple-500/15 text-purple-400",
+  };
+
+  return (
+    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${styles[reaction]}`}>
+      {reaction}
     </span>
   );
 }
