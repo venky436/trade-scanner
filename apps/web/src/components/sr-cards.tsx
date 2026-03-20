@@ -3,11 +3,12 @@
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { StockData, SupportResistanceResult, Reaction, DirectionHint, PressureResult, PressureSignal } from "@/lib/types";
+import type { StockData, SupportResistanceResult, Reaction, DirectionHint, PressureResult, PressureSignal, PatternSignal, PatternName } from "@/lib/types";
 
 interface SRCardsProps {
   stockMap: Map<string, StockData>;
   levels: Record<string, SupportResistanceResult>;
+  patterns: Record<string, PatternSignal>;
 }
 
 interface RankedStock {
@@ -19,9 +20,10 @@ interface RankedStock {
   directionHint: DirectionHint;
   isActionable: boolean;
   pressure?: PressureResult;
+  pattern?: PatternSignal;
 }
 
-export function SRCards({ stockMap, levels }: SRCardsProps) {
+export function SRCards({ stockMap, levels, patterns }: SRCardsProps) {
   const { nearResistance, nearSupport } = useMemo(() => {
     const resistance: RankedStock[] = [];
     const support: RankedStock[] = [];
@@ -43,6 +45,7 @@ export function SRCards({ stockMap, levels }: SRCardsProps) {
             directionHint: sr.resistanceZone.directionHint,
             isActionable: sr.resistanceZone.isActionable,
             pressure: stock?.pressure,
+            pattern: patterns[symbol],
           });
         }
       }
@@ -59,6 +62,7 @@ export function SRCards({ stockMap, levels }: SRCardsProps) {
             directionHint: sr.supportZone.directionHint,
             isActionable: sr.supportZone.isActionable,
             pressure: stock?.pressure,
+            pattern: patterns[symbol],
           });
         }
       }
@@ -72,7 +76,7 @@ export function SRCards({ stockMap, levels }: SRCardsProps) {
       nearResistance: resistance.slice(0, 3),
       nearSupport: support.slice(0, 3),
     };
-  }, [stockMap, levels]);
+  }, [stockMap, levels, patterns]);
 
   if (nearResistance.length === 0 && nearSupport.length === 0) return null;
 
@@ -137,6 +141,7 @@ function SRCard({
                   </span>
                   <ReactionBadge reaction={item.reaction} />
                   {item.pressure && <PressureBadge signal={item.pressure.signal} />}
+                  {item.pattern && <PatternBadge pattern={item.pattern} />}
                 </div>
                 <div className="text-right flex items-center gap-1.5">
                   <DirectionArrow hint={item.directionHint} />
@@ -203,6 +208,37 @@ function PressureBadge({ signal }: { signal: PressureSignal }) {
   return (
     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${pressureStyles[signal]}`}>
       {pressureLabels[signal]}
+    </span>
+  );
+}
+
+const patternLabels: Record<PatternName, string> = {
+  HAMMER: "HAMMER",
+  SHOOTING_STAR: "SHOT.STAR",
+  BULLISH_ENGULFING: "B.ENGULF",
+  BEARISH_ENGULFING: "B.ENGULF",
+  DOJI: "DOJI",
+  MORNING_STAR: "M.STAR",
+  EVENING_STAR: "E.STAR",
+};
+
+function PatternBadge({ pattern }: { pattern: PatternSignal }) {
+  const isDoji = pattern.pattern === "DOJI";
+  const isBullish = pattern.direction === "BULLISH";
+  const strong = pattern.strength === 2;
+
+  let colorClass: string;
+  if (isDoji) {
+    colorClass = strong ? "bg-yellow-500/20 text-yellow-400" : "bg-yellow-500/15 text-yellow-400";
+  } else if (isBullish) {
+    colorClass = strong ? "bg-green-500/20 text-green-400" : "bg-green-500/15 text-green-400";
+  } else {
+    colorClass = strong ? "bg-red-500/20 text-red-400" : "bg-red-500/15 text-red-400";
+  }
+
+  return (
+    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${colorClass}`}>
+      {patternLabels[pattern.pattern]}
     </span>
   );
 }

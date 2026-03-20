@@ -66,6 +66,18 @@ export interface SupportResistanceResult {
   };
 }
 
+export type PatternName =
+  | "HAMMER" | "SHOOTING_STAR"
+  | "BULLISH_ENGULFING" | "BEARISH_ENGULFING"
+  | "DOJI" | "MORNING_STAR" | "EVENING_STAR";
+
+export interface PatternSignal {
+  pattern: PatternName;
+  direction: "BULLISH" | "BEARISH";
+  strength: 1 | 2;        // 1=single-candle, 2=multi-candle
+  reason: string;
+}
+
 export type PressureSignal = "STRONG_BUY" | "BUY" | "NEUTRAL" | "SELL" | "STRONG_SELL";
 export type PressureTrend = "rising" | "falling" | "mixed";
 

@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { KiteConnect } from "kiteconnect";
 import type { WsManager } from "../ws/ws-server.js";
-import type { InstrumentMaps, Candle, SupportResistanceResult } from "../lib/types.js";
+import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal } from "../lib/types.js";
 import { getSupportResistance } from "../services/levels.service.js";
 import { marketDataService } from "../services/market-data.service.js";
 import type { PressureEngine } from "../services/pressure.service.js";
+import { detectPattern } from "../lib/pattern-engine.js";
 
 const VALID_INTERVALS = [
   "minute",
@@ -120,6 +121,125 @@ export async function stocksRoute(
 
     levelsCache = { levels, timestamp: Date.now() };
     return { levels, timestamp: levelsCache.timestamp };
+  });
+
+  // --- Candlestick Patterns for near-S/R symbols ---
+  let patternsCache: {
+    patterns: Record<string, PatternSignal>;
+    timestamp: number;
+  } | null = null;
+  const PATTERNS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  fastify.get("/api/stocks/patterns", async (_req, reply) => {
+    const accessToken = opts.getAccessToken();
+    const instrumentMaps = opts.getInstrumentMaps();
+
+    if (!accessToken || !instrumentMaps) {
+      return reply
+        .status(503)
+        .send({ error: "Market data not initialized. Login to Kite first." });
+    }
+
+    // Depend on levelsCache — if S/R levels not computed yet, return empty
+    if (!levelsCache) {
+      return { patterns: {}, timestamp: Date.now() };
+    }
+
+    // Return cache if fresh
+    if (patternsCache && Date.now() - patternsCache.timestamp < PATTERNS_CACHE_TTL) {
+      return { patterns: patternsCache.patterns, timestamp: patternsCache.timestamp };
+    }
+
+    const pressureEngine = opts.getPressureEngine();
+
+    // Filter to symbols within 0.5% of support or resistance
+    const PROXIMITY = 0.005;
+    const nearSymbols: string[] = [];
+    for (const [symbol, sr] of Object.entries(levelsCache.levels)) {
+      const quote = marketDataService.getQuote(symbol);
+      const price = quote?.lastPrice;
+      if (!price || price <= 0) continue;
+
+      const nearSupport = sr.support !== null && Math.abs(price - sr.support) / price <= PROXIMITY;
+      const nearResistance = sr.resistance !== null && Math.abs(price - sr.resistance!) / price <= PROXIMITY;
+      if (nearSupport || nearResistance) {
+        nearSymbols.push(symbol);
+      }
+    }
+
+    if (nearSymbols.length === 0) {
+      patternsCache = { patterns: {}, timestamp: Date.now() };
+      return { patterns: {}, timestamp: patternsCache.timestamp };
+    }
+
+    fastify.log.info(`[Pattern] Scanning ${nearSymbols.length} near-S/R symbols`);
+
+    const kc = new KiteConnect({ api_key: opts.apiKey });
+    kc.setAccessToken(accessToken);
+
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 1); // 1 day of 5-min candles
+    from.setHours(0, 0, 0, 0);
+
+    const patterns: Record<string, PatternSignal> = {};
+
+    // Batch in groups of 5
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < nearSymbols.length; i += BATCH_SIZE) {
+      const batch = nearSymbols.slice(i, i + BATCH_SIZE);
+      const promises = batch.map(async (symbol) => {
+        const token = instrumentMaps.symbolToToken.get(symbol);
+        if (token === undefined) return;
+
+        try {
+          const data = await kc.getHistoricalData(
+            token,
+            "5minute" as KiteInterval,
+            formatDate(from),
+            formatDate(to),
+          );
+
+          const candles: Candle[] = data.map((d: any) => ({
+            time: Math.floor(new Date(d.date).getTime() / 1000),
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+            volume: d.volume,
+          }));
+
+          // Take last 3 candles
+          const last3 = candles.slice(-3);
+          if (last3.length === 0) return;
+
+          const quote = marketDataService.getQuote(symbol);
+          const price = quote?.lastPrice ?? last3[last3.length - 1].close;
+          const sr = levelsCache!.levels[symbol];
+          if (!sr) return;
+
+          const result = detectPattern({
+            candles: last3,
+            currentPrice: price,
+            supportZone: sr.supportZone,
+            resistanceZone: sr.resistanceZone,
+            pressure: pressureEngine?.getPressure(symbol) ?? null,
+          });
+
+          if (result) {
+            patterns[symbol] = result;
+          }
+        } catch (err: any) {
+          fastify.log.warn(`[Pattern] Failed for ${symbol}: ${err.message}`);
+        }
+      });
+      await Promise.allSettled(promises);
+    }
+
+    fastify.log.info(`[Pattern] Detected ${Object.keys(patterns).length} patterns from ${nearSymbols.length} symbols`);
+
+    patternsCache = { patterns, timestamp: Date.now() };
+    return { patterns, timestamp: patternsCache.timestamp };
   });
 
   fastify.get("/api/stocks/pressure/debug", async (_req, reply) => {
