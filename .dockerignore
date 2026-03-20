@@ -1,6 +1,9 @@
 node_modules
-dist
 .next
+dist
+.git
 .env
-*.local
+.env.*
+!.env.example
 .kite-session.json
+*.md

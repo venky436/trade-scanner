@@ -5,7 +5,7 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspaces --if-present",
+    "dev": "npm run dev:server & npm run dev:web",
     "dev:server": "npm run dev -w apps/server",
     "dev:web": "npm run dev -w apps/web",
     "build": "npm run build --workspaces --if-present",
@@ -14,7 +14,9 @@
     "db:push": "npm run db:push -w apps/server",
     "db:generate": "npm run db:generate -w apps/server",
     "db:migrate": "npm run db:migrate -w apps/server",
-    "db:studio": "npm run db:studio -w apps/server"
+    "db:studio": "npm run db:studio -w apps/server",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
   },
   "engines": {
     "node": ">=20"

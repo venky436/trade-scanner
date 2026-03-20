@@ -1,0 +1,118 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Header } from "./header";
+import { StockTable } from "./stock-table";
+import { StockTableSkeleton } from "./stock-table-skeleton";
+import { useMarketData } from "@/hooks/use-market-data";
+import type { SortKey, SortDirection } from "@/lib/types";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
+
+export function Dashboard() {
+  const { stocks, isConnected } = useMarketData();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("symbol");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [kiteConnected, setKiteConnected] = useState(false);
+
+  // Poll auth status until connected
+  useEffect(() => {
+    let active = true;
+
+    async function check() {
+      try {
+        const res = await fetch(`${API_URL}/api/auth/status`);
+        const data = await res.json();
+        if (active) setKiteConnected(data.connected);
+      } catch {
+        // server not reachable yet
+      }
+    }
+
+    check();
+    const interval = setInterval(check, 3000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Once we get stocks, kite is definitely connected
+  useEffect(() => {
+    if (stocks.length > 0) setKiteConnected(true);
+  }, [stocks.length]);
+
+  const handleSort = useCallback(
+    (key: SortKey) => {
+      if (key === sortKey) {
+        setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setSortKey(key);
+        setSortDirection(key === "symbol" ? "asc" : "desc");
+      }
+    },
+    [sortKey]
+  );
+
+  const filteredAndSorted = useMemo(() => {
+    let result = stocks;
+
+    if (searchQuery) {
+      const q = searchQuery.toUpperCase();
+      result = result.filter((s) => s.symbol.toUpperCase().includes(q));
+    }
+
+    result.sort((a, b) => {
+      const aVal = a[sortKey];
+      const bVal = b[sortKey];
+
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        return sortDirection === "asc"
+          ? aVal.localeCompare(bVal)
+          : bVal.localeCompare(aVal);
+      }
+
+      const diff = (aVal as number) - (bVal as number);
+      return sortDirection === "asc" ? diff : -diff;
+    });
+
+    return result;
+  }, [stocks, searchQuery, sortKey, sortDirection]);
+
+  const isLoading = stocks.length === 0 && kiteConnected;
+
+  return (
+    <main className="p-4 max-w-[1400px] mx-auto">
+      <Header
+        isConnected={isConnected}
+        kiteConnected={kiteConnected}
+        stockCount={filteredAndSorted.length}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+      />
+      <Card className="border-border/50">
+        <CardContent className="p-0">
+          {!kiteConnected ? (
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+              <p className="text-lg">Not connected to Kite</p>
+              <p className="text-sm mt-1">
+                Click <span className="text-yellow-400 font-medium">Connect Kite</span> above to login and start streaming market data.
+              </p>
+            </div>
+          ) : isLoading ? (
+            <StockTableSkeleton />
+          ) : (
+            <StockTable
+              stocks={filteredAndSorted}
+              sortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </main>
+  );
+}

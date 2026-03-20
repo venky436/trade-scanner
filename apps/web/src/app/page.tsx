@@ -1,8 +1,5 @@
+import { Dashboard } from "@/components/dashboard";
+
 export default function Home() {
-  return (
-    <main>
-      <h1>Trading Scanner</h1>
-      <p>Real-time stock scanner — coming soon.</p>
-    </main>
-  );
+  return <Dashboard />;
 }
