@@ -16,7 +16,7 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/trading_scanner
     volumes:
-      - backend_data:/app/apps/server
+      - backend_data:/app/apps/server/data
     depends_on:
       - postgres
 

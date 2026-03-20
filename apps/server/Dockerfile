@@ -33,8 +33,9 @@ RUN npm ci --workspace=apps/server --include-workspace-root --omit=dev
 # Copy compiled output
 COPY --from=builder /app/apps/server/dist ./apps/server/dist
 
-# Session file volume (persists kite token across restarts)
-VOLUME /app/apps/server
+# Dedicated directory for session file (persists kite token across restarts)
+RUN mkdir -p /app/apps/server/data
+VOLUME /app/apps/server/data
 
 WORKDIR /app/apps/server
 

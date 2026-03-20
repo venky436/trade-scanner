@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-const SESSION_FILE = join(process.cwd(), ".kite-session.json");
+const SESSION_FILE = join(process.cwd(), "data", ".kite-session.json");
 
 interface StoredSession {
   accessToken: string;
