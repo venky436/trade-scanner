@@ -5,26 +5,20 @@ import type { StockData, MarketMessage } from "@/lib/types";
 import { WS_URL } from "@/lib/constants";
 
 interface UseMarketDataReturn {
-  stocks: StockData[];
+  stockMap: Map<string, StockData>;
   isConnected: boolean;
   error: string | null;
 }
 
 export function useMarketData(wsUrl: string = WS_URL): UseMarketDataReturn {
-  const [stocks, setStocks] = useState<StockData[]>([]);
+  const [stockMap, setStockMap] = useState<Map<string, StockData>>(new Map());
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const stockMapRef = useRef<Map<string, StockData>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const retriesRef = useRef(0);
   const mountedRef = useRef(true);
-
-  const updateStocks = useCallback(() => {
-    const arr = Array.from(stockMapRef.current.values());
-    setStocks(arr);
-  }, []);
 
   const connect = useCallback(() => {
     if (!mountedRef.current) return;
@@ -51,14 +45,16 @@ export function useMarketData(wsUrl: string = WS_URL): UseMarketDataReturn {
             for (const stock of msg.data) {
               newMap.set(stock.symbol, stock);
             }
-            stockMapRef.current = newMap;
+            setStockMap(newMap);
           } else if (msg.type === "market_update") {
-            for (const stock of msg.data) {
-              stockMapRef.current.set(stock.symbol, stock);
-            }
+            setStockMap(prev => {
+              const updated = new Map(prev);
+              for (const stock of msg.data) {
+                updated.set(stock.symbol, stock);
+              }
+              return updated;
+            });
           }
-
-          updateStocks();
         } catch {
           // ignore malformed messages
         }
@@ -83,7 +79,7 @@ export function useMarketData(wsUrl: string = WS_URL): UseMarketDataReturn {
     } catch {
       setError("Failed to connect");
     }
-  }, [wsUrl, updateStocks]);
+  }, [wsUrl]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -100,5 +96,5 @@ export function useMarketData(wsUrl: string = WS_URL): UseMarketDataReturn {
     };
   }, [connect]);
 
-  return { stocks, isConnected, error };
+  return { stockMap, isConnected, error };
 }

@@ -5,17 +5,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Header } from "./header";
 import { StockTable } from "./stock-table";
 import { StockTableSkeleton } from "./stock-table-skeleton";
+import { SRCards } from "./sr-cards";
 import { useMarketData } from "@/hooks/use-market-data";
-import type { SortKey, SortDirection } from "@/lib/types";
+import type { SortKey, SortDirection, SupportResistanceResult } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
 
 export function Dashboard() {
-  const { stocks, isConnected } = useMarketData();
+  const { stockMap, isConnected } = useMarketData();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("symbol");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [kiteConnected, setKiteConnected] = useState(false);
+  const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>({});
 
   // Poll auth status until connected
   useEffect(() => {
@@ -41,8 +43,28 @@ export function Dashboard() {
 
   // Once we get stocks, kite is definitely connected
   useEffect(() => {
-    if (stocks.length > 0) setKiteConnected(true);
-  }, [stocks.length]);
+    if (stockMap.size > 0) setKiteConnected(true);
+  }, [stockMap.size]);
+
+  // Fetch S/R levels once stocks are available
+  useEffect(() => {
+    if (stockMap.size === 0) return;
+    let active = true;
+
+    async function fetchLevels() {
+      try {
+        const res = await fetch(`${API_URL}/api/stocks/levels`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active && data.levels) setSrLevels(data.levels);
+      } catch {
+        // not critical — cards just won't show
+      }
+    }
+
+    fetchLevels();
+    return () => { active = false; };
+  }, [stockMap.size > 0]);
 
   const handleSort = useCallback(
     (key: SortKey) => {
@@ -57,7 +79,7 @@ export function Dashboard() {
   );
 
   const filteredAndSorted = useMemo(() => {
-    let result = stocks;
+    let result = Array.from(stockMap.values());
 
     if (searchQuery) {
       const q = searchQuery.toUpperCase();
@@ -79,9 +101,9 @@ export function Dashboard() {
     });
 
     return result;
-  }, [stocks, searchQuery, sortKey, sortDirection]);
+  }, [stockMap, searchQuery, sortKey, sortDirection]);
 
-  const isLoading = stocks.length === 0 && kiteConnected;
+  const isLoading = stockMap.size === 0 && kiteConnected;
 
   return (
     <main className="p-4 max-w-[1400px] mx-auto">
@@ -92,6 +114,9 @@ export function Dashboard() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
       />
+      {Object.keys(srLevels).length > 0 && (
+        <SRCards stockMap={stockMap} levels={srLevels} />
+      )}
       <Card className="border-border/50">
         <CardContent className="p-0">
           {!kiteConnected ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,13 +24,10 @@ function formatVolume(vol: number): string {
 }
 
 export function StockDetail({ symbol }: { symbol: string }) {
-  const { stocks } = useMarketData();
+  const { stockMap } = useMarketData();
   const [interval, setInterval] = useState<string>("1m");
 
-  const stock = useMemo(
-    () => stocks.find((s) => s.symbol === symbol) ?? null,
-    [stocks, symbol]
-  );
+  const stock = stockMap.get(symbol) ?? null;
 
   const changeColor =
     stock && stock.change > 0
