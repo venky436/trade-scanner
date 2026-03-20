@@ -9,6 +9,10 @@ export interface StockData {
   change: number;
   timestamp: number;
   pressure?: PressureResult;
+  reaction?: "APPROACHING" | "REJECTING" | "BREAKING" | null;
+  momentum?: MomentumResult;
+  pattern?: PatternSignal;
+  signal?: SignalResult;
 }
 
 export interface MarketMessage {
@@ -88,4 +92,15 @@ export interface MomentumResult {
   value: number;
   signal: MomentumSignal;
   acceleration: MomentumAcceleration;
+}
+
+export type SignalAction = "BUY" | "SELL" | "WAIT";
+export type SignalType = "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN";
+export type SignalConfidence = "LOW" | "MEDIUM" | "HIGH";
+
+export interface SignalResult {
+  action: SignalAction;
+  type?: SignalType;
+  confidence: SignalConfidence;
+  reasons: string[];
 }

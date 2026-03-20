@@ -14,7 +14,13 @@ export interface StockSnapshot {
   volume: number;
   change: number; // (price - close) / close * 100
   timestamp: number;
+  // tick-driven
   pressure?: PressureResult;
+  reaction?: "APPROACHING" | "REJECTING" | "BREAKING" | null;
+  // candle-driven (set on candle close, reused until next close)
+  momentum?: MomentumResult;
+  pattern?: PatternSignal;
+  signal?: SignalResult;
 }
 
 export interface WsMessage {
@@ -95,4 +101,15 @@ export interface MomentumResult {
   value: number;                    // -1 to +1
   signal: MomentumSignal;
   acceleration: MomentumAcceleration;
+}
+
+export type SignalAction = "BUY" | "SELL" | "WAIT";
+export type SignalType = "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN";
+export type SignalConfidence = "LOW" | "MEDIUM" | "HIGH";
+
+export interface SignalResult {
+  action: SignalAction;
+  type?: SignalType;
+  confidence: SignalConfidence;
+  reasons: string[];
 }
