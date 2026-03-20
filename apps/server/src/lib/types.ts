@@ -14,6 +14,7 @@ export interface StockSnapshot {
   volume: number;
   change: number; // (price - close) / close * 100
   timestamp: number;
+  pressure?: PressureResult;
 }
 
 export interface WsMessage {
@@ -63,4 +64,14 @@ export interface SupportResistanceResult {
     hasNearbySupport: boolean;
     hasNearbyResistance: boolean;
   };
+}
+
+export type PressureSignal = "STRONG_BUY" | "BUY" | "NEUTRAL" | "SELL" | "STRONG_SELL";
+export type PressureTrend = "rising" | "falling" | "mixed";
+
+export interface PressureResult {
+  value: number;
+  signal: PressureSignal;
+  trend: PressureTrend;
+  confidence: number;
 }

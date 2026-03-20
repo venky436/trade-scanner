@@ -4,6 +4,7 @@ import { loadInstruments, type MarketMode } from "./services/instrument.service.
 import { createKiteTickerManager } from "./services/kite-ticker.service.js";
 import { createWsManager, type WsManager } from "./ws/ws-server.js";
 import { createBroadcastEngine } from "./services/broadcast.service.js";
+import { createPressureEngine, type PressureEngine } from "./services/pressure.service.js";
 import { loadSession } from "./lib/session-store.js";
 import type { InstrumentMaps } from "./lib/types.js";
 
@@ -27,6 +28,7 @@ async function main() {
   // Exposed so the history route can use them
   let currentAccessToken: string | null = null;
   let currentInstrumentMaps: InstrumentMaps | null = null;
+  let currentPressureEngine: PressureEngine | null = null;
 
   // Called after Kite login succeeds
   async function startMarketData(accessToken: string) {
@@ -44,15 +46,34 @@ async function main() {
     wsManager = createWsManager({ symbols: instrumentMaps.symbols });
     wsManager.attach(server.server);
 
+    // Create pressure engine
+    const pressureEngine = createPressureEngine();
+    currentPressureEngine = pressureEngine;
+
     // Start broadcast engine
     if (broadcastStop) broadcastStop();
-    const broadcast = createBroadcastEngine({ wsManager, intervalMs: 500 });
+    const broadcast = createBroadcastEngine({
+      wsManager,
+      intervalMs: 500,
+      getPressure: (symbol) => pressureEngine.getPressure(symbol),
+    });
     broadcast.start();
     broadcastStop = broadcast.stop;
 
     // Connect to Kite ticker
     if (tickerDisconnect) tickerDisconnect();
-    const ticker = createKiteTickerManager({ apiKey, accessToken, instrumentMaps });
+    const ticker = createKiteTickerManager({
+      apiKey,
+      accessToken,
+      instrumentMaps,
+      onTick: (symbol, quote) => {
+        pressureEngine.processTick(symbol, {
+          last_price: quote.lastPrice,
+          volume: quote.volume,
+          timestamp: quote.timestamp,
+        });
+      },
+    });
     ticker.connect();
     tickerDisconnect = ticker.disconnect;
 
@@ -70,6 +91,7 @@ async function main() {
     getWsManager: () => wsManager,
     getAccessToken: () => currentAccessToken,
     getInstrumentMaps: () => currentInstrumentMaps,
+    getPressureEngine: () => currentPressureEngine,
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });

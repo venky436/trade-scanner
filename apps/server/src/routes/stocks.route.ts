@@ -4,6 +4,7 @@ import type { WsManager } from "../ws/ws-server.js";
 import type { InstrumentMaps, Candle, SupportResistanceResult } from "../lib/types.js";
 import { getSupportResistance } from "../services/levels.service.js";
 import { marketDataService } from "../services/market-data.service.js";
+import type { PressureEngine } from "../services/pressure.service.js";
 
 const VALID_INTERVALS = [
   "minute",
@@ -21,6 +22,7 @@ interface StocksRouteOpts {
   getWsManager: () => WsManager | null;
   getAccessToken: () => string | null;
   getInstrumentMaps: () => InstrumentMaps | null;
+  getPressureEngine: () => PressureEngine | null;
 }
 
 const formatDate = (d: Date) =>
@@ -118,6 +120,14 @@ export async function stocksRoute(
 
     levelsCache = { levels, timestamp: Date.now() };
     return { levels, timestamp: levelsCache.timestamp };
+  });
+
+  fastify.get("/api/stocks/pressure", async (_req, reply) => {
+    const engine = opts.getPressureEngine();
+    if (!engine) {
+      return reply.status(503).send({ error: "Pressure engine not initialized" });
+    }
+    return { pressure: engine.getAllPressure(), timestamp: Date.now() };
   });
 
   fastify.get<{

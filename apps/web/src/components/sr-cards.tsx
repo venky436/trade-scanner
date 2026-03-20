@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { StockData, SupportResistanceResult, Reaction, DirectionHint } from "@/lib/types";
+import type { StockData, SupportResistanceResult, Reaction, DirectionHint, PressureResult, PressureSignal } from "@/lib/types";
 
 interface SRCardsProps {
   stockMap: Map<string, StockData>;
@@ -18,6 +18,7 @@ interface RankedStock {
   reaction: Reaction;
   directionHint: DirectionHint;
   isActionable: boolean;
+  pressure?: PressureResult;
 }
 
 export function SRCards({ stockMap, levels }: SRCardsProps) {
@@ -41,6 +42,7 @@ export function SRCards({ stockMap, levels }: SRCardsProps) {
             reaction: sr.resistanceZone.reaction,
             directionHint: sr.resistanceZone.directionHint,
             isActionable: sr.resistanceZone.isActionable,
+            pressure: stock?.pressure,
           });
         }
       }
@@ -56,6 +58,7 @@ export function SRCards({ stockMap, levels }: SRCardsProps) {
             reaction: sr.supportZone.reaction,
             directionHint: sr.supportZone.directionHint,
             isActionable: sr.supportZone.isActionable,
+            pressure: stock?.pressure,
           });
         }
       }
@@ -133,6 +136,7 @@ function SRCard({
                     {item.price.toFixed(2)}
                   </span>
                   <ReactionBadge reaction={item.reaction} />
+                  {item.pressure && <PressureBadge signal={item.pressure.signal} />}
                 </div>
                 <div className="text-right flex items-center gap-1.5">
                   <DirectionArrow hint={item.directionHint} />
@@ -174,6 +178,31 @@ function DirectionArrow({ hint }: { hint: DirectionHint }) {
   return (
     <span className={`text-xs ${isBullish ? "text-green-400" : "text-red-400"}`}>
       {isBullish ? "\u25B2" : "\u25BC"}
+    </span>
+  );
+}
+
+const pressureStyles: Record<PressureSignal, string> = {
+  STRONG_BUY: "bg-green-500/20 text-green-300",
+  BUY: "bg-green-500/15 text-green-400",
+  NEUTRAL: "bg-zinc-500/15 text-zinc-400",
+  SELL: "bg-red-500/15 text-red-400",
+  STRONG_SELL: "bg-red-500/20 text-red-300",
+};
+
+const pressureLabels: Record<PressureSignal, string> = {
+  STRONG_BUY: "S.BUY",
+  BUY: "BUY",
+  NEUTRAL: "FLAT",
+  SELL: "SELL",
+  STRONG_SELL: "S.SELL",
+};
+
+function PressureBadge({ signal }: { signal: PressureSignal }) {
+  if (signal === "NEUTRAL") return null;
+  return (
+    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${pressureStyles[signal]}`}>
+      {pressureLabels[signal]}
     </span>
   );
 }
