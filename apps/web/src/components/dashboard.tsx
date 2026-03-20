@@ -7,12 +7,13 @@ import { StockTable } from "./stock-table";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { SRCards } from "./sr-cards";
 import { useMarketData } from "@/hooks/use-market-data";
-import type { SortKey, SortDirection, SupportResistanceResult } from "@/lib/types";
+import type { SortKey, SortDirection, SupportResistanceResult, PatternSignal } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
 
 // Module-level cache so S/R levels survive component remounts (navigation)
 let srLevelsCache: Record<string, SupportResistanceResult> = {};
+let patternsCache: Record<string, PatternSignal> = {};
 
 export function Dashboard() {
   const { stockMap, isConnected } = useMarketData();
@@ -21,6 +22,7 @@ export function Dashboard() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [kiteConnected, setKiteConnected] = useState(false);
   const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>(srLevelsCache);
+  const [patterns, setPatterns] = useState<Record<string, PatternSignal>>(patternsCache);
 
   // Poll auth status until connected
   useEffect(() => {
@@ -77,6 +79,31 @@ export function Dashboard() {
     return () => { active = false; };
   }, [hasStocks, hasCachedLevels]);
 
+  // Fetch candlestick patterns after S/R levels are loaded
+  const hasSrLevels = Object.keys(srLevels).length > 0;
+  useEffect(() => {
+    if (!hasSrLevels) return;
+    let active = true;
+
+    async function fetchPatterns() {
+      try {
+        const res = await fetch(`${API_URL}/api/stocks/patterns`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active && data.patterns) {
+          patternsCache = data.patterns;
+          setPatterns(data.patterns);
+        }
+      } catch (err) {
+        console.warn("[Pattern] fetch error:", err);
+      }
+    }
+
+    fetchPatterns();
+    const interval = setInterval(fetchPatterns, 5 * 60 * 1000);
+    return () => { active = false; clearInterval(interval); };
+  }, [hasSrLevels]);
+
   const handleSort = useCallback(
     (key: SortKey) => {
       if (key === sortKey) {
@@ -126,7 +153,7 @@ export function Dashboard() {
         onSearchChange={setSearchQuery}
       />
       {Object.keys(srLevels).length > 0 && (
-        <SRCards stockMap={stockMap} levels={srLevels} />
+        <SRCards stockMap={stockMap} levels={srLevels} patterns={patterns} />
       )}
       <Card className="border-border/50">
         <CardContent className="p-0">
