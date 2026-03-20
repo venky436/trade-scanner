@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { KiteConnect } from "kiteconnect";
 import type { WsManager } from "../ws/ws-server.js";
-import type { InstrumentMaps, Candle } from "../lib/types.js";
+import type { InstrumentMaps, Candle, SupportResistanceResult } from "../lib/types.js";
+import { getSupportResistance } from "../services/levels.service.js";
+import { marketDataService } from "../services/market-data.service.js";
 
 const VALID_INTERVALS = [
   "minute",
@@ -21,6 +23,16 @@ interface StocksRouteOpts {
   getInstrumentMaps: () => InstrumentMaps | null;
 }
 
+const formatDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+
+// Cache for S/R levels (daily candles don't change intraday)
+let levelsCache: {
+  levels: Record<string, SupportResistanceResult>;
+  timestamp: number;
+} | null = null;
+const LEVELS_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
 export async function stocksRoute(
   fastify: FastifyInstance,
   opts: StocksRouteOpts
@@ -32,6 +44,72 @@ export async function stocksRoute(
     }
     const data = wsManager.buildSnapshot();
     return { count: data.length, data, timestamp: Date.now() };
+  });
+
+  // --- S/R Levels for all stocks ---
+  fastify.get("/api/stocks/levels", async (_req, reply) => {
+    const accessToken = opts.getAccessToken();
+    const instrumentMaps = opts.getInstrumentMaps();
+
+    if (!accessToken || !instrumentMaps) {
+      return reply
+        .status(503)
+        .send({ error: "Market data not initialized. Login to Kite first." });
+    }
+
+    // Return cache if fresh
+    if (levelsCache && Date.now() - levelsCache.timestamp < LEVELS_CACHE_TTL) {
+      return { levels: levelsCache.levels, timestamp: levelsCache.timestamp };
+    }
+
+    const kc = new KiteConnect({ api_key: opts.apiKey });
+    kc.setAccessToken(accessToken);
+
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 15); // ~10 trading days
+
+    const levels: Record<string, SupportResistanceResult> = {};
+
+    const promises = instrumentMaps.symbols.map(async (symbol) => {
+      const token = instrumentMaps.symbolToToken.get(symbol);
+      if (token === undefined) return;
+
+      try {
+        const data = await kc.getHistoricalData(
+          token,
+          "day" as KiteInterval,
+          formatDate(from),
+          formatDate(to),
+        );
+
+        const candles: Candle[] = data.map((d: any) => ({
+          time: Math.floor(new Date(d.date).getTime() / 1000),
+          open: d.open,
+          high: d.high,
+          low: d.low,
+          close: d.close,
+          volume: d.volume,
+        }));
+
+        // Use live price if available, else last candle close
+        const quote = marketDataService.getQuote(symbol);
+        const price =
+          quote?.lastPrice ||
+          (candles.length > 0 ? candles[candles.length - 1].close : 0);
+
+        if (price > 0 && candles.length >= 2) {
+          levels[symbol] = getSupportResistance(candles, price);
+        }
+      } catch (err: any) {
+        fastify.log.warn(`Failed to fetch candles for ${symbol}: ${err.message}`);
+      }
+    });
+
+    await Promise.allSettled(promises);
+
+    levelsCache = { levels, timestamp: Date.now() };
+    return { levels, timestamp: levelsCache.timestamp };
   });
 
   fastify.get<{
@@ -75,9 +153,6 @@ export async function stocksRoute(
         from.setDate(from.getDate() - days);
         from.setHours(0, 0, 0, 0);
       }
-
-      const formatDate = (d: Date) =>
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 
       const data = await kc.getHistoricalData(
         instrumentToken,
