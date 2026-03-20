@@ -1,11 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { KiteConnect } from "kiteconnect";
 import type { WsManager } from "../ws/ws-server.js";
-import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal } from "../lib/types.js";
+import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal, MomentumResult } from "../lib/types.js";
 import { getSupportResistance } from "../services/levels.service.js";
 import { marketDataService } from "../services/market-data.service.js";
 import type { PressureEngine } from "../services/pressure.service.js";
 import { detectPattern } from "../lib/pattern-engine.js";
+import { getMomentum } from "../lib/momentum-engine.js";
 
 const VALID_INTERVALS = [
   "minute",
@@ -123,9 +124,10 @@ export async function stocksRoute(
     return { levels, timestamp: levelsCache.timestamp };
   });
 
-  // --- Candlestick Patterns for near-S/R symbols ---
+  // --- Candlestick Patterns + Momentum for near-S/R symbols ---
   let patternsCache: {
     patterns: Record<string, PatternSignal>;
+    momentum: Record<string, MomentumResult>;
     timestamp: number;
   } | null = null;
   const PATTERNS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -147,7 +149,7 @@ export async function stocksRoute(
 
     // Return cache if fresh
     if (patternsCache && Date.now() - patternsCache.timestamp < PATTERNS_CACHE_TTL) {
-      return { patterns: patternsCache.patterns, timestamp: patternsCache.timestamp };
+      return { patterns: patternsCache.patterns, momentum: patternsCache.momentum, timestamp: patternsCache.timestamp };
     }
 
     const pressureEngine = opts.getPressureEngine();
@@ -168,8 +170,8 @@ export async function stocksRoute(
     }
 
     if (nearSymbols.length === 0) {
-      patternsCache = { patterns: {}, timestamp: Date.now() };
-      return { patterns: {}, timestamp: patternsCache.timestamp };
+      patternsCache = { patterns: {}, momentum: {}, timestamp: Date.now() };
+      return { patterns: {}, momentum: {}, timestamp: patternsCache.timestamp };
     }
 
     fastify.log.info(`[Pattern] Scanning ${nearSymbols.length} near-S/R symbols`);
@@ -183,6 +185,7 @@ export async function stocksRoute(
     from.setHours(0, 0, 0, 0);
 
     const patterns: Record<string, PatternSignal> = {};
+    const momentumMap: Record<string, MomentumResult> = {};
 
     // Batch in groups of 5
     const BATCH_SIZE = 5;
@@ -229,6 +232,12 @@ export async function stocksRoute(
           if (result) {
             patterns[symbol] = result;
           }
+
+          // Compute momentum from the same candles
+          const mom = getMomentum(candles);
+          if (mom) {
+            momentumMap[symbol] = mom;
+          }
         } catch (err: any) {
           fastify.log.warn(`[Pattern] Failed for ${symbol}: ${err.message}`);
         }
@@ -236,10 +245,10 @@ export async function stocksRoute(
       await Promise.allSettled(promises);
     }
 
-    fastify.log.info(`[Pattern] Detected ${Object.keys(patterns).length} patterns from ${nearSymbols.length} symbols`);
+    fastify.log.info(`[Pattern] Detected ${Object.keys(patterns).length} patterns, ${Object.keys(momentumMap).length} momentum from ${nearSymbols.length} symbols`);
 
-    patternsCache = { patterns, timestamp: Date.now() };
-    return { patterns, timestamp: patternsCache.timestamp };
+    patternsCache = { patterns, momentum: momentumMap, timestamp: Date.now() };
+    return { patterns, momentum: momentumMap, timestamp: patternsCache.timestamp };
   });
 
   fastify.get("/api/stocks/pressure/debug", async (_req, reply) => {
