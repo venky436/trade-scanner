@@ -6,6 +6,7 @@ interface KiteTickerConfig {
   apiKey: string;
   accessToken: string;
   instrumentMaps: InstrumentMaps;
+  onTick?: (symbol: string, quote: Quote) => void;
 }
 
 export function createKiteTickerManager(config: KiteTickerConfig) {
@@ -42,6 +43,7 @@ export function createKiteTickerManager(config: KiteTickerConfig) {
       };
 
       marketDataService.updateQuote(symbol, quote);
+      if (config.onTick) config.onTick(symbol, quote);
     }
   });
 

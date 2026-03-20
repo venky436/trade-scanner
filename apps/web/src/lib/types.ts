@@ -8,6 +8,7 @@ export interface StockData {
   volume: number;
   change: number;
   timestamp: number;
+  pressure?: PressureResult;
 }
 
 export interface MarketMessage {
@@ -56,4 +57,14 @@ export interface SupportResistanceResult {
     hasNearbySupport: boolean;
     hasNearbyResistance: boolean;
   };
+}
+
+export type PressureSignal = "STRONG_BUY" | "BUY" | "NEUTRAL" | "SELL" | "STRONG_SELL";
+export type PressureTrend = "rising" | "falling" | "mixed";
+
+export interface PressureResult {
+  value: number;
+  signal: PressureSignal;
+  trend: PressureTrend;
+  confidence: number;
 }

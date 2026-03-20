@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Geist, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
+import { MarketDataProvider } from "@/context/market-data-context";
 
 export const metadata = {
   title: "Trading Scanner",
@@ -20,7 +21,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={cn("dark font-sans", geist.variable, jetbrainsMono.variable)}>
-      <body className="min-h-screen antialiased">{children}</body>
+      <body className="min-h-screen antialiased">
+        <MarketDataProvider>{children}</MarketDataProvider>
+      </body>
     </html>
   );
 }

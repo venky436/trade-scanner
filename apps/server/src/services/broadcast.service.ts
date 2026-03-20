@@ -1,10 +1,11 @@
 import type { WsManager } from "../ws/ws-server.js";
-import type { StockSnapshot, WsMessage } from "../lib/types.js";
+import type { StockSnapshot, WsMessage, PressureResult } from "../lib/types.js";
 import { marketDataService } from "./market-data.service.js";
 
 interface BroadcastConfig {
   wsManager: WsManager;
   intervalMs?: number;
+  getPressure?: (symbol: string) => PressureResult | null;
 }
 
 export function createBroadcastEngine(config: BroadcastConfig) {
@@ -28,6 +29,7 @@ export function createBroadcastEngine(config: BroadcastConfig) {
       if (!q) continue;
 
       const change = q.close !== 0 ? ((q.lastPrice - q.close) / q.close) * 100 : 0;
+      const pressure = config.getPressure?.(symbol) ?? undefined;
       data.push({
         symbol,
         price: q.lastPrice,
@@ -38,6 +40,7 @@ export function createBroadcastEngine(config: BroadcastConfig) {
         volume: q.volume,
         change: Math.round(change * 100) / 100,
         timestamp: q.timestamp,
+        pressure,
       });
     }
 

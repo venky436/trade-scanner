@@ -4,6 +4,7 @@ import { stocksRoute } from "./routes/stocks.route.js";
 import { authRoute } from "./routes/auth.route.js";
 import type { WsManager } from "./ws/ws-server.js";
 import type { InstrumentMaps } from "./lib/types.js";
+import type { PressureEngine } from "./services/pressure.service.js";
 
 interface ServerDeps {
   apiKey: string;
@@ -12,6 +13,7 @@ interface ServerDeps {
   getWsManager: () => WsManager | null;
   getAccessToken: () => string | null;
   getInstrumentMaps: () => InstrumentMaps | null;
+  getPressureEngine: () => PressureEngine | null;
 }
 
 export async function buildServer(deps: ServerDeps) {
@@ -33,6 +35,7 @@ export async function buildServer(deps: ServerDeps) {
     getWsManager: deps.getWsManager,
     getAccessToken: deps.getAccessToken,
     getInstrumentMaps: deps.getInstrumentMaps,
+    getPressureEngine: deps.getPressureEngine,
   });
 
   return server;
