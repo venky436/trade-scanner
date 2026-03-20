@@ -11,13 +11,16 @@ import type { SortKey, SortDirection, SupportResistanceResult } from "@/lib/type
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
 
+// Module-level cache so S/R levels survive component remounts (navigation)
+let srLevelsCache: Record<string, SupportResistanceResult> = {};
+
 export function Dashboard() {
   const { stockMap, isConnected } = useMarketData();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("symbol");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [kiteConnected, setKiteConnected] = useState(false);
-  const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>({});
+  const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>(srLevelsCache);
 
   // Poll auth status until connected
   useEffect(() => {
@@ -46,10 +49,11 @@ export function Dashboard() {
     if (stockMap.size > 0) setKiteConnected(true);
   }, [stockMap.size]);
 
-  // Fetch S/R levels once stocks are available
+  // Fetch S/R levels once stocks are available (skip if cached)
   const hasStocks = stockMap.size > 0;
+  const hasCachedLevels = Object.keys(srLevelsCache).length > 0;
   useEffect(() => {
-    if (!hasStocks) return;
+    if (!hasStocks || hasCachedLevels) return;
     let active = true;
 
     async function fetchLevels() {
@@ -61,6 +65,7 @@ export function Dashboard() {
         }
         const data = await res.json();
         if (active && data.levels) {
+          srLevelsCache = data.levels;
           setSrLevels(data.levels);
         }
       } catch (err) {
@@ -70,7 +75,7 @@ export function Dashboard() {
 
     fetchLevels();
     return () => { active = false; };
-  }, [hasStocks]);
+  }, [hasStocks, hasCachedLevels]);
 
   const handleSort = useCallback(
     (key: SortKey) => {

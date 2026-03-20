@@ -122,6 +122,14 @@ export async function stocksRoute(
     return { levels, timestamp: levelsCache.timestamp };
   });
 
+  fastify.get("/api/stocks/pressure/debug", async (_req, reply) => {
+    const engine = opts.getPressureEngine();
+    if (!engine) {
+      return reply.status(503).send({ error: "Pressure engine not initialized" });
+    }
+    return { stats: engine.getStats(), timestamp: Date.now() };
+  });
+
   fastify.get("/api/stocks/pressure", async (_req, reply) => {
     const engine = opts.getPressureEngine();
     if (!engine) {
