@@ -47,24 +47,30 @@ export function Dashboard() {
   }, [stockMap.size]);
 
   // Fetch S/R levels once stocks are available
+  const hasStocks = stockMap.size > 0;
   useEffect(() => {
-    if (stockMap.size === 0) return;
+    if (!hasStocks) return;
     let active = true;
 
     async function fetchLevels() {
       try {
         const res = await fetch(`${API_URL}/api/stocks/levels`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          console.warn("[SR] levels fetch failed:", res.status, res.statusText);
+          return;
+        }
         const data = await res.json();
-        if (active && data.levels) setSrLevels(data.levels);
-      } catch {
-        // not critical — cards just won't show
+        if (active && data.levels) {
+          setSrLevels(data.levels);
+        }
+      } catch (err) {
+        console.warn("[SR] levels fetch error:", err);
       }
     }
 
     fetchLevels();
     return () => { active = false; };
-  }, [stockMap.size > 0]);
+  }, [hasStocks]);
 
   const handleSort = useCallback(
     (key: SortKey) => {

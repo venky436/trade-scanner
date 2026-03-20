@@ -70,43 +70,51 @@ export async function stocksRoute(
     from.setDate(from.getDate() - 15); // ~10 trading days
 
     const levels: Record<string, SupportResistanceResult> = {};
+    const symbols = instrumentMaps.symbols;
 
-    const promises = instrumentMaps.symbols.map(async (symbol) => {
-      const token = instrumentMaps.symbolToToken.get(symbol);
-      if (token === undefined) return;
+    fastify.log.info(`[SR] Computing levels for ${symbols.length} symbols...`);
 
-      try {
-        const data = await kc.getHistoricalData(
-          token,
-          "day" as KiteInterval,
-          formatDate(from),
-          formatDate(to),
-        );
+    // Batch in groups of 5 to avoid Kite rate limits
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+      const batch = symbols.slice(i, i + BATCH_SIZE);
+      const promises = batch.map(async (symbol) => {
+        const token = instrumentMaps.symbolToToken.get(symbol);
+        if (token === undefined) return;
 
-        const candles: Candle[] = data.map((d: any) => ({
-          time: Math.floor(new Date(d.date).getTime() / 1000),
-          open: d.open,
-          high: d.high,
-          low: d.low,
-          close: d.close,
-          volume: d.volume,
-        }));
+        try {
+          const data = await kc.getHistoricalData(
+            token,
+            "day" as KiteInterval,
+            formatDate(from),
+            formatDate(to),
+          );
 
-        // Use live price if available, else last candle close
-        const quote = marketDataService.getQuote(symbol);
-        const price =
-          quote?.lastPrice ||
-          (candles.length > 0 ? candles[candles.length - 1].close : 0);
+          const candles: Candle[] = data.map((d: any) => ({
+            time: Math.floor(new Date(d.date).getTime() / 1000),
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+            volume: d.volume,
+          }));
 
-        if (price > 0 && candles.length >= 2) {
-          levels[symbol] = getSupportResistance(candles, price);
+          const quote = marketDataService.getQuote(symbol);
+          const price =
+            quote?.lastPrice ||
+            (candles.length > 0 ? candles[candles.length - 1].close : 0);
+
+          if (price > 0 && candles.length >= 2) {
+            levels[symbol] = getSupportResistance(candles, price);
+          }
+        } catch (err: any) {
+          fastify.log.warn(`[SR] Failed for ${symbol}: ${err.message}`);
         }
-      } catch (err: any) {
-        fastify.log.warn(`Failed to fetch candles for ${symbol}: ${err.message}`);
-      }
-    });
+      });
+      await Promise.allSettled(promises);
+    }
 
-    await Promise.allSettled(promises);
+    fastify.log.info(`[SR] Computed levels for ${Object.keys(levels).length}/${symbols.length} symbols`);
 
     levelsCache = { levels, timestamp: Date.now() };
     return { levels, timestamp: levelsCache.timestamp };
