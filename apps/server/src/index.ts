@@ -1,12 +1,16 @@
 import "dotenv/config";
 import { buildServer } from "./server.js";
-import { loadInstruments, type MarketMode } from "./services/instrument.service.js";
+import { loadInstruments, loadIndices, type MarketMode } from "./services/instrument.service.js";
 import { createKiteTickerManager } from "./services/kite-ticker.service.js";
 import { createWsManager, type WsManager } from "./ws/ws-server.js";
 import { createBroadcastEngine } from "./services/broadcast.service.js";
 import { createPressureEngine, type PressureEngine } from "./services/pressure.service.js";
+import { createCandleTracker } from "./services/candle-tracker.service.js";
+import { getMomentum } from "./lib/momentum-engine.js";
+import { detectPattern } from "./lib/pattern-engine.js";
 import { loadSession } from "./lib/session-store.js";
-import type { InstrumentMaps } from "./lib/types.js";
+import type { InstrumentMaps, SupportResistanceResult, MomentumResult, PatternSignal } from "./lib/types.js";
+import { marketDataService } from "./services/market-data.service.js";
 
 const PORT = Number(process.env.PORT) || 4002;
 
@@ -30,25 +34,74 @@ async function main() {
   let currentInstrumentMaps: InstrumentMaps | null = null;
   let currentPressureEngine: PressureEngine | null = null;
 
+  // Shared S/R levels cache (populated by HTTP endpoint, read by broadcast)
+  let cachedLevels: Record<string, SupportResistanceResult> = {};
+
   // Called after Kite login succeeds
   async function startMarketData(accessToken: string) {
     console.log(`Starting market data (mode: ${marketMode})...`);
 
-    // Load instruments
+    // Load instruments (stocks + indices)
     const instrumentMaps = await loadInstruments(apiKey, accessToken, marketMode);
+
+    // Load indices separately and merge into instrument maps
+    if (marketMode === "equity") {
+      const indexMaps = await loadIndices(apiKey, accessToken);
+      for (const [token, symbol] of indexMaps.tokenToSymbol) {
+        instrumentMaps.tokenToSymbol.set(token, symbol);
+        instrumentMaps.symbolToToken.set(symbol, token);
+        instrumentMaps.symbols.push(symbol);
+      }
+      console.log(`[equity] Total instruments (stocks + indices): ${instrumentMaps.symbols.length}`);
+    }
 
     // Store for history route
     currentAccessToken = accessToken;
     currentInstrumentMaps = instrumentMaps;
 
-    // Recreate WS manager with symbols
-    if (wsManager) wsManager.close();
-    wsManager = createWsManager({ symbols: instrumentMaps.symbols });
-    wsManager.attach(server.server);
-
     // Create pressure engine
     const pressureEngine = createPressureEngine();
     currentPressureEngine = pressureEngine;
+
+    // In-memory maps for candle-driven analysis
+    const momentumMap = new Map<string, MomentumResult>();
+    const patternMap = new Map<string, PatternSignal>();
+
+    // Recreate WS manager with symbols + engine getters (for snapshot)
+    if (wsManager) wsManager.close();
+    wsManager = createWsManager({
+      symbols: instrumentMaps.symbols,
+      getPressure: (symbol) => pressureEngine.getPressure(symbol),
+      getLevels: () => cachedLevels,
+      getMomentum: (symbol) => momentumMap.get(symbol) ?? null,
+      getPattern: (symbol) => patternMap.get(symbol) ?? null,
+    });
+    wsManager.attach(server.server);
+
+    // Create candle tracker (5-min candles from ticks)
+    const candleTracker = createCandleTracker({
+      onCandleClose: (symbol, candles) => {
+        // Compute momentum
+        const mom = getMomentum(candles);
+        if (mom) momentumMap.set(symbol, mom);
+        else momentumMap.delete(symbol);
+
+        // Compute pattern (needs S/R + pressure)
+        const sr = cachedLevels[symbol];
+        const price = marketDataService.getQuote(symbol)?.lastPrice ?? 0;
+        if (sr && price > 0) {
+          const pat = detectPattern({
+            candles: candles.slice(-3),
+            currentPrice: price,
+            supportZone: sr.supportZone,
+            resistanceZone: sr.resistanceZone,
+            pressure: pressureEngine.getPressure(symbol),
+          });
+          if (pat) patternMap.set(symbol, pat);
+          else patternMap.delete(symbol);
+        }
+      },
+    });
 
     // Start broadcast engine
     if (broadcastStop) broadcastStop();
@@ -56,6 +109,9 @@ async function main() {
       wsManager,
       intervalMs: 500,
       getPressure: (symbol) => pressureEngine.getPressure(symbol),
+      getLevels: () => cachedLevels,
+      getMomentum: (symbol) => momentumMap.get(symbol) ?? null,
+      getPattern: (symbol) => patternMap.get(symbol) ?? null,
     });
     broadcast.start();
     broadcastStop = broadcast.stop;
@@ -72,6 +128,7 @@ async function main() {
           volume: quote.volume,
           timestamp: quote.timestamp,
         });
+        candleTracker.processTick(symbol, quote.lastPrice, quote.volume, quote.timestamp);
       },
     });
     ticker.connect();
@@ -92,6 +149,7 @@ async function main() {
     getAccessToken: () => currentAccessToken,
     getInstrumentMaps: () => currentInstrumentMaps,
     getPressureEngine: () => currentPressureEngine,
+    onLevelsComputed: (levels) => { cachedLevels = levels; },
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });

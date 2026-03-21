@@ -1,30 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { useEffect, useMemo, useState } from "react";
+import { BarChart3, LayoutGrid, Zap } from "lucide-react";
 import { Header } from "./header";
-import { StockTable } from "./stock-table";
+import { MarketOverview } from "./market-overview";
+import { TopSignals } from "./top-signals";
+import { FilterBar, type FilterValue } from "./filter-bar";
+import { ScannerTable } from "./scanner-table";
 import { StockTableSkeleton } from "./stock-table-skeleton";
-import { SRCards } from "./sr-cards";
 import { useMarketData } from "@/hooks/use-market-data";
-import type { SortKey, SortDirection, SupportResistanceResult, PatternSignal, MomentumResult } from "@/lib/types";
+import { INDEX_NAMES } from "@/lib/constants";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
-
-// Module-level cache so S/R levels survive component remounts (navigation)
-let srLevelsCache: Record<string, SupportResistanceResult> = {};
-let patternsCache: Record<string, PatternSignal> = {};
-let momentumCache: Record<string, MomentumResult> = {};
 
 export function Dashboard() {
   const { stockMap, isConnected } = useMarketData();
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("symbol");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [kiteConnected, setKiteConnected] = useState(false);
-  const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>(srLevelsCache);
-  const [patterns, setPatterns] = useState<Record<string, PatternSignal>>(patternsCache);
-  const [momentum, setMomentum] = useState<Record<string, MomentumResult>>(momentumCache);
+  const [filter, setFilter] = useState<FilterValue>("SIGNALS");
 
   // Poll auth status until connected
   useEffect(() => {
@@ -53,135 +46,117 @@ export function Dashboard() {
     if (stockMap.size > 0) setKiteConnected(true);
   }, [stockMap.size]);
 
-  // Fetch S/R levels once stocks are available (skip if cached)
-  const hasStocks = stockMap.size > 0;
-  const hasCachedLevels = Object.keys(srLevelsCache).length > 0;
-  useEffect(() => {
-    if (!hasStocks || hasCachedLevels) return;
-    let active = true;
-
-    async function fetchLevels() {
-      try {
-        const res = await fetch(`${API_URL}/api/stocks/levels`);
-        if (!res.ok) {
-          console.warn("[SR] levels fetch failed:", res.status, res.statusText);
-          return;
-        }
-        const data = await res.json();
-        if (active && data.levels) {
-          srLevelsCache = data.levels;
-          setSrLevels(data.levels);
-        }
-      } catch (err) {
-        console.warn("[SR] levels fetch error:", err);
-      }
-    }
-
-    fetchLevels();
-    return () => { active = false; };
-  }, [hasStocks, hasCachedLevels]);
-
-  // Fetch candlestick patterns after S/R levels are loaded
-  const hasSrLevels = Object.keys(srLevels).length > 0;
-  useEffect(() => {
-    if (!hasSrLevels) return;
-    let active = true;
-
-    async function fetchPatterns() {
-      try {
-        const res = await fetch(`${API_URL}/api/stocks/patterns`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (active && data.patterns) {
-          patternsCache = data.patterns;
-          setPatterns(data.patterns);
-        }
-        if (active && data.momentum) {
-          momentumCache = data.momentum;
-          setMomentum(data.momentum);
-        }
-      } catch (err) {
-        console.warn("[Pattern] fetch error:", err);
-      }
-    }
-
-    fetchPatterns();
-    const interval = setInterval(fetchPatterns, 5 * 60 * 1000);
-    return () => { active = false; clearInterval(interval); };
-  }, [hasSrLevels]);
-
-  const handleSort = useCallback(
-    (key: SortKey) => {
-      if (key === sortKey) {
-        setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
-      } else {
-        setSortKey(key);
-        setSortDirection(key === "symbol" ? "asc" : "desc");
-      }
-    },
-    [sortKey]
+  // All non-index stocks
+  const allStocks = useMemo(
+    () => Array.from(stockMap.values()).filter((s) => !INDEX_NAMES.has(s.symbol)),
+    [stockMap]
   );
 
-  const filteredAndSorted = useMemo(() => {
-    let result = Array.from(stockMap.values());
+  // Signal counts
+  const signalCount = useMemo(
+    () => allStocks.filter((s) => s.signal && s.signal.action !== "WAIT").length,
+    [allStocks]
+  );
+  const buyCount = useMemo(
+    () => allStocks.filter((s) => s.signal?.action === "BUY").length,
+    [allStocks]
+  );
+  const sellCount = useMemo(
+    () => allStocks.filter((s) => s.signal?.action === "SELL").length,
+    [allStocks]
+  );
+
+  // Filtered + searched stocks for table
+  const tableStocks = useMemo(() => {
+    let list = allStocks;
 
     if (searchQuery) {
-      const q = searchQuery.toUpperCase();
-      result = result.filter((s) => s.symbol.toUpperCase().includes(q));
+      const q = searchQuery.toLowerCase();
+      list = list.filter((s) => s.symbol.toLowerCase().includes(q));
     }
 
-    result.sort((a, b) => {
-      const aVal = a[sortKey];
-      const bVal = b[sortKey];
+    switch (filter) {
+      case "SIGNALS":
+        list = list.filter((s) => s.signal && s.signal.action !== "WAIT");
+        break;
+      case "BUY":
+        list = list.filter((s) => s.signal?.action === "BUY");
+        break;
+      case "SELL":
+        list = list.filter((s) => s.signal?.action === "SELL");
+        break;
+    }
 
-      if (typeof aVal === "string" && typeof bVal === "string") {
-        return sortDirection === "asc"
-          ? aVal.localeCompare(bVal)
-          : bVal.localeCompare(aVal);
-      }
+    return list;
+  }, [allStocks, searchQuery, filter]);
 
-      const diff = (aVal as number) - (bVal as number);
-      return sortDirection === "asc" ? diff : -diff;
-    });
-
-    return result;
-  }, [stockMap, searchQuery, sortKey, sortDirection]);
-
+  const stockCount = allStocks.length;
   const isLoading = stockMap.size === 0 && kiteConnected;
 
   return (
-    <main className="p-4 max-w-[1400px] mx-auto">
+    <main className="min-h-screen bg-background">
       <Header
         isConnected={isConnected}
         kiteConnected={kiteConnected}
-        stockCount={filteredAndSorted.length}
+        stockCount={stockCount}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
       />
-      {Object.keys(srLevels).length > 0 && (
-        <SRCards stockMap={stockMap} levels={srLevels} patterns={patterns} momentum={momentum} />
-      )}
-      <Card className="border-border/50">
-        <CardContent className="p-0">
-          {!kiteConnected ? (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <p className="text-lg">Not connected to Kite</p>
-              <p className="text-sm mt-1">
-                Click <span className="text-yellow-400 font-medium">Connect Kite</span> above to login and start streaming market data.
-              </p>
+      <div className="max-w-[1400px] mx-auto px-4 py-4 space-y-8">
+        {!kiteConnected ? (
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+            <p className="text-lg">Not connected to Kite</p>
+            <p className="text-sm mt-1">
+              Click{" "}
+              <span className="text-yellow-600 dark:text-yellow-400 font-medium">
+                Connect Kite
+              </span>{" "}
+              above to login and start streaming market data.
+            </p>
+          </div>
+        ) : isLoading ? (
+          <StockTableSkeleton />
+        ) : (
+          <>
+            {/* Market Overview */}
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart3 className="size-4 text-blue-500" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                  Market Pulse
+                </h2>
+              </div>
+              <MarketOverview stockMap={stockMap} />
             </div>
-          ) : isLoading ? (
-            <StockTableSkeleton />
-          ) : (
-            <StockTable
-              stocks={filteredAndSorted}
-              sortKey={sortKey}
-              sortDirection={sortDirection}
-              onSort={handleSort}
-            />
-          )}
-        </CardContent>
-      </Card>
+
+            {/* Top Signals */}
+            <TopSignals stockMap={stockMap} />
+
+            {/* Scanner */}
+            <div>
+              <div className="flex items-center justify-between gap-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <LayoutGrid className="size-4 text-primary" />
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                    Scanner
+                  </h2>
+                  <span className="text-xs text-muted-foreground/60">
+                    {tableStocks.length} stocks
+                  </span>
+                </div>
+                <FilterBar
+                  filter={filter}
+                  onFilterChange={setFilter}
+                  signalCount={signalCount}
+                  buyCount={buyCount}
+                  sellCount={sellCount}
+                />
+              </div>
+              <ScannerTable stocks={tableStocks} />
+            </div>
+          </>
+        )}
+      </div>
     </main>
   );
 }

@@ -141,6 +141,23 @@ tr:not([data-flash]) {
   transition: background-color 500ms ease-out;
 }
 
+/* Light mode flash — slightly stronger for readability */
+:root tr[data-flash="up"] {
+  background-color: rgba(34, 197, 94, 0.12) !important;
+}
+:root tr[data-flash="down"] {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+}
+
+/* Fade-in-up animation for cards */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out both;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -148,10 +165,17 @@ tr:not([data-flash]) {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-::-webkit-scrollbar-thumb {
+.dark ::-webkit-scrollbar-thumb {
   background: oklch(0.4 0 0);
   border-radius: 3px;
 }
-::-webkit-scrollbar-thumb:hover {
+.dark ::-webkit-scrollbar-thumb:hover {
   background: oklch(0.5 0 0);
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.7 0 0);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.6 0 0);
 }

@@ -1,11 +1,16 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
-import type { StockSnapshot, WsMessage } from "../lib/types.js";
+import type { StockSnapshot, WsMessage, PressureResult, SupportResistanceResult, MomentumResult, PatternSignal } from "../lib/types.js";
 import { marketDataService } from "../services/market-data.service.js";
+import { getSignal } from "../lib/signal-engine.js";
 
 interface WsManagerConfig {
   symbols: string[];
+  getPressure?: (symbol: string) => PressureResult | null;
+  getLevels?: () => Record<string, SupportResistanceResult>;
+  getMomentum?: (symbol: string) => MomentumResult | null;
+  getPattern?: (symbol: string) => PatternSignal | null;
 }
 
 export function createWsManager(config: WsManagerConfig) {
@@ -16,6 +21,7 @@ export function createWsManager(config: WsManagerConfig) {
 
   function buildSnapshot(): StockSnapshot[] {
     const quotes = marketDataService.getAllQuotes();
+    const sr = config.getLevels?.();
     const snapshots: StockSnapshot[] = [];
 
     for (const symbol of symbols) {
@@ -23,6 +29,31 @@ export function createWsManager(config: WsManagerConfig) {
       if (!q) continue;
 
       const change = q.close !== 0 ? ((q.lastPrice - q.close) / q.close) * 100 : 0;
+      const pressure = config.getPressure?.(symbol) ?? undefined;
+      const momentum = config.getMomentum?.(symbol) ?? undefined;
+      const pattern = config.getPattern?.(symbol) ?? undefined;
+
+      // Compute signal if S/R levels exist
+      const symbolSr = sr?.[symbol];
+      const freshSr = symbolSr ? {
+        supportZone: symbolSr.supportZone
+          ? { level: symbolSr.supportZone.level, distancePercent: Math.abs(q.lastPrice - symbolSr.supportZone.level) / q.lastPrice * 100 }
+          : null,
+        resistanceZone: symbolSr.resistanceZone
+          ? { level: symbolSr.resistanceZone.level, distancePercent: Math.abs(q.lastPrice - symbolSr.resistanceZone.level) / q.lastPrice * 100 }
+          : null,
+      } : undefined;
+
+      const signal = freshSr
+        ? getSignal({
+            price: q.lastPrice,
+            sr: freshSr,
+            pressure: pressure ?? null,
+            momentum: momentum ?? null,
+            pattern: pattern ?? null,
+          })
+        : undefined;
+
       snapshots.push({
         symbol,
         price: q.lastPrice,
@@ -33,6 +64,10 @@ export function createWsManager(config: WsManagerConfig) {
         volume: q.volume,
         change: Math.round(change * 100) / 100,
         timestamp: q.timestamp,
+        pressure,
+        momentum,
+        pattern,
+        signal,
       });
     }
 

@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import { stocksRoute } from "./routes/stocks.route.js";
 import { authRoute } from "./routes/auth.route.js";
 import type { WsManager } from "./ws/ws-server.js";
-import type { InstrumentMaps } from "./lib/types.js";
+import type { InstrumentMaps, SupportResistanceResult } from "./lib/types.js";
 import type { PressureEngine } from "./services/pressure.service.js";
 
 interface ServerDeps {
@@ -14,6 +14,7 @@ interface ServerDeps {
   getAccessToken: () => string | null;
   getInstrumentMaps: () => InstrumentMaps | null;
   getPressureEngine: () => PressureEngine | null;
+  onLevelsComputed?: (levels: Record<string, SupportResistanceResult>) => void;
 }
 
 export async function buildServer(deps: ServerDeps) {
@@ -36,6 +37,7 @@ export async function buildServer(deps: ServerDeps) {
     getAccessToken: deps.getAccessToken,
     getInstrumentMaps: deps.getInstrumentMaps,
     getPressureEngine: deps.getPressureEngine,
+    onLevelsComputed: deps.onLevelsComputed,
   });
 
   return server;
