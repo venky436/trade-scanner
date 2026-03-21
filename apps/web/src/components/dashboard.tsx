@@ -1,28 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, LayoutGrid, Zap } from "lucide-react";
+import {
+  BarChart3,
+  Zap,
+  Shield,
+  Flame,
+} from "lucide-react";
 import { Header } from "./header";
 import { MarketOverview } from "./market-overview";
-import { TopSignals } from "./top-signals";
-import { FilterBar, type FilterValue } from "./filter-bar";
-import { ScannerTable } from "./scanner-table";
+import { TopOpportunities } from "./top-opportunities";
+import { ScannerDashboard } from "./scanner-dashboard";
+import { WatchlistCards } from "./watchlist-cards";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { useMarketData } from "@/hooks/use-market-data";
 import { INDEX_NAMES } from "@/lib/constants";
+import type { SupportResistanceResult } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
+
+// Module-level cache so S/R levels survive component remounts
+let srLevelsCache: Record<string, SupportResistanceResult> = {};
 
 export function Dashboard() {
   const { stockMap, isConnected } = useMarketData();
   const [searchQuery, setSearchQuery] = useState("");
   const [kiteConnected, setKiteConnected] = useState(false);
-  const [filter, setFilter] = useState<FilterValue>("SIGNALS");
+  const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>(srLevelsCache);
 
   // Poll auth status until connected
   useEffect(() => {
     let active = true;
-
     async function check() {
       try {
         const res = await fetch(`${API_URL}/api/auth/status`);
@@ -32,13 +40,9 @@ export function Dashboard() {
         // server not reachable yet
       }
     }
-
     check();
     const interval = setInterval(check, 3000);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
+    return () => { active = false; clearInterval(interval); };
   }, []);
 
   // Once we get stocks, kite is definitely connected
@@ -46,51 +50,34 @@ export function Dashboard() {
     if (stockMap.size > 0) setKiteConnected(true);
   }, [stockMap.size]);
 
-  // All non-index stocks
-  const allStocks = useMemo(
-    () => Array.from(stockMap.values()).filter((s) => !INDEX_NAMES.has(s.symbol)),
+  // Fetch S/R levels (skip if cached)
+  const hasStocks = stockMap.size > 0;
+  const hasCachedLevels = Object.keys(srLevelsCache).length > 0;
+  useEffect(() => {
+    if (!hasStocks || hasCachedLevels) return;
+    let active = true;
+    async function fetchLevels() {
+      try {
+        const res = await fetch(`${API_URL}/api/stocks/levels`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active && data.levels) {
+          srLevelsCache = data.levels;
+          setSrLevels(data.levels);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    fetchLevels();
+    return () => { active = false; };
+  }, [hasStocks, hasCachedLevels]);
+
+  const stockCount = useMemo(
+    () => Array.from(stockMap.values()).filter((s) => !INDEX_NAMES.has(s.symbol)).length,
     [stockMap]
   );
 
-  // Signal counts
-  const signalCount = useMemo(
-    () => allStocks.filter((s) => s.signal && s.signal.action !== "WAIT").length,
-    [allStocks]
-  );
-  const buyCount = useMemo(
-    () => allStocks.filter((s) => s.signal?.action === "BUY").length,
-    [allStocks]
-  );
-  const sellCount = useMemo(
-    () => allStocks.filter((s) => s.signal?.action === "SELL").length,
-    [allStocks]
-  );
-
-  // Filtered + searched stocks for table
-  const tableStocks = useMemo(() => {
-    let list = allStocks;
-
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter((s) => s.symbol.toLowerCase().includes(q));
-    }
-
-    switch (filter) {
-      case "SIGNALS":
-        list = list.filter((s) => s.signal && s.signal.action !== "WAIT");
-        break;
-      case "BUY":
-        list = list.filter((s) => s.signal?.action === "BUY");
-        break;
-      case "SELL":
-        list = list.filter((s) => s.signal?.action === "SELL");
-        break;
-    }
-
-    return list;
-  }, [allStocks, searchQuery, filter]);
-
-  const stockCount = allStocks.length;
   const isLoading = stockMap.size === 0 && kiteConnected;
 
   return (
@@ -129,30 +116,46 @@ export function Dashboard() {
               <MarketOverview stockMap={stockMap} />
             </div>
 
-            {/* Top Signals */}
-            <TopSignals stockMap={stockMap} />
-
-            {/* Scanner */}
+            {/* Top Opportunities */}
             <div>
-              <div className="flex items-center justify-between gap-4 mb-4">
-                <div className="flex items-center gap-2">
-                  <LayoutGrid className="size-4 text-primary" />
-                  <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                    Scanner
-                  </h2>
-                  <span className="text-xs text-muted-foreground/60">
-                    {tableStocks.length} stocks
-                  </span>
-                </div>
-                <FilterBar
-                  filter={filter}
-                  onFilterChange={setFilter}
-                  signalCount={signalCount}
-                  buyCount={buyCount}
-                  sellCount={sellCount}
-                />
+              <div className="flex items-center gap-2 mb-4">
+                <Zap className="size-4 text-yellow-500 fill-yellow-500" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                  Top Opportunities
+                </h2>
+                <span className="text-xs text-muted-foreground/60">
+                  Best setups right now
+                </span>
               </div>
-              <ScannerTable stocks={tableStocks} />
+              <TopOpportunities stockMap={stockMap} srLevels={srLevels} />
+            </div>
+
+            {/* Watchlists (Breakout/Rejection) */}
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <Flame className="size-4 text-orange-500" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                  Watchlists
+                </h2>
+                <span className="text-xs text-muted-foreground/60">
+                  Actionable setups near key levels
+                </span>
+              </div>
+              <WatchlistCards stockMap={stockMap} />
+            </div>
+
+            {/* S/R Widgets */}
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <Shield className="size-4 text-purple-500" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                  Key Levels
+                </h2>
+                <span className="text-xs text-muted-foreground/60">
+                  Stocks near support & resistance
+                </span>
+              </div>
+              <ScannerDashboard stockMap={stockMap} srLevels={srLevels} />
             </div>
           </>
         )}

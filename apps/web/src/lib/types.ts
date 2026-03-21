@@ -98,9 +98,20 @@ export type SignalAction = "BUY" | "SELL" | "WAIT";
 export type SignalType = "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN";
 export type SignalConfidence = "LOW" | "MEDIUM" | "HIGH";
 
+export type SignalStage = "ACTIVITY" | "MOMENTUM" | "PRESSURE" | "CONFIRMED";
+
 export interface SignalResult {
   action: SignalAction;
   type?: SignalType;
   confidence: SignalConfidence;
   reasons: string[];
+  score?: number; // 1-10 signal strength from server
+  stage?: SignalStage; // progressive pipeline stage
+  scoreBreakdown?: {
+    pressure: number;   // 0-10
+    momentum: number;
+    sr: number;
+    pattern: number;
+    volatility: number;
+  };
 }

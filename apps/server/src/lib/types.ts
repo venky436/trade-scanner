@@ -112,4 +112,36 @@ export interface SignalResult {
   type?: SignalType;
   confidence: SignalConfidence;
   reasons: string[];
+  score?: number; // 1-10 signal strength
+  stage?: SignalStage; // progressive pipeline stage
+  scoreBreakdown?: {
+    pressure: number;   // 0-10
+    momentum: number;
+    sr: number;
+    pattern: number;
+    volatility: number;
+  };
+}
+
+export interface ScoreBreakdown {
+  pressure: number;   // 0-1
+  momentum: number;   // 0-1
+  sr: number;         // 0-1
+  pattern: number;    // 0-1
+  volatility: number; // 0-1
+  signal: number;     // 0-1
+}
+
+export type SignalStage = "ACTIVITY" | "MOMENTUM" | "PRESSURE" | "CONFIRMED";
+
+export interface SignalSnapshot {
+  signal: SignalResult;
+  stage: SignalStage;
+  reaction: "APPROACHING" | "REJECTING" | "BREAKING" | null;
+  score: number;
+  scoreBreakdown: ScoreBreakdown;
+  computedAt: number;
+  pressureVersion: number;
+  momentumVersion: number;
+  patternVersion: number;
 }

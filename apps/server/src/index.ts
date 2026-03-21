@@ -6,6 +6,11 @@ import { createWsManager, type WsManager } from "./ws/ws-server.js";
 import { createBroadcastEngine } from "./services/broadcast.service.js";
 import { createPressureEngine, type PressureEngine } from "./services/pressure.service.js";
 import { createCandleTracker } from "./services/candle-tracker.service.js";
+import { createSignalWorker, type SignalWorker } from "./services/signal-worker.service.js";
+import { createLevelsWorker, type LevelsWorker } from "./services/levels-worker.service.js";
+import { createStockFilter, type StockFilter } from "./services/stock-filter.service.js";
+import { createEodJob, type EodJob } from "./services/eod-job.service.js";
+import { redisService } from "./services/redis.service.js";
 import { getMomentum } from "./lib/momentum-engine.js";
 import { detectPattern } from "./lib/pattern-engine.js";
 import { loadSession } from "./lib/session-store.js";
@@ -28,13 +33,17 @@ async function main() {
   let wsManager: WsManager | null = null;
   let tickerDisconnect: (() => void) | null = null;
   let broadcastStop: (() => void) | null = null;
+  let signalWorkerInstance: SignalWorker | null = null;
+  let levelsWorkerInstance: LevelsWorker | null = null;
+  let stockFilterInstance: StockFilter | null = null;
+  let eodJobInstance: EodJob | null = null;
 
   // Exposed so the history route can use them
   let currentAccessToken: string | null = null;
   let currentInstrumentMaps: InstrumentMaps | null = null;
   let currentPressureEngine: PressureEngine | null = null;
 
-  // Shared S/R levels cache (populated by HTTP endpoint, read by broadcast)
+  // Shared S/R levels cache (populated by levels-worker, read by signal-worker + broadcast)
   let cachedLevels: Record<string, SupportResistanceResult> = {};
 
   // Called after Kite login succeeds
@@ -59,6 +68,31 @@ async function main() {
     currentAccessToken = accessToken;
     currentInstrumentMaps = instrumentMaps;
 
+    // Load precomputed S/R from Redis (instant load)
+    const precomputed = await redisService.getPrecomputed();
+    if (precomputed && Object.keys(precomputed.levels).length > 0) {
+      cachedLevels = precomputed.levels;
+      const age = Math.round((Date.now() - precomputed.timestamp) / 60_000);
+      console.log(`[Redis] Loaded ${Object.keys(precomputed.levels).length} precomputed levels (${age} min old)`);
+    }
+
+    // Create EOD job
+    const eodJob = createEodJob({
+      apiKey,
+      getAccessToken: () => currentAccessToken,
+      getInstrumentMaps: () => currentInstrumentMaps,
+      onLevelComputed: (symbol, sr) => { cachedLevels[symbol] = sr; },
+      onMomentumComputed: (symbol, result) => {
+        momentumMap.set(symbol, result);
+        momentumVersion.set(symbol, (momentumVersion.get(symbol) ?? 0) + 1);
+      },
+      onPatternComputed: (symbol, result) => {
+        patternMap.set(symbol, result);
+        patternVersion.set(symbol, (patternVersion.get(symbol) ?? 0) + 1);
+      },
+    });
+    eodJobInstance = eodJob;
+
     // Create pressure engine
     const pressureEngine = createPressureEngine();
     currentPressureEngine = pressureEngine;
@@ -66,15 +100,62 @@ async function main() {
     // In-memory maps for candle-driven analysis
     const momentumMap = new Map<string, MomentumResult>();
     const patternMap = new Map<string, PatternSignal>();
+    const momentumVersion = new Map<string, number>();
+    const patternVersion = new Map<string, number>();
 
-    // Recreate WS manager with symbols + engine getters (for snapshot)
+    // Create stock filter (fast eligibility layer)
+    if (stockFilterInstance) stockFilterInstance.stop();
+    const indexSymbols = new Set(["NIFTY 50", "NIFTY BANK", "SENSEX", "NIFTY FIN SERVICE", "INDIA VIX"]);
+    const stockFilter = createStockFilter({
+      maxStocks: 150,
+      minChangePercent: 0.5,
+      minRelativeVolume: 1.2,
+      minPrice: 50,
+      refreshIntervalMs: 5000,
+      allSymbols: instrumentMaps.symbols,
+      alwaysInclude: indexSymbols,
+    });
+    stockFilterInstance = stockFilter;
+
+    // Create signal worker (background batch computation)
+    if (signalWorkerInstance) signalWorkerInstance.stop();
+    const signalWorker = createSignalWorker({
+      batchSize: 200,
+      batchIntervalMs: 1000,
+      fastLaneIntervalMs: 500,
+      getPressure: (s) => pressureEngine.getPressure(s),
+      getPressureVersion: (s) => pressureEngine.getVersion(s),
+      getLevels: () => cachedLevels,
+      getMomentum: (s) => momentumMap.get(s) ?? null,
+      getMomentumVersion: (s) => momentumVersion.get(s) ?? 0,
+      getPattern: (s) => patternMap.get(s) ?? null,
+      getPatternVersion: (s) => patternVersion.get(s) ?? 0,
+      getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
+    });
+    signalWorker.setSymbols(instrumentMaps.symbols);
+    signalWorkerInstance = signalWorker;
+
+    // Create levels worker (background S/R computation)
+    if (levelsWorkerInstance) levelsWorkerInstance.stop();
+    const levelsWorker = createLevelsWorker({
+      apiKey,
+      batchSize: 10,
+      intervalMs: 2000,
+      getAccessToken: () => currentAccessToken,
+      getInstrumentMaps: () => currentInstrumentMaps,
+      onLevelsUpdate: (symbol, result) => { cachedLevels[symbol] = result; },
+    });
+    levelsWorkerInstance = levelsWorker;
+
+    // Recreate WS manager with symbols + cache readers (NO computation)
     if (wsManager) wsManager.close();
     wsManager = createWsManager({
       symbols: instrumentMaps.symbols,
-      getPressure: (symbol) => pressureEngine.getPressure(symbol),
-      getLevels: () => cachedLevels,
-      getMomentum: (symbol) => momentumMap.get(symbol) ?? null,
-      getPattern: (symbol) => patternMap.get(symbol) ?? null,
+      getPressure: (s) => pressureEngine.getPressure(s),
+      getMomentum: (s) => momentumMap.get(s) ?? null,
+      getPattern: (s) => patternMap.get(s) ?? null,
+      getSignalSnapshot: (s) => signalWorker.getSignal(s),
+      getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
     });
     wsManager.attach(server.server);
 
@@ -85,6 +166,7 @@ async function main() {
         const mom = getMomentum(candles);
         if (mom) momentumMap.set(symbol, mom);
         else momentumMap.delete(symbol);
+        momentumVersion.set(symbol, (momentumVersion.get(symbol) ?? 0) + 1);
 
         // Compute pattern (needs S/R + pressure)
         const sr = cachedLevels[symbol];
@@ -100,21 +182,29 @@ async function main() {
           if (pat) patternMap.set(symbol, pat);
           else patternMap.delete(symbol);
         }
+        patternVersion.set(symbol, (patternVersion.get(symbol) ?? 0) + 1);
       },
     });
 
-    // Start broadcast engine
+    // Start broadcast engine (reads from caches, NO computation)
     if (broadcastStop) broadcastStop();
     const broadcast = createBroadcastEngine({
       wsManager,
       intervalMs: 500,
-      getPressure: (symbol) => pressureEngine.getPressure(symbol),
-      getLevels: () => cachedLevels,
-      getMomentum: (symbol) => momentumMap.get(symbol) ?? null,
-      getPattern: (symbol) => patternMap.get(symbol) ?? null,
+      maxPerBroadcast: 150,
+      getPressure: (s) => pressureEngine.getPressure(s),
+      getMomentum: (s) => momentumMap.get(s) ?? null,
+      getPattern: (s) => patternMap.get(s) ?? null,
+      getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
+      getSignalSnapshot: (s) => signalWorker.getSignal(s),
     });
     broadcast.start();
     broadcastStop = broadcast.stop;
+
+    // Start workers
+    stockFilter.start();
+    signalWorker.start();
+    levelsWorker.start();
 
     // Connect to Kite ticker
     if (tickerDisconnect) tickerDisconnect();
@@ -135,6 +225,16 @@ async function main() {
     tickerDisconnect = ticker.disconnect;
 
     console.log("Market data pipeline started");
+
+    // Auto-trigger EOD job on deployment (non-blocking)
+    setTimeout(async () => {
+      try {
+        console.log("[Startup] Auto-triggering EOD precomputation...");
+        await eodJob.run();
+      } catch (err) {
+        console.error("[Startup] EOD auto-trigger failed:", err);
+      }
+    }, 5000);
   }
 
   // Try saved session first, then env variable
@@ -150,6 +250,8 @@ async function main() {
     getInstrumentMaps: () => currentInstrumentMaps,
     getPressureEngine: () => currentPressureEngine,
     onLevelsComputed: (levels) => { cachedLevels = levels; },
+    getCachedLevels: () => cachedLevels,
+    getEodJob: () => eodJobInstance,
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });
@@ -170,9 +272,13 @@ async function main() {
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     console.log(`\n${signal} received. Shutting down...`);
+    if (stockFilterInstance) stockFilterInstance.stop();
+    if (signalWorkerInstance) signalWorkerInstance.stop();
+    if (levelsWorkerInstance) levelsWorkerInstance.stop();
     if (broadcastStop) broadcastStop();
     if (tickerDisconnect) tickerDisconnect();
     if (wsManager) wsManager.close();
+    await redisService.close();
     await server.close();
     process.exit(0);
   };

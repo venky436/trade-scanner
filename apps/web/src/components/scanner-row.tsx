@@ -158,6 +158,10 @@ function ScannerRowInner({ stock, index }: ScannerRowProps) {
               {signal.type.charAt(0) + signal.type.slice(1).toLowerCase()}
             </span>
           </div>
+        ) : signal && signal.action !== "WAIT" ? (
+          <span className="text-xs text-muted-foreground/50">
+            {positive ? "Bullish" : "Bearish"}
+          </span>
         ) : (
           <span className="text-xs text-muted-foreground/40">--</span>
         )}
@@ -201,8 +205,18 @@ function ScannerRowInner({ stock, index }: ScannerRowProps) {
           >
             {mom.label}
           </span>
+        ) : stock.change !== 0 ? (
+          <span
+            className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs ${
+              positive
+                ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                : "bg-red-500/10 text-red-600 dark:text-red-400"
+            }`}
+          >
+            {positive ? "↑" : "↓"}
+          </span>
         ) : (
-          <span className="text-xs text-muted-foreground/40">--</span>
+          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs bg-muted text-muted-foreground">→</span>
         )}
       </TableCell>
     </TableRow>

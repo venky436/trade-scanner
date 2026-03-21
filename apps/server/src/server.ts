@@ -5,6 +5,7 @@ import { authRoute } from "./routes/auth.route.js";
 import type { WsManager } from "./ws/ws-server.js";
 import type { InstrumentMaps, SupportResistanceResult } from "./lib/types.js";
 import type { PressureEngine } from "./services/pressure.service.js";
+import type { EodJob } from "./services/eod-job.service.js";
 
 interface ServerDeps {
   apiKey: string;
@@ -15,6 +16,8 @@ interface ServerDeps {
   getInstrumentMaps: () => InstrumentMaps | null;
   getPressureEngine: () => PressureEngine | null;
   onLevelsComputed?: (levels: Record<string, SupportResistanceResult>) => void;
+  getCachedLevels?: () => Record<string, SupportResistanceResult>;
+  getEodJob?: () => EodJob | null;
 }
 
 export async function buildServer(deps: ServerDeps) {
@@ -38,6 +41,8 @@ export async function buildServer(deps: ServerDeps) {
     getInstrumentMaps: deps.getInstrumentMaps,
     getPressureEngine: deps.getPressureEngine,
     onLevelsComputed: deps.onLevelsComputed,
+    getCachedLevels: deps.getCachedLevels,
+    getEodJob: deps.getEodJob,
   });
 
   return server;

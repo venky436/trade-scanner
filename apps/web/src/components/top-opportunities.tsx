@@ -3,11 +3,7 @@
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
-import type {
-  StockData,
-  SignalConfidence,
-  SupportResistanceResult,
-} from "@/lib/types";
+import type { StockData, SupportResistanceResult } from "@/lib/types";
 import { INDEX_NAMES } from "@/lib/constants";
 
 interface TopOpportunitiesProps {
@@ -15,82 +11,91 @@ interface TopOpportunitiesProps {
   srLevels: Record<string, SupportResistanceResult>;
 }
 
-const CONFIDENCE_ORDER: Record<SignalConfidence, number> = {
-  HIGH: 0,
-  MEDIUM: 1,
-  LOW: 2,
-};
-
-function computeScore(stock: StockData): number {
-  let score = 0;
-  const signal = stock.signal;
-  if (!signal || signal.action === "WAIT") return 0;
-
-  // Confidence: HIGH=4, MEDIUM=2.5, LOW=1
-  score += signal.confidence === "HIGH" ? 4 : signal.confidence === "MEDIUM" ? 2.5 : 1;
-
-  // Pressure confidence (0-1) scaled to 0-2
-  if (stock.pressure) score += stock.pressure.confidence * 2;
-
-  // Pattern match: +2 for pattern aligning with signal direction
-  if (stock.pattern) {
-    const aligns =
-      (signal.action === "BUY" && stock.pattern.direction === "BULLISH") ||
-      (signal.action === "SELL" && stock.pattern.direction === "BEARISH");
-    score += aligns ? 2 : 0.5;
-  }
-
-  // Momentum alignment: +2 for strong aligned momentum
-  if (stock.momentum) {
-    const bullMom = ["STRONG_UP", "UP"].includes(stock.momentum.signal);
-    const bearMom = ["STRONG_DOWN", "DOWN"].includes(stock.momentum.signal);
-    if ((signal.action === "BUY" && bullMom) || (signal.action === "SELL" && bearMom)) {
-      score += stock.momentum.signal.startsWith("STRONG") ? 2 : 1;
-    }
-  }
-
-  return Math.min(10, Math.round(score));
-}
-
-function scoreLabel(score: number): string {
-  if (score >= 8) return "great";
-  if (score >= 6) return "good";
-  if (score >= 4) return "fair";
-  return "weak";
+function getScore(stock: StockData): number {
+  return stock.signal?.score ?? 0;
 }
 
 function scoreColor(score: number): string {
-  if (score >= 8) return "border-green-500 text-green-500";
-  if (score >= 5) return "border-yellow-500 text-yellow-500";
-  return "border-zinc-500 text-zinc-500";
+  if (score >= 9) return "text-green-400 border-green-500 bg-green-500/10";
+  if (score >= 7) return "text-green-500 border-green-500/50 bg-green-500/5";
+  if (score >= 5) return "text-yellow-500 border-yellow-500/50 bg-yellow-500/5";
+  return "text-zinc-400 border-zinc-500/50 bg-muted";
 }
 
-function signalBadge(
-  action: "BUY" | "SELL",
-  confidence: SignalConfidence
-): { label: string; className: string } {
-  const isHigh = confidence === "HIGH";
-  if (action === "BUY") {
-    return {
-      label: isHigh ? "TOP SETUP" : "BUY SETUP",
-      className: isHigh
-        ? "bg-green-500/20 text-green-400"
-        : "bg-green-500/10 text-green-500",
-    };
+function signalTypeDisplay(type?: string): { label: string; color: string } {
+  switch (type) {
+    case "BREAKOUT": return { label: "BREAKOUT", color: "text-orange-500 bg-orange-500/10" };
+    case "BREAKDOWN": return { label: "BREAKDOWN", color: "text-red-500 bg-red-500/10" };
+    case "BOUNCE": return { label: "BOUNCE", color: "text-green-500 bg-green-500/10" };
+    case "REJECTION": return { label: "REJECTION", color: "text-blue-500 bg-blue-500/10" };
+    default: return { label: "", color: "" };
   }
-  return {
-    label: isHigh ? "TOP SETUP" : "SELL SETUP",
-    className: isHigh
-      ? "bg-orange-500/20 text-orange-400"
-      : "bg-orange-500/10 text-orange-500",
-  };
 }
 
-function formatPatternName(pattern: string): string {
-  return pattern
-    .split("_")
-    .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
-    .join(" ");
+function getEntry(
+  stock: StockData,
+  sr: SupportResistanceResult | undefined,
+): string {
+  const signal = stock.signal;
+  if (!signal || !sr) return `₹${stock.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
+  switch (signal.type) {
+    case "BOUNCE":
+      return sr.support !== null ? `Near support ₹${sr.support.toFixed(2)}` : `₹${stock.price.toFixed(2)}`;
+    case "REJECTION":
+      return sr.resistance !== null ? `Near resistance ₹${sr.resistance.toFixed(2)}` : `₹${stock.price.toFixed(2)}`;
+    case "BREAKOUT":
+      return sr.resistance !== null ? `Above ₹${sr.resistance.toFixed(2)}` : `₹${stock.price.toFixed(2)}`;
+    case "BREAKDOWN":
+      return sr.support !== null ? `Below ₹${sr.support.toFixed(2)}` : `₹${stock.price.toFixed(2)}`;
+    default:
+      return `₹${stock.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  }
+}
+
+function getStoploss(
+  signal: StockData["signal"],
+  sr: SupportResistanceResult | undefined,
+): string | null {
+  if (!signal || !sr) return null;
+  switch (signal.type) {
+    case "BOUNCE": return sr.support !== null ? `₹${sr.support.toFixed(2)}` : null;
+    case "REJECTION": return sr.resistance !== null ? `₹${sr.resistance.toFixed(2)}` : null;
+    case "BREAKOUT": return sr.resistance !== null ? `₹${sr.resistance.toFixed(2)}` : null;
+    case "BREAKDOWN": return sr.support !== null ? `₹${sr.support.toFixed(2)}` : null;
+    default: return null;
+  }
+}
+
+function getRisk(sr: SupportResistanceResult | undefined): { label: string; color: string } {
+  if (!sr) return { label: "Unknown", color: "text-muted-foreground" };
+  const minDist = Math.min(
+    sr.supportZone?.distancePercent ?? 100,
+    sr.resistanceZone?.distancePercent ?? 100,
+  );
+  if (minDist < 1) return { label: "Low", color: "text-green-500" };
+  if (minDist < 3) return { label: "Medium", color: "text-yellow-500" };
+  return { label: "High", color: "text-red-500" };
+}
+
+function getStatus(stock: StockData, sr: SupportResistanceResult | undefined): string {
+  const signal = stock.signal;
+  if (!signal) return "";
+  const stage = signal.stage;
+
+  if (stage === "CONFIRMED") {
+    if (signal.type === "BREAKOUT") return "Near breakout (prepare)";
+    if (signal.type === "BREAKDOWN") return "Near breakdown";
+    return "Fresh setup";
+  }
+  if (stage === "PRESSURE") return "Pressure confirmed";
+  if (stage === "MOMENTUM") return "Developing";
+  if (stage === "ACTIVITY") return "Waiting for confirmation";
+
+  const score = signal.score ?? 0;
+  if (score >= 7) return "Fresh setup";
+  if (score >= 5) return "Developing";
+  return "Waiting for confirmation";
 }
 
 export function TopOpportunities({ stockMap, srLevels }: TopOpportunitiesProps) {
@@ -102,205 +107,115 @@ export function TopOpportunities({ stockMap, srLevels }: TopOpportunitiesProps) 
         (s) =>
           s.signal &&
           s.signal.action !== "WAIT" &&
-          !INDEX_NAMES.has(s.symbol)
+          !INDEX_NAMES.has(s.symbol) &&
+          getScore(s) >= 3
       )
-      .sort((a, b) => {
-        const confA = CONFIDENCE_ORDER[a.signal!.confidence];
-        const confB = CONFIDENCE_ORDER[b.signal!.confidence];
-        if (confA !== confB) return confA - confB;
-        const momOrder: Record<string, number> = {
-          STRONG_UP: 0, UP: 1, FLAT: 2, DOWN: 3, STRONG_DOWN: 4,
-        };
-        const momA = a.momentum ? momOrder[a.momentum.signal] ?? 2 : 2;
-        const momB = b.momentum ? momOrder[b.momentum.signal] ?? 2 : 2;
-        return momA - momB;
-      })
+      .sort((a, b) => getScore(b) - getScore(a))
       .slice(0, 6);
   }, [stockMap]);
 
   if (opportunities.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground text-sm">
-        No active opportunities
+        No high-confidence setups right now
       </div>
     );
   }
 
   return (
-    <div>
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-        Top Opportunities
-      </h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {opportunities.map((stock) => {
-          const signal = stock.signal!;
-          const isBuy = signal.action === "BUY";
-          const score = computeScore(stock);
-          const sr = srLevels[stock.symbol];
-          const badge = signalBadge(signal.action as "BUY" | "SELL", signal.confidence);
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {opportunities.map((stock) => {
+        const signal = stock.signal!;
+        const isBuy = signal.action === "BUY";
+        const score = getScore(stock);
+        const sr = srLevels[stock.symbol];
+        const typeDisplay = signalTypeDisplay(signal.type);
+        const entry = getEntry(stock, sr);
+        const stoploss = getStoploss(signal, sr);
+        const risk = getRisk(sr);
+        const status = getStatus(stock, sr);
+        const positive = stock.change >= 0;
 
-          // Decision Zone
-          let decisionZone: string | null = null;
-          let decisionZoneColor = "";
-          if (sr) {
-            if (isBuy && sr.supportZone) {
-              decisionZone = `₹${sr.supportZone.min.toFixed(2)} – ₹${sr.supportZone.max.toFixed(2)}`;
-              decisionZoneColor = "text-green-600 dark:text-green-400";
-            } else if (!isBuy && sr.resistanceZone) {
-              decisionZone = `₹${sr.resistanceZone.min.toFixed(2)} – ₹${sr.resistanceZone.max.toFixed(2)}`;
-              decisionZoneColor = "text-red-600 dark:text-red-400";
-            }
-          }
+        return (
+          <Card
+            key={stock.symbol}
+            className={`relative cursor-pointer overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg border-l-4 ${
+              isBuy ? "border-l-green-500" : "border-l-red-500"
+            }`}
+            onClick={() => router.push(`/stock/${encodeURIComponent(stock.symbol)}`)}
+          >
+            {/* Gradient */}
+            <div className={`absolute inset-0 opacity-[0.03] ${
+              isBuy ? "bg-gradient-to-br from-green-500 to-transparent" : "bg-gradient-to-br from-red-500 to-transparent"
+            }`} />
 
-          // Invalidation
-          let invalidation: string | null = null;
-          if (sr && signal.type) {
-            switch (signal.type) {
-              case "BOUNCE":
-                if (sr.support !== null) invalidation = `Below ₹${sr.support.toFixed(2)}`;
-                break;
-              case "REJECTION":
-                if (sr.resistance !== null) invalidation = `Above ₹${sr.resistance.toFixed(2)}`;
-                break;
-              case "BREAKOUT":
-                if (sr.resistance !== null) invalidation = `Below ₹${sr.resistance.toFixed(2)}`;
-                break;
-              case "BREAKDOWN":
-                if (sr.support !== null) invalidation = `Above ₹${sr.support.toFixed(2)}`;
-                break;
-            }
-          }
-
-          // Tags
-          const tags: string[] = [];
-          if (sr?.summary.hasNearbyResistance) tags.push("Near Resistance");
-          if (sr?.summary.hasNearbySupport) tags.push("Near Support");
-          if (
-            stock.pressure &&
-            (stock.pressure.signal === "STRONG_BUY" || stock.pressure.signal === "STRONG_SELL")
-          ) {
-            tags.push("Volume Spike");
-          }
-          if (stock.pattern) tags.push(formatPatternName(stock.pattern.pattern));
-
-          // Primary reason line
-          const primaryReason = signal.reasons[0] ?? "";
-          const signalTypeLabel = signal.type
-            ? signal.type.charAt(0) + signal.type.slice(1).toLowerCase()
-            : "";
-
-          return (
-            <Card
-              key={stock.symbol}
-              className="relative cursor-pointer overflow-hidden transition-colors hover:bg-muted/50"
-              onClick={() =>
-                router.push(`/stock/${encodeURIComponent(stock.symbol)}`)
-              }
-            >
-              <div className="p-4 space-y-3">
-                {/* Top row: badge, action, symbol, score */}
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span
-                      className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${badge.className}`}
-                    >
-                      {badge.label}
-                    </span>
-                    <span
-                      className={`text-sm font-bold ${
-                        isBuy
-                          ? "text-green-600 dark:text-green-400"
-                          : "text-red-600 dark:text-red-400"
-                      }`}
-                    >
-                      {isBuy ? "↗" : "↘"} {isBuy ? "STRONG BUY" : "STRONG SELL"}
-                    </span>
-                    <span className="text-sm font-semibold text-foreground">
-                      {stock.symbol}
-                    </span>
-                  </div>
-                  {/* Score circle */}
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <div
-                      className={`flex items-center justify-center w-8 h-8 rounded-full border-2 text-sm font-bold ${scoreColor(score)}`}
-                    >
-                      {score}
-                    </div>
-                    <span className="text-xs text-muted-foreground">
-                      {scoreLabel(score)}
-                    </span>
-                  </div>
+            <div className="relative p-4 space-y-3">
+              {/* Row 1: Symbol + Score */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-bold text-foreground">{stock.symbol}</span>
+                  <span className={`text-xs font-mono tabular-nums ${
+                    positive ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
+                  }`}>
+                    {positive ? "+" : ""}{stock.change.toFixed(2)}%
+                  </span>
                 </div>
-
-                {/* Subtitle */}
-                {(primaryReason || signalTypeLabel) && (
-                  <p className="text-xs text-muted-foreground">
-                    {primaryReason}
-                    {primaryReason && signalTypeLabel ? " · " : ""}
-                    {signalTypeLabel}
-                  </p>
-                )}
-
-                {/* Why this trade */}
-                {signal.reasons.length > 0 && (
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase text-muted-foreground mb-1">
-                      Why This Trade
-                    </p>
-                    <ul className="space-y-0.5">
-                      {signal.reasons.slice(0, 3).map((r, i) => (
-                        <li
-                          key={i}
-                          className="text-xs text-muted-foreground flex items-start gap-1"
-                        >
-                          <span className="mt-0.5">•</span>
-                          <span>{r}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Details: Price, Decision Zone, Invalidation */}
-                <div className="space-y-1 text-xs border-t border-border/50 pt-2">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Price</span>
-                    <span className="font-mono font-semibold tabular-nums">
-                      ₹{stock.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Decision Zone</span>
-                    <span className={`font-mono tabular-nums ${decisionZoneColor}`}>
-                      {decisionZone ?? "—"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Invalidation</span>
-                    <span className="font-mono tabular-nums text-orange-500">
-                      {invalidation ?? "—"}
-                    </span>
-                  </div>
+                <div className={`flex items-center justify-center w-10 h-10 rounded-full border-2 text-sm font-black ${scoreColor(score)}`}>
+                  {score}
                 </div>
-
-                {/* Tags */}
-                {tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
-            </Card>
-          );
-        })}
-      </div>
+
+              {/* Row 2: Signal Type Badge */}
+              {typeDisplay.label ? (
+                <span className={`inline-flex text-xs font-bold uppercase px-2 py-1 rounded ${typeDisplay.color}`}>
+                  {typeDisplay.label}
+                </span>
+              ) : (
+                <span className={`inline-flex text-xs font-bold uppercase px-2 py-1 rounded ${
+                  isBuy ? "text-green-500 bg-green-500/10" : "text-red-500 bg-red-500/10"
+                }`}>
+                  {isBuy ? "BUY" : "SELL"}
+                </span>
+              )}
+
+              {/* Row 3: Entry + Stoploss + Risk */}
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">ENTRY</span>
+                  <span className={`font-mono font-semibold ${isBuy ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                    {entry}
+                  </span>
+                </div>
+                {stoploss && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">STOPLOSS</span>
+                    <span className="font-mono text-orange-500">{stoploss}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">RISK</span>
+                  <span className={`font-semibold ${risk.color}`}>{risk.label}</span>
+                </div>
+              </div>
+
+              {/* Row 4: WHY (1 line) */}
+              {signal.reasons[0] && (
+                <p className="text-[11px] text-muted-foreground line-clamp-1">
+                  {signal.reasons[0]}
+                </p>
+              )}
+
+              {/* Row 5: Status */}
+              {status && (
+                <div className="flex items-center gap-1 text-[10px] text-muted-foreground/70">
+                  <span>⏱</span>
+                  <span>{status}</span>
+                </div>
+              )}
+            </div>
+          </Card>
+        );
+      })}
     </div>
   );
 }

@@ -15,10 +15,12 @@ services:
       MARKET_MODE: ${MARKET_MODE:-commodity}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/trading_scanner
+      REDIS_HOST: redis
     volumes:
       - backend_data:/app/apps/server/data
     depends_on:
       - postgres
+      - redis
 
   frontend:
     build:
@@ -33,6 +35,16 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+
+  redis:
+    image: redis:7-alpine
+    container_name: trading-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: redis-server --appendonly yes
 
   postgres:
     image: postgres:17
@@ -50,3 +62,4 @@ services:
 volumes:
   pgdata:
   backend_data:
+  redisdata:
