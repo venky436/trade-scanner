@@ -7,11 +7,13 @@ import {
   CrosshairMode,
   CandlestickSeries,
   HistogramSeries,
+  LineSeries,
   LineStyle,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
   type HistogramData,
+  type LineData,
   type Time,
   type IPriceLine,
 } from "lightweight-charts";
@@ -19,7 +21,6 @@ import type { CandleData, StockData } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
 
-// Map interval button labels to API interval values
 const INTERVAL_MAP: Record<string, { api: string; seconds: number }> = {
   "1m": { api: "minute", seconds: 60 },
   "5m": { api: "5minute", seconds: 300 },
@@ -29,6 +30,20 @@ const INTERVAL_MAP: Record<string, { api: string; seconds: number }> = {
   "1D": { api: "day", seconds: 86400 },
 };
 
+// ── MA computation ──
+
+function computeMA(candles: CandleData[], period: number): LineData<Time>[] {
+  const result: LineData<Time>[] = [];
+  for (let i = period - 1; i < candles.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sum += candles[j].close;
+    }
+    result.push({ time: candles[i].time as Time, value: sum / period });
+  }
+  return result;
+}
+
 interface CandlestickChartProps {
   symbol: string;
   interval: string;
@@ -36,6 +51,12 @@ interface CandlestickChartProps {
   days?: number;
   supportLevel?: number | null;
   resistanceLevel?: number | null;
+  supportTouches?: number;
+  resistanceTouches?: number;
+  supportZoneMin?: number;
+  supportZoneMax?: number;
+  resistanceZoneMin?: number;
+  resistanceZoneMax?: number;
   className?: string;
 }
 
@@ -46,16 +67,26 @@ export function CandlestickChart({
   days: daysProp,
   supportLevel,
   resistanceLevel,
+  supportTouches,
+  resistanceTouches,
+  supportZoneMin,
+  supportZoneMax,
+  resistanceZoneMin,
+  resistanceZoneMax,
   className,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const ma20SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const ma50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const lastCandleRef = useRef<CandleData | null>(null);
   const intervalSecondsRef = useRef(60);
   const supportLineRef = useRef<IPriceLine | null>(null);
   const resistanceLineRef = useRef<IPriceLine | null>(null);
+  const supportZoneDiv = useRef<HTMLDivElement | null>(null);
+  const resistanceZoneDiv = useRef<HTMLDivElement | null>(null);
   const [chartReady, setChartReady] = useState(false);
 
   const { resolvedTheme } = useTheme();
@@ -114,9 +145,29 @@ export function CandlestickChart({
       scaleMargins: { top: 0.8, bottom: 0 },
     });
 
+    // 20 MA line (pink/red)
+    const ma20Series = chart.addSeries(LineSeries, {
+      color: "#f472b6",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      title: "20 MA",
+    });
+
+    // 50 MA line (yellow)
+    const ma50Series = chart.addSeries(LineSeries, {
+      color: "#facc15",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      title: "50 MA",
+    });
+
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    ma20SeriesRef.current = ma20Series;
+    ma50SeriesRef.current = ma50Series;
     setChartReady(true);
 
     return () => {
@@ -124,74 +175,132 @@ export function CandlestickChart({
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      ma20SeriesRef.current = null;
+      ma50SeriesRef.current = null;
       supportLineRef.current = null;
       resistanceLineRef.current = null;
+      if (supportZoneDiv.current) { supportZoneDiv.current.remove(); supportZoneDiv.current = null; }
+      if (resistanceZoneDiv.current) { resistanceZoneDiv.current.remove(); resistanceZoneDiv.current = null; }
       setChartReady(false);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update chart theme when resolvedTheme changes
+  // Update chart theme
   useEffect(() => {
     if (!chartRef.current) return;
     const colors = getThemeColors(resolvedTheme);
     chartRef.current.applyOptions({
-      layout: {
-        textColor: colors.text,
-      },
+      layout: { textColor: colors.text },
       grid: {
         vertLines: { color: colors.grid },
         horzLines: { color: colors.grid },
       },
-      rightPriceScale: {
-        borderColor: colors.border,
-      },
-      timeScale: {
-        borderColor: colors.border,
-      },
+      rightPriceScale: { borderColor: colors.border },
+      timeScale: { borderColor: colors.border },
     });
   }, [resolvedTheme, getThemeColors]);
 
-  // Draw S/R price lines
+  // Draw S/R price lines + zone bands (HTML overlays)
   useEffect(() => {
-    if (!chartReady || !candleSeriesRef.current) return;
+    if (!chartReady || !candleSeriesRef.current || !containerRef.current) return;
+    const series = candleSeriesRef.current;
 
-    // Remove old lines
-    if (supportLineRef.current) {
-      candleSeriesRef.current.removePriceLine(supportLineRef.current);
-      supportLineRef.current = null;
-    }
-    if (resistanceLineRef.current) {
-      candleSeriesRef.current.removePriceLine(resistanceLineRef.current);
-      resistanceLineRef.current = null;
+    // Remove old price lines
+    if (supportLineRef.current) { series.removePriceLine(supportLineRef.current); supportLineRef.current = null; }
+    if (resistanceLineRef.current) { series.removePriceLine(resistanceLineRef.current); resistanceLineRef.current = null; }
+
+    // Remove old zone divs
+    if (supportZoneDiv.current) { supportZoneDiv.current.remove(); supportZoneDiv.current = null; }
+    if (resistanceZoneDiv.current) { resistanceZoneDiv.current.remove(); resistanceZoneDiv.current = null; }
+
+    // Helper: create a zone overlay div
+    function createZoneOverlay(zoneMin: number, zoneMax: number, color: string): HTMLDivElement | null {
+      if (!candleSeriesRef.current || !containerRef.current) return null;
+      const topY = candleSeriesRef.current.priceToCoordinate(zoneMax);
+      const bottomY = candleSeriesRef.current.priceToCoordinate(zoneMin);
+      if (topY === null || bottomY === null) return null;
+
+      const div = document.createElement("div");
+      div.style.position = "absolute";
+      div.style.left = "0";
+      div.style.right = "60px"; // leave room for price axis
+      div.style.top = `${Math.min(topY, bottomY)}px`;
+      div.style.height = `${Math.abs(bottomY - topY)}px`;
+      div.style.backgroundColor = color;
+      div.style.pointerEvents = "none";
+      div.style.zIndex = "0";
+      containerRef.current.appendChild(div);
+      return div;
     }
 
-    // Draw support line
+    // ── Support zone (green band) ──
+    if (supportZoneMin != null && supportZoneMax != null) {
+      supportZoneDiv.current = createZoneOverlay(supportZoneMin, supportZoneMax, "rgba(34,197,94,0.10)");
+    }
+
+    // ── Resistance zone (red band) ──
+    if (resistanceZoneMin != null && resistanceZoneMax != null) {
+      resistanceZoneDiv.current = createZoneOverlay(resistanceZoneMin, resistanceZoneMax, "rgba(239,68,68,0.10)");
+    }
+
+    // ── Support level line ──
     if (supportLevel != null) {
-      supportLineRef.current = candleSeriesRef.current.createPriceLine({
+      const label = supportTouches ? `S (${supportTouches}t)` : "S";
+      supportLineRef.current = series.createPriceLine({
         price: supportLevel,
         color: "#22c55e",
-        lineWidth: 1,
+        lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: "S",
+        title: label,
       });
     }
 
-    // Draw resistance line
+    // ── Resistance level line ──
     if (resistanceLevel != null) {
-      resistanceLineRef.current = candleSeriesRef.current.createPriceLine({
+      const label = resistanceTouches ? `R (${resistanceTouches}t)` : "R";
+      resistanceLineRef.current = series.createPriceLine({
         price: resistanceLevel,
         color: "#ef4444",
-        lineWidth: 1,
+        lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: "R",
+        title: label,
       });
     }
-  }, [supportLevel, resistanceLevel, chartReady]);
 
-  // Fetch data when symbol, interval, or days changes
+    // Update zone positions when chart rescales
+    const updateZones = () => {
+      if (!candleSeriesRef.current) return;
+      if (supportZoneDiv.current && supportZoneMin != null && supportZoneMax != null) {
+        const topY = candleSeriesRef.current.priceToCoordinate(supportZoneMax);
+        const bottomY = candleSeriesRef.current.priceToCoordinate(supportZoneMin);
+        if (topY !== null && bottomY !== null) {
+          supportZoneDiv.current.style.top = `${Math.min(topY, bottomY)}px`;
+          supportZoneDiv.current.style.height = `${Math.abs(bottomY - topY)}px`;
+        }
+      }
+      if (resistanceZoneDiv.current && resistanceZoneMin != null && resistanceZoneMax != null) {
+        const topY = candleSeriesRef.current.priceToCoordinate(resistanceZoneMax);
+        const bottomY = candleSeriesRef.current.priceToCoordinate(resistanceZoneMin);
+        if (topY !== null && bottomY !== null) {
+          resistanceZoneDiv.current.style.top = `${Math.min(topY, bottomY)}px`;
+          resistanceZoneDiv.current.style.height = `${Math.abs(bottomY - topY)}px`;
+        }
+      }
+    };
+
+    // Subscribe to chart rescale events
+    chartRef.current?.timeScale().subscribeVisibleLogicalRangeChange(updateZones);
+
+    return () => {
+      chartRef.current?.timeScale().unsubscribeVisibleLogicalRangeChange(updateZones);
+    };
+  }, [supportLevel, resistanceLevel, supportTouches, resistanceTouches,
+      supportZoneMin, supportZoneMax, resistanceZoneMin, resistanceZoneMax, chartReady]);
+
+  // Fetch candle data + compute MAs
   const fetchCandles = useCallback(async () => {
     const cfg = INTERVAL_MAP[interval];
     if (!cfg) return;
@@ -226,6 +335,14 @@ export function CandlestickChart({
       candleSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
 
+      // Compute and set MA lines
+      if (ma20SeriesRef.current && candles.length >= 20) {
+        ma20SeriesRef.current.setData(computeMA(candles, 20));
+      }
+      if (ma50SeriesRef.current && candles.length >= 50) {
+        ma50SeriesRef.current.setData(computeMA(candles, 50));
+      }
+
       if (candles.length > 0) {
         lastCandleRef.current = candles[candles.length - 1];
       }
@@ -249,13 +366,10 @@ export function CandlestickChart({
 
     const tickTime = Math.floor(tick.timestamp / 1000);
     const intervalSec = intervalSecondsRef.current;
-    const candleStart =
-      Math.floor(tickTime / intervalSec) * intervalSec;
-    const lastCandleStart =
-      Math.floor(last.time / intervalSec) * intervalSec;
+    const candleStart = Math.floor(tickTime / intervalSec) * intervalSec;
+    const lastCandleStart = Math.floor(last.time / intervalSec) * intervalSec;
 
     if (candleStart === lastCandleStart) {
-      // Update existing candle
       const updated: CandleData = {
         ...last,
         high: Math.max(last.high, tick.price),
@@ -281,7 +395,6 @@ export function CandlestickChart({
             : "rgba(239,68,68,0.3)",
       });
     } else if (candleStart > lastCandleStart) {
-      // New candle
       const newCandle: CandleData = {
         time: candleStart,
         open: tick.price,
@@ -311,7 +424,7 @@ export function CandlestickChart({
     <div
       ref={containerRef}
       className={className}
-      style={{ width: "100%", height: "100%" }}
+      style={{ width: "100%", height: "100%", position: "relative" }}
     />
   );
 }

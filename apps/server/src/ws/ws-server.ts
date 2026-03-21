@@ -1,17 +1,19 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
-import type { StockSnapshot, WsMessage, PressureResult, SupportResistanceResult, MomentumResult, PatternSignal } from "../lib/types.js";
+import type { StockSnapshot, WsMessage, SignalSnapshot, PressureResult, MomentumResult, PatternSignal } from "../lib/types.js";
 import { marketDataService } from "../services/market-data.service.js";
-import { getSignal } from "../lib/signal-engine.js";
 
 interface WsManagerConfig {
   symbols: string[];
   getPressure?: (symbol: string) => PressureResult | null;
-  getLevels?: () => Record<string, SupportResistanceResult>;
   getMomentum?: (symbol: string) => MomentumResult | null;
   getPattern?: (symbol: string) => PatternSignal | null;
+  getSignalSnapshot?: (symbol: string) => SignalSnapshot | null;
+  getEligibleSymbols?: () => string[];
 }
+
+const FALLBACK_SIGNAL = { action: "WAIT" as const, confidence: "LOW" as const, reasons: ["Loading..."] };
 
 export function createWsManager(config: WsManagerConfig) {
   const { symbols } = config;
@@ -21,38 +23,16 @@ export function createWsManager(config: WsManagerConfig) {
 
   function buildSnapshot(): StockSnapshot[] {
     const quotes = marketDataService.getAllQuotes();
-    const sr = config.getLevels?.();
     const snapshots: StockSnapshot[] = [];
 
-    for (const symbol of symbols) {
+    // Send only eligible stocks (filtered top 150) instead of all symbols
+    const symbolList = config.getEligibleSymbols?.() ?? symbols;
+    for (const symbol of symbolList) {
       const q = quotes.get(symbol);
       if (!q) continue;
 
       const change = q.close !== 0 ? ((q.lastPrice - q.close) / q.close) * 100 : 0;
-      const pressure = config.getPressure?.(symbol) ?? undefined;
-      const momentum = config.getMomentum?.(symbol) ?? undefined;
-      const pattern = config.getPattern?.(symbol) ?? undefined;
-
-      // Compute signal if S/R levels exist
-      const symbolSr = sr?.[symbol];
-      const freshSr = symbolSr ? {
-        supportZone: symbolSr.supportZone
-          ? { level: symbolSr.supportZone.level, distancePercent: Math.abs(q.lastPrice - symbolSr.supportZone.level) / q.lastPrice * 100 }
-          : null,
-        resistanceZone: symbolSr.resistanceZone
-          ? { level: symbolSr.resistanceZone.level, distancePercent: Math.abs(q.lastPrice - symbolSr.resistanceZone.level) / q.lastPrice * 100 }
-          : null,
-      } : undefined;
-
-      const signal = freshSr
-        ? getSignal({
-            price: q.lastPrice,
-            sr: freshSr,
-            pressure: pressure ?? null,
-            momentum: momentum ?? null,
-            pattern: pattern ?? null,
-          })
-        : undefined;
+      const cached = config.getSignalSnapshot?.(symbol);
 
       snapshots.push({
         symbol,
@@ -64,10 +44,11 @@ export function createWsManager(config: WsManagerConfig) {
         volume: q.volume,
         change: Math.round(change * 100) / 100,
         timestamp: q.timestamp,
-        pressure,
-        momentum,
-        pattern,
-        signal,
+        pressure: config.getPressure?.(symbol) ?? undefined,
+        momentum: config.getMomentum?.(symbol) ?? undefined,
+        pattern: config.getPattern?.(symbol) ?? undefined,
+        reaction: cached?.reaction ?? undefined,
+        signal: cached?.signal ?? FALLBACK_SIGNAL,
       });
     }
 
@@ -78,7 +59,6 @@ export function createWsManager(config: WsManagerConfig) {
     clients.add(ws);
     console.log(`WS client connected. Total: ${clients.size}`);
 
-    // Send snapshot immediately
     const snapshot: WsMessage = {
       type: "snapshot",
       data: buildSnapshot(),
@@ -96,7 +76,6 @@ export function createWsManager(config: WsManagerConfig) {
       clients.delete(ws);
     });
 
-    // Respond to pings from client
     ws.on("pong", () => {
       (ws as any).__alive = true;
     });

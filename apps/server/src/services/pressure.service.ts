@@ -105,6 +105,7 @@ function closeCandle(symbol: string, state: TickState, timestamp: number): void 
 
 export function createPressureEngine() {
   const stateMap = new Map<string, TickState>();
+  const versionMap = new Map<string, number>();
 
   function processTick(symbol: string, tick: TickInput): void {
     let state = stateMap.get(symbol);
@@ -135,6 +136,7 @@ export function createPressureEngine() {
     // Check candle close FIRST — must fire on every tick
     if (tick.timestamp - state.candleOpenTime >= 60_000) {
       closeCandle(symbol, state, tick.timestamp);
+      versionMap.set(symbol, (versionMap.get(symbol) ?? 0) + 1);
     }
 
     const volumeDiff = tick.volume - state.prevVolume;
@@ -203,7 +205,11 @@ export function createPressureEngine() {
     stateMap.clear();
   }
 
-  return { processTick, getPressure, getAllPressure, getStats, reset };
+  function getVersion(symbol: string): number {
+    return versionMap.get(symbol) ?? 0;
+  }
+
+  return { processTick, getPressure, getVersion, getAllPressure, getStats, reset };
 }
 
 export type PressureEngine = ReturnType<typeof createPressureEngine>;

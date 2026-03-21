@@ -84,7 +84,7 @@ export async function loadInstruments(
   apiKey: string,
   accessToken: string,
   mode: MarketMode = "commodity",
-  maxCount: number = 200
+  maxCount: number = 500
 ): Promise<InstrumentMaps> {
   const modeConfig = MODE_CONFIGS[mode];
 
@@ -141,31 +141,49 @@ export async function loadInstruments(
       selected.push(contracts[0]);
     }
   } else {
-    // --- Equity mode: prioritize index constituents, fill with top by price ---
+    // --- Equity mode: Phase 0 filtering (NO API calls, O(N)) ---
+    const MIN_PRICE = 50;
+    const MAX_PRICE = 5000;
+
     const priorityStocks: any[] = [];
-    const otherStocks: any[] = [];
+    const eligibleOthers: any[] = [];
+    let removedPrice = 0;
 
     for (const inst of filtered) {
-      if (PRIORITY_STOCKS.has(inst.tradingsymbol as string)) {
+      const symbol = inst.tradingsymbol as string;
+      const price = inst.last_price || 0;
+
+      // Priority stocks always included (NIFTY_50, NIFTY_NEXT_50, EXTRA_STOCKS)
+      if (PRIORITY_STOCKS.has(symbol)) {
         priorityStocks.push(inst);
-      } else {
-        otherStocks.push(inst);
+        continue;
       }
+
+      // Phase 0 Filter: Price range (skip if price unknown)
+      if (price > 0 && (price < MIN_PRICE || price > MAX_PRICE)) {
+        removedPrice++;
+        continue;
+      }
+
+      eligibleOthers.push(inst);
     }
 
-    // Sort others by price descending for filling remaining slots
-    otherStocks.sort((a: any, b: any) => (b.last_price || 0) - (a.last_price || 0));
+    // Sort eligible others by price descending (higher price = more liquid typically)
+    eligibleOthers.sort((a: any, b: any) => (b.last_price || 0) - (a.last_price || 0));
 
-    // Priority stocks first, then fill remaining slots
-    const remaining = maxCount - priorityStocks.length;
-    selected = [...priorityStocks, ...otherStocks.slice(0, Math.max(0, remaining))];
+    // Cap non-priority stocks to keep total manageable
+    const maxOthers = Math.max(0, maxCount - priorityStocks.length);
+    selected = [...priorityStocks, ...eligibleOthers.slice(0, maxOthers)];
 
-    console.log(`[${mode}] ${priorityStocks.length} index/priority stocks + ${Math.max(0, remaining)} filled by price`);
+    console.log(`[${mode}] Phase 0 filter: ${filtered.length} → ${selected.length} stocks`);
+    console.log(`[${mode}]   Priority (always included): ${priorityStocks.length}`);
+    console.log(`[${mode}]   Price filter (₹${MIN_PRICE}-₹${MAX_PRICE}): removed ${removedPrice}`);
+    console.log(`[${mode}]   Eligible others: ${eligibleOthers.length} (capped to ${maxOthers})`);
   }
 
-  // Sort by last_price descending, take top N
+  // Sort by last_price descending
   selected.sort((a: any, b: any) => (b.last_price || 0) - (a.last_price || 0));
-  const final = selected.slice(0, maxCount);
+  const final = selected;
 
   // Build bidirectional maps
   const tokenToSymbol = new Map<number, string>();

@@ -6,5 +6,5 @@ export default async function StockPage({
   params: Promise<{ symbol: string }>;
 }) {
   const { symbol } = await params;
-  return <StockDetail symbol={symbol} />;
+  return <StockDetail symbol={decodeURIComponent(symbol)} />;
 }

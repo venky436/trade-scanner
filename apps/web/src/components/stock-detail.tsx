@@ -48,6 +48,9 @@ function formatVolume(vol: number): string {
 }
 
 function computeScore(stock: StockData): number {
+  // Use server-computed score if available
+  if (stock.signal?.score) return stock.signal.score;
+
   let score = 0;
   const signal = stock.signal;
   if (!signal || signal.action === "WAIT") return 0;
@@ -296,49 +299,96 @@ export function StockDetail({ symbol }: { symbol: string }) {
         </div>
       </div>
 
-      {/* ── Section 2: Signal Row ── */}
+      {/* ── Section 2: Decision Row ── */}
       <div className="grid md:grid-cols-5 gap-4">
-        {/* Signal Card (3/5) */}
+        {/* Decision Card (3/5) */}
         <Card className={`md:col-span-3 border-border/50 border-l-4 ${signal ? signalBorderColor(signal.action) : "border-l-muted"}`}>
           <CardContent className="p-5 space-y-4">
             {signal && signal.action !== "WAIT" ? (
               <>
-                {/* Top badges */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`text-xs font-bold uppercase px-2 py-1 rounded ${signalActionColor(signal.action)}`}>
-                    {signal.action}
-                  </span>
-                  {signal.type && (
-                    <span className="text-xs font-medium px-2 py-1 rounded bg-muted text-foreground">
-                      {signalTypeLabel(signal.type)}
-                    </span>
-                  )}
-                  <span className={`text-xs font-medium px-2 py-1 rounded ${
-                    signal.confidence === "HIGH"
-                      ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                      : signal.confidence === "MEDIUM"
-                        ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
-                        : "bg-muted text-muted-foreground"
+                {/* Signal Type + Score */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {signal.type ? (
+                      <span className={`text-sm font-black uppercase px-2.5 py-1 rounded ${
+                        signal.type === "BREAKOUT" ? "text-orange-500 bg-orange-500/10" :
+                        signal.type === "BREAKDOWN" ? "text-red-500 bg-red-500/10" :
+                        signal.type === "BOUNCE" ? "text-green-500 bg-green-500/10" :
+                        "text-blue-500 bg-blue-500/10"
+                      }`}>
+                        {signalTypeLabel(signal.type)}
+                      </span>
+                    ) : (
+                      <span className={`text-sm font-black uppercase px-2.5 py-1 rounded ${signalActionColor(signal.action)}`}>
+                        {signal.action}
+                      </span>
+                    )}
+                    {signal.stage && signal.stage !== "CONFIRMED" && (
+                      <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
+                        {signal.stage === "ACTIVITY" ? "Preliminary" : signal.stage === "MOMENTUM" ? "Momentum only" : "Partial"}
+                      </span>
+                    )}
+                  </div>
+                  <div className={`flex items-center justify-center w-12 h-12 rounded-full border-2 text-lg font-black ${
+                    score >= 8 ? "border-green-500 text-green-500 bg-green-500/5" :
+                    score >= 5 ? "border-yellow-500 text-yellow-500 bg-yellow-500/5" :
+                    "border-zinc-500 text-zinc-400 bg-muted"
                   }`}>
-                    {signal.confidence} confidence
-                  </span>
+                    {score}
+                  </div>
                 </div>
 
-                {/* Description */}
-                {signal.reasons[0] && (
-                  <p className="text-sm text-muted-foreground">
-                    {signal.reasons[0]}
-                  </p>
-                )}
+                {/* ACTION line */}
+                <div className="space-y-2 text-sm">
+                  {/* Entry */}
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground font-medium">ENTRY</span>
+                    <span className={`font-mono font-semibold ${signal.action === "BUY" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                      {signal.type === "BOUNCE" && srLevels?.support != null
+                        ? `Near support ₹${srLevels.support.toFixed(2)}`
+                        : signal.type === "REJECTION" && srLevels?.resistance != null
+                          ? `Near resistance ₹${srLevels.resistance.toFixed(2)}`
+                          : signal.type === "BREAKOUT" && srLevels?.resistance != null
+                            ? `Above ₹${srLevels.resistance.toFixed(2)}`
+                            : signal.type === "BREAKDOWN" && srLevels?.support != null
+                              ? `Below ₹${srLevels.support.toFixed(2)}`
+                              : `₹${formatPrice(stock?.price ?? 0)}`}
+                    </span>
+                  </div>
+                  {/* Stoploss */}
+                  {srLevels && signal.type && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground font-medium">STOPLOSS</span>
+                      <span className="font-mono text-orange-500">
+                        {signal.type === "BOUNCE" && srLevels.support != null ? `₹${srLevels.support.toFixed(2)}` :
+                         signal.type === "REJECTION" && srLevels.resistance != null ? `₹${srLevels.resistance.toFixed(2)}` :
+                         signal.type === "BREAKOUT" && srLevels.resistance != null ? `₹${srLevels.resistance.toFixed(2)}` :
+                         signal.type === "BREAKDOWN" && srLevels.support != null ? `₹${srLevels.support.toFixed(2)}` : "—"}
+                      </span>
+                    </div>
+                  )}
+                  {/* Risk */}
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground font-medium">RISK</span>
+                    {(() => {
+                      const dist = Math.min(
+                        srLevels?.supportZone?.distancePercent ?? 100,
+                        srLevels?.resistanceZone?.distancePercent ?? 100,
+                      );
+                      const risk = dist < 1 ? { label: "Low", color: "text-green-500" } :
+                                   dist < 3 ? { label: "Medium", color: "text-yellow-500" } :
+                                   { label: "High", color: "text-red-500" };
+                      return <span className={`font-semibold ${risk.color}`}>{risk.label}</span>;
+                    })()}
+                  </div>
+                </div>
 
                 {/* Why This Trade */}
                 {signal.reasons.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase text-muted-foreground mb-1.5">
-                      Why This Trade
-                    </p>
+                  <div className="border-t border-border/50 pt-3">
+                    <p className="text-[11px] font-semibold uppercase text-muted-foreground mb-1.5">Why This Trade</p>
                     <ul className="space-y-1">
-                      {signal.reasons.map((r, i) => (
+                      {signal.reasons.slice(0, 3).map((r, i) => (
                         <li key={i} className="text-sm text-muted-foreground flex items-start gap-1.5">
                           <span className="mt-0.5 text-foreground">•</span>
                           <span>{r}</span>
@@ -348,40 +398,43 @@ export function StockDetail({ symbol }: { symbol: string }) {
                   </div>
                 )}
 
-                {/* Entry Zone + Invalidation */}
-                <div className="grid grid-cols-2 gap-3">
-                  <EntryZoneBox signal={signal} srLevels={srLevels} />
-                  <InvalidationBox signal={signal} srLevels={srLevels} />
-                </div>
-
-                {/* Pressure note */}
-                {pressure && (
-                  <p className="text-xs text-muted-foreground">
-                    {pressure.signal.includes("BUY")
-                      ? "📊 Accumulation — buying pressure at support"
-                      : pressure.signal.includes("SELL")
-                        ? "📊 Distribution — selling pressure at resistance"
-                        : "📊 Neutral volume pressure"}
-                  </p>
+                {/* What to Wait For (when near S/R) */}
+                {srLevels && (srLevels.summary.hasNearbyResistance || srLevels.summary.hasNearbySupport) && (
+                  <div className="border-t border-border/50 pt-3">
+                    <p className="text-[11px] font-semibold uppercase text-muted-foreground mb-1.5">What to Watch</p>
+                    <ul className="space-y-1 text-xs text-muted-foreground">
+                      {srLevels.resistance != null && srLevels.summary.hasNearbyResistance && (
+                        <li>• Break above ₹{srLevels.resistance.toFixed(2)} → Breakout</li>
+                      )}
+                      {srLevels.support != null && srLevels.summary.hasNearbySupport && (
+                        <li>• Hold above ₹{srLevels.support.toFixed(2)} → Bounce confirmation</li>
+                      )}
+                    </ul>
+                  </div>
                 )}
               </>
             ) : (
               <div className="py-6 text-center">
                 <p className="text-muted-foreground">No active signal — watching for setups</p>
+                {srLevels && (
+                  <div className="mt-3 text-xs text-muted-foreground">
+                    {srLevels.resistance != null && <p>Watch resistance at ₹{srLevels.resistance.toFixed(2)}</p>}
+                    {srLevels.support != null && <p>Watch support at ₹{srLevels.support.toFixed(2)}</p>}
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Signal Strength Card (2/5) */}
+        {/* Score Breakdown Card (2/5) */}
         <Card className="md:col-span-2 border-border/50">
           <CardContent className="p-5 space-y-4">
-            {/* Header */}
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Signals</h3>
+              <h3 className="text-sm font-semibold">Score Breakdown</h3>
               {score >= 8 && (
                 <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400">
-                  High Probability Setup
+                  High Probability
                 </span>
               )}
             </div>
@@ -393,72 +446,71 @@ export function StockDetail({ symbol }: { symbol: string }) {
                 <span className="text-sm text-muted-foreground">{scoreLabel(score)}</span>
               </div>
               <div className="w-full h-2 rounded-full bg-muted">
-                <div
-                  className={`h-full rounded-full transition-all ${scoreBarColor(score)}`}
-                  style={{ width: `${score * 10}%` }}
-                />
+                <div className={`h-full rounded-full transition-all ${scoreBarColor(score)}`} style={{ width: `${score * 10}%` }} />
               </div>
             </div>
 
-            {/* Score breakdown */}
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Proximity</span>
-                <span className="font-mono tabular-nums">
-                  {srLevels?.resistanceZone
-                    ? `${srLevels.resistanceZone.distancePercent.toFixed(2)}% from resistance`
-                    : srLevels?.supportZone
-                      ? `${srLevels.supportZone.distancePercent.toFixed(2)}% from support`
-                      : "—"}
-                </span>
+            {/* Engine breakdown bars */}
+            {signal?.scoreBreakdown ? (
+              <div className="space-y-2.5">
+                {[
+                  { label: "Pressure", value: signal.scoreBreakdown.pressure, color: "bg-blue-500" },
+                  { label: "Momentum", value: signal.scoreBreakdown.momentum, color: "bg-purple-500" },
+                  { label: "S/R", value: signal.scoreBreakdown.sr, color: "bg-yellow-500" },
+                  { label: "Pattern", value: signal.scoreBreakdown.pattern, color: "bg-green-500" },
+                  { label: "Volatility", value: signal.scoreBreakdown.volatility, color: "bg-orange-500" },
+                ].map(({ label, value, color }) => (
+                  <div key={label} className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className="font-mono font-semibold tabular-nums">{value}/10</span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-muted">
+                      <div className={`h-full rounded-full ${color}`} style={{ width: `${value * 10}%` }} />
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Pattern</span>
-                <span>{pattern ? formatPatternName(pattern.pattern) : "—"}</span>
+            ) : (
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Momentum</span>
+                  <span className={momentum ? momentumLabel(momentum.signal).color : ""}>
+                    {momentum ? momentumLabel(momentum.signal).text : "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Pressure</span>
+                  <span>{pressure ? `${pressureLabel(pressure.signal).text} (${trendIcon(pressure.trend)})` : "—"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Pattern</span>
+                  <span>{pattern ? formatPatternName(pattern.pattern) : "—"}</span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Momentum</span>
-                <span className={momentum ? momentumLabel(momentum.signal).color : ""}>
-                  {momentum ? momentumLabel(momentum.signal).text : "—"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Pressure</span>
-                <span>
-                  {pressure
-                    ? `${pressureLabel(pressure.signal).text} (${trendIcon(pressure.trend)})`
-                    : "—"}
-                </span>
-              </div>
-            </div>
+            )}
 
-            {/* Tag badges */}
-            <div className="space-y-2 pt-2 border-t border-border/50">
-              <TagRow label="STRUCTURE" tags={[
-                ...(srLevels?.summary.hasNearbySupport ? ["Near Support"] : []),
-                ...(srLevels?.summary.hasNearbyResistance ? ["Near Resistance"] : []),
-              ]} dotColor="bg-blue-500" />
-              {pattern && (
-                <TagRow
-                  label="PATTERN"
-                  tags={[`${formatPatternName(pattern.pattern)} ${pattern.direction === "BULLISH" ? "▲" : "▼"}`]}
-                  dotColor={pattern.direction === "BULLISH" ? "bg-green-500" : "bg-red-500"}
-                />
-              )}
-              {momentum && (
-                <TagRow
-                  label="MOMENTUM"
-                  tags={[
-                    momentumLabel(momentum.signal).text,
-                    `${accelerationLabel(momentum.acceleration).text} ${accelerationLabel(momentum.acceleration).icon}`,
-                  ]}
-                  dotColor="bg-purple-500"
-                />
-              )}
-              {pressure && (pressure.signal === "STRONG_BUY" || pressure.signal === "STRONG_SELL") && (
-                <TagRow label="VOLUME" tags={["Volume Spike"]} dotColor="bg-orange-500" />
-              )}
-            </div>
+            {/* Risk visualization */}
+            {srLevels && (
+              <div className="border-t border-border/50 pt-3 space-y-1.5 text-xs">
+                {srLevels.supportZone && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">To Support</span>
+                    <span className={srLevels.supportZone.distancePercent < 2 ? "text-green-500" : "text-muted-foreground"}>
+                      {srLevels.supportZone.distancePercent.toFixed(2)}% {srLevels.supportZone.distancePercent < 1 ? "✅" : ""}
+                    </span>
+                  </div>
+                )}
+                {srLevels.resistanceZone && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">To Resistance</span>
+                    <span className={srLevels.resistanceZone.distancePercent < 1 ? "text-red-500" : "text-muted-foreground"}>
+                      {srLevels.resistanceZone.distancePercent.toFixed(2)}% {srLevels.resistanceZone.distancePercent < 1 ? "⚠️" : ""}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -522,6 +574,12 @@ export function StockDetail({ symbol }: { symbol: string }) {
               days={days}
               supportLevel={srLevels?.support}
               resistanceLevel={srLevels?.resistance}
+              supportTouches={srLevels?.supportZone?.touches}
+              resistanceTouches={srLevels?.resistanceZone?.touches}
+              supportZoneMin={srLevels?.supportZone?.min}
+              supportZoneMax={srLevels?.supportZone?.max}
+              resistanceZoneMin={srLevels?.resistanceZone?.min}
+              resistanceZoneMax={srLevels?.resistanceZone?.max}
             />
           </div>
         </CardContent>

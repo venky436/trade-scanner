@@ -5,6 +5,7 @@ import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal, Mo
 import { getSupportResistance } from "../services/levels.service.js";
 import { marketDataService } from "../services/market-data.service.js";
 import type { PressureEngine } from "../services/pressure.service.js";
+import type { EodJob } from "../services/eod-job.service.js";
 import { detectPattern } from "../lib/pattern-engine.js";
 import { getMomentum } from "../lib/momentum-engine.js";
 
@@ -26,6 +27,8 @@ interface StocksRouteOpts {
   getInstrumentMaps: () => InstrumentMaps | null;
   getPressureEngine: () => PressureEngine | null;
   onLevelsComputed?: (levels: Record<string, SupportResistanceResult>) => void;
+  getCachedLevels?: () => Record<string, SupportResistanceResult>;
+  getEodJob?: () => EodJob | null;
 }
 
 const formatDate = (d: Date) =>
@@ -51,79 +54,23 @@ export async function stocksRoute(
     return { count: data.length, data, timestamp: Date.now() };
   });
 
-  // --- S/R Levels for all stocks ---
+  // --- S/R Levels for all stocks (served from background worker cache) ---
   fastify.get("/api/stocks/levels", async (_req, reply) => {
-    const accessToken = opts.getAccessToken();
     const instrumentMaps = opts.getInstrumentMaps();
 
-    if (!accessToken || !instrumentMaps) {
+    if (!instrumentMaps) {
       return reply
         .status(503)
         .send({ error: "Market data not initialized. Login to Kite first." });
     }
 
-    // Return cache if fresh
-    if (levelsCache && Date.now() - levelsCache.timestamp < LEVELS_CACHE_TTL) {
-      return { levels: levelsCache.levels, timestamp: levelsCache.timestamp };
-    }
-
-    const kc = new KiteConnect({ api_key: opts.apiKey });
-    kc.setAccessToken(accessToken);
-
-    const to = new Date();
-    const from = new Date();
-    from.setDate(from.getDate() - 15); // ~10 trading days
-
-    const levels: Record<string, SupportResistanceResult> = {};
-    const symbols = instrumentMaps.symbols;
-
-    fastify.log.info(`[SR] Computing levels for ${symbols.length} symbols...`);
-
-    // Batch in groups of 5 to avoid Kite rate limits
-    const BATCH_SIZE = 5;
-    for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
-      const batch = symbols.slice(i, i + BATCH_SIZE);
-      const promises = batch.map(async (symbol) => {
-        const token = instrumentMaps.symbolToToken.get(symbol);
-        if (token === undefined) return;
-
-        try {
-          const data = await kc.getHistoricalData(
-            token,
-            "day" as KiteInterval,
-            formatDate(from),
-            formatDate(to),
-          );
-
-          const candles: Candle[] = data.map((d: any) => ({
-            time: Math.floor(new Date(d.date).getTime() / 1000),
-            open: d.open,
-            high: d.high,
-            low: d.low,
-            close: d.close,
-            volume: d.volume,
-          }));
-
-          const quote = marketDataService.getQuote(symbol);
-          const price =
-            quote?.lastPrice ||
-            (candles.length > 0 ? candles[candles.length - 1].close : 0);
-
-          if (price > 0 && candles.length >= 2) {
-            levels[symbol] = getSupportResistance(candles, price);
-          }
-        } catch (err: any) {
-          fastify.log.warn(`[SR] Failed for ${symbol}: ${err.message}`);
-        }
-      });
-      await Promise.allSettled(promises);
-    }
-
-    fastify.log.info(`[SR] Computed levels for ${Object.keys(levels).length}/${symbols.length} symbols`);
-
-    levelsCache = { levels, timestamp: Date.now() };
-    opts.onLevelsComputed?.(levels);
-    return { levels, timestamp: levelsCache.timestamp };
+    // Read from shared cachedLevels (populated by levels-worker)
+    const levels = opts.getCachedLevels?.() ?? {};
+    return {
+      levels,
+      coverage: `${Object.keys(levels).length}/${instrumentMaps.symbols.length}`,
+      timestamp: Date.now(),
+    };
   });
 
   // --- Candlestick Patterns + Momentum for near-S/R symbols ---
@@ -333,6 +280,23 @@ export async function stocksRoute(
       return reply
         .status(500)
         .send({ error: "Failed to fetch historical data", detail: err.message });
+    }
+  });
+
+  // --- EOD Precomputation ---
+  fastify.post("/api/eod/run", async (_req, reply) => {
+    const eodJob = opts.getEodJob?.();
+    if (!eodJob) {
+      return reply.status(503).send({ error: "EOD job not initialized" });
+    }
+    if (eodJob.isRunning()) {
+      return reply.status(409).send({ error: "EOD job already running" });
+    }
+    try {
+      const result = await eodJob.run();
+      return { success: true, ...result };
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message });
     }
   });
 }
