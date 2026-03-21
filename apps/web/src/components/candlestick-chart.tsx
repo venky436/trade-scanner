@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
+import { useTheme } from "next-themes";
 import {
   createChart,
   CrosshairMode,
   CandlestickSeries,
   HistogramSeries,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
   type HistogramData,
   type Time,
+  type IPriceLine,
 } from "lightweight-charts";
 import type { CandleData, StockData } from "@/lib/types";
 
@@ -30,6 +33,9 @@ interface CandlestickChartProps {
   symbol: string;
   interval: string;
   tick: StockData | null;
+  days?: number;
+  supportLevel?: number | null;
+  resistanceLevel?: number | null;
   className?: string;
 }
 
@@ -37,6 +43,9 @@ export function CandlestickChart({
   symbol,
   interval,
   tick,
+  days: daysProp,
+  supportLevel,
+  resistanceLevel,
   className,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -45,26 +54,42 @@ export function CandlestickChart({
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const lastCandleRef = useRef<CandleData | null>(null);
   const intervalSecondsRef = useRef(60);
+  const supportLineRef = useRef<IPriceLine | null>(null);
+  const resistanceLineRef = useRef<IPriceLine | null>(null);
+  const [chartReady, setChartReady] = useState(false);
+
+  const { resolvedTheme } = useTheme();
+
+  const getThemeColors = useCallback((theme: string | undefined) => {
+    const isDark = theme !== "light";
+    return {
+      grid: isDark ? "#27272a" : "#e4e4e7",
+      text: isDark ? "#a1a1aa" : "#71717a",
+      border: isDark ? "#27272a" : "#e4e4e7",
+    };
+  }, []);
 
   // Create chart once
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const colors = getThemeColors(resolvedTheme);
+
     const chart = createChart(containerRef.current, {
       layout: {
         background: { color: "transparent" },
-        textColor: "#a1a1aa",
+        textColor: colors.text,
       },
       grid: {
-        vertLines: { color: "#27272a" },
-        horzLines: { color: "#27272a" },
+        vertLines: { color: colors.grid },
+        horzLines: { color: colors.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: {
-        borderColor: "#27272a",
+        borderColor: colors.border,
       },
       timeScale: {
-        borderColor: "#27272a",
+        borderColor: colors.border,
         timeVisible: true,
         secondsVisible: false,
       },
@@ -92,22 +117,87 @@ export function CandlestickChart({
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    setChartReady(true);
 
     return () => {
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      supportLineRef.current = null;
+      resistanceLineRef.current = null;
+      setChartReady(false);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fetch data when symbol or interval changes
+  // Update chart theme when resolvedTheme changes
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const colors = getThemeColors(resolvedTheme);
+    chartRef.current.applyOptions({
+      layout: {
+        textColor: colors.text,
+      },
+      grid: {
+        vertLines: { color: colors.grid },
+        horzLines: { color: colors.grid },
+      },
+      rightPriceScale: {
+        borderColor: colors.border,
+      },
+      timeScale: {
+        borderColor: colors.border,
+      },
+    });
+  }, [resolvedTheme, getThemeColors]);
+
+  // Draw S/R price lines
+  useEffect(() => {
+    if (!chartReady || !candleSeriesRef.current) return;
+
+    // Remove old lines
+    if (supportLineRef.current) {
+      candleSeriesRef.current.removePriceLine(supportLineRef.current);
+      supportLineRef.current = null;
+    }
+    if (resistanceLineRef.current) {
+      candleSeriesRef.current.removePriceLine(resistanceLineRef.current);
+      resistanceLineRef.current = null;
+    }
+
+    // Draw support line
+    if (supportLevel != null) {
+      supportLineRef.current = candleSeriesRef.current.createPriceLine({
+        price: supportLevel,
+        color: "#22c55e",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "S",
+      });
+    }
+
+    // Draw resistance line
+    if (resistanceLevel != null) {
+      resistanceLineRef.current = candleSeriesRef.current.createPriceLine({
+        price: resistanceLevel,
+        color: "#ef4444",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "R",
+      });
+    }
+  }, [supportLevel, resistanceLevel, chartReady]);
+
+  // Fetch data when symbol, interval, or days changes
   const fetchCandles = useCallback(async () => {
     const cfg = INTERVAL_MAP[interval];
     if (!cfg) return;
     intervalSecondsRef.current = cfg.seconds;
 
-    const days = cfg.api === "day" ? 90 : 1;
+    const days = daysProp ?? (cfg.api === "day" ? 90 : 1);
 
     try {
       const res = await fetch(
@@ -144,7 +234,7 @@ export function CandlestickChart({
     } catch {
       // ignore fetch errors
     }
-  }, [symbol, interval]);
+  }, [symbol, interval, daysProp]);
 
   useEffect(() => {
     fetchCandles();

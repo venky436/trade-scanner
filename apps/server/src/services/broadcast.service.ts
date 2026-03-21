@@ -156,8 +156,7 @@ export function createBroadcastEngine(config: BroadcastConfig) {
           })
         : undefined;
 
-      // Only include non-WAIT signals to reduce payload
-      const signal = signalResult?.action !== "WAIT" ? signalResult : undefined;
+      const signal = signalResult ?? undefined;
 
       prevPrices.set(symbol, q.lastPrice);
 

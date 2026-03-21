@@ -25,6 +25,7 @@ interface StocksRouteOpts {
   getAccessToken: () => string | null;
   getInstrumentMaps: () => InstrumentMaps | null;
   getPressureEngine: () => PressureEngine | null;
+  onLevelsComputed?: (levels: Record<string, SupportResistanceResult>) => void;
 }
 
 const formatDate = (d: Date) =>
@@ -121,6 +122,7 @@ export async function stocksRoute(
     fastify.log.info(`[SR] Computed levels for ${Object.keys(levels).length}/${symbols.length} symbols`);
 
     levelsCache = { levels, timestamp: Date.now() };
+    opts.onLevelsComputed?.(levels);
     return { levels, timestamp: levelsCache.timestamp };
   });
 
