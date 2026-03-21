@@ -19,8 +19,10 @@ services:
     volumes:
       - backend_data:/app/apps/server/data
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
@@ -44,7 +46,12 @@ services:
       - "6379:6379"
     volumes:
       - redisdata:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   postgres:
     image: postgres:17
