@@ -13,12 +13,19 @@ interface SymbolState {
     volume: number;
     openTime: number;
   };
-  completed: Candle[]; // ring buffer, last 3
+  completed: Candle[]; // ring buffer, last 3 (for momentum/pattern)
+  sessionCandles: Candle[]; // all candles for current trading day (for intraday S/R)
+  sessionDate: string; // IST date string for session reset detection
   bucket: number; // Math.floor(timestamp / 300_000) — 5-min slot
   prevVolume: number;
 }
 
 const FIVE_MIN_MS = 300_000;
+const MAX_SESSION_CANDLES = 75; // ~6.25 hours of 5-min candles
+
+function getISTDate(): string {
+  return new Date().toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
+}
 
 export function createCandleTracker(config: CandleTrackerConfig) {
   const stateMap = new Map<string, SymbolState>();
@@ -44,6 +51,8 @@ export function createCandleTracker(config: CandleTrackerConfig) {
           openTime: timestamp,
         },
         completed: [],
+        sessionCandles: [],
+        sessionDate: getISTDate(),
         bucket,
         prevVolume: volume,
       });
@@ -67,6 +76,15 @@ export function createCandleTracker(config: CandleTrackerConfig) {
 
       state.completed.push(closed);
       if (state.completed.length > 3) state.completed.shift();
+
+      // Session candles: reset if new trading day, then append
+      const today = getISTDate();
+      if (state.sessionDate !== today) {
+        state.sessionCandles = [];
+        state.sessionDate = today;
+      }
+      state.sessionCandles.push(closed);
+      if (state.sessionCandles.length > MAX_SESSION_CANDLES) state.sessionCandles.shift();
 
       // Fire callback if we have 3+ completed candles
       if (state.completed.length >= 3) {
@@ -92,5 +110,18 @@ export function createCandleTracker(config: CandleTrackerConfig) {
     }
   }
 
-  return { processTick };
+  function getSessionCandles(symbol: string): Candle[] {
+    const state = stateMap.get(symbol);
+    if (!state) return [];
+    // Reset check: if date changed, return empty
+    const today = getISTDate();
+    if (state.sessionDate !== today) return [];
+    return state.sessionCandles;
+  }
+
+  function getSessionCandleCount(symbol: string): number {
+    return getSessionCandles(symbol).length;
+  }
+
+  return { processTick, getSessionCandles, getSessionCandleCount };
 }

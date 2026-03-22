@@ -804,7 +804,18 @@ export function StockDetail({ symbol }: { symbol: string }) {
         {/* Key Levels Card */}
         <Card className="border border-border/20 rounded-2xl backdrop-blur-xl bg-white/[0.02]">
           <CardContent className="p-5 space-y-4">
-            <h3 className="text-sm font-semibold">Key Levels</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold">Key Levels</h3>
+              {signal?.srType && (
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                  signal.srType === "INTRADAY"
+                    ? "bg-blue-500/15 text-blue-500"
+                    : "bg-zinc-500/15 text-zinc-400"
+                }`}>
+                  {signal.srType === "INTRADAY" ? "INTRADAY" : "DAILY"}
+                </span>
+              )}
+            </div>
 
             {srData ? (
               <>

@@ -12,6 +12,7 @@ import type {
 import { getSignal } from "../lib/signal-engine.js";
 import { computeSignalScore } from "../lib/score-engine.js";
 import { applyMarketPhase, getMarketPhase } from "../lib/market-phase.js";
+import { selectBestSR } from "./intraday-levels.service.js";
 import { marketDataService } from "./market-data.service.js";
 
 type ReactionValue = "APPROACHING" | "REJECTING" | "BREAKING" | null;
@@ -33,6 +34,8 @@ interface SignalWorkerConfig {
   getPattern: (symbol: string) => PatternSignal | null;
   getPatternVersion: (symbol: string) => number;
   getEligibleSymbols?: () => string[];
+  getIntradayLevels?: () => Record<string, SupportResistanceResult>;
+  getSessionCandleCount?: (symbol: string) => number;
   onFirstCycleComplete?: () => void;
 }
 
@@ -185,8 +188,15 @@ export function createSignalWorker(config: SignalWorkerConfig) {
     const pressure = config.getPressure(symbol);
     const momentum = config.getMomentum(symbol);
     const pattern = config.getPattern(symbol);
-    const sr = config.getLevels();
-    let symbolSr = sr[symbol];
+    const dailyLevels = config.getLevels();
+    const intradayLevels = config.getIntradayLevels?.() ?? {};
+    const sessionCandleCount = config.getSessionCandleCount?.(symbol) ?? 0;
+
+    // Merge daily + intraday S/R (intraday wins if closer + valid)
+    const { sr: mergedSr, srType } = selectBestSR(
+      dailyLevels[symbol], intradayLevels[symbol] ?? null, q.lastPrice, sessionCandleCount,
+    );
+    let symbolSr = mergedSr;
 
     // Validate S/R orientation — swap if inverted relative to current price
     if (symbolSr && symbolSr.support != null && symbolSr.resistance != null) {
@@ -215,6 +225,7 @@ export function createSignalWorker(config: SignalWorkerConfig) {
         price: q.lastPrice, sr: freshSr,
         pressure, momentum: momentum ?? null, pattern: pattern ?? null,
       });
+      signal.srType = srType;
       const reaction = computeReaction(q.lastPrice, symbolSr, pressure);
       const { score, breakdown } = getScore(signal, pressure, momentum, pattern, symbolSr, q);
       setCacheEntry(symbol, signal, "CONFIRMED", reaction, score, breakdown);

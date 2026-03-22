@@ -125,6 +125,7 @@ export interface SignalResult {
   finalScore?: number; // phase-adjusted score
   marketPhase?: MarketPhase;
   warningMessage?: string | null;
+  srType?: "INTRADAY" | "DAILY";
   stage?: SignalStage; // progressive pipeline stage
   scoreBreakdown?: {
     pressure: number;   // 0-10

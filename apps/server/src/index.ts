@@ -12,6 +12,7 @@ import { createStockFilter, type StockFilter } from "./services/stock-filter.ser
 import { createEodJob, type EodJob } from "./services/eod-job.service.js";
 import { createSignalAccuracyService, type SignalAccuracyService } from "./services/signal-accuracy.service.js";
 import { redisService } from "./services/redis.service.js";
+import { getIntradaySR } from "./services/intraday-levels.service.js";
 import { getMomentum } from "./lib/momentum-engine.js";
 import { detectPattern } from "./lib/pattern-engine.js";
 import { loadSession } from "./lib/session-store.js";
@@ -48,6 +49,8 @@ async function main() {
 
   // Shared S/R levels cache (populated by levels-worker, read by signal-worker + broadcast)
   let cachedLevels: Record<string, SupportResistanceResult> = {};
+  // Intraday S/R levels (computed from 5-min session candles)
+  const intradayLevels: Record<string, SupportResistanceResult> = {};
 
   // Called after Kite login succeeds
   async function startMarketData(accessToken: string) {
@@ -121,6 +124,9 @@ async function main() {
     });
     stockFilterInstance = stockFilter;
 
+    // Ref for candle tracker (created later, used by signal worker via closure)
+    let candleTrackerRef: ReturnType<typeof createCandleTracker> | null = null;
+
     // Create signal worker (background batch computation)
     if (signalWorkerInstance) signalWorkerInstance.stop();
     const signalWorker = createSignalWorker({
@@ -135,6 +141,8 @@ async function main() {
       getPattern: (s) => patternMap.get(s) ?? null,
       getPatternVersion: (s) => patternVersion.get(s) ?? 0,
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
+      getIntradayLevels: () => intradayLevels,
+      getSessionCandleCount: (s) => candleTrackerRef?.getSessionCandleCount(s) ?? 0,
     });
     signalWorker.setSymbols(instrumentMaps.symbols);
     signalWorkerInstance = signalWorker;
@@ -196,8 +204,18 @@ async function main() {
           else patternMap.delete(symbol);
         }
         patternVersion.set(symbol, (patternVersion.get(symbol) ?? 0) + 1);
+
+        // Compute intraday S/R from session candles (5-min)
+        const sessionCandles = candleTracker.getSessionCandles(symbol);
+        if (sessionCandles.length >= 15 && price > 0) {
+          const intradaySr = getIntradaySR(sessionCandles, price);
+          if (intradaySr) {
+            intradayLevels[symbol] = intradaySr;
+          }
+        }
       },
     });
+    candleTrackerRef = candleTracker;
 
     // Start broadcast engine (reads from caches, NO computation)
     if (broadcastStop) broadcastStop();
