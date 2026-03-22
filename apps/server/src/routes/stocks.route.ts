@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { KiteConnect } from "kiteconnect";
 import type { WsManager } from "../ws/ws-server.js";
-import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal, MomentumResult } from "../lib/types.js";
+import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal, MomentumResult, SignalSnapshot } from "../lib/types.js";
+import { getSignal } from "../lib/signal-engine.js";
+import { computeSignalScore } from "../lib/score-engine.js";
 import { getSupportResistance } from "../services/levels.service.js";
 import { marketDataService } from "../services/market-data.service.js";
 import type { PressureEngine } from "../services/pressure.service.js";
@@ -29,6 +31,8 @@ interface StocksRouteOpts {
   onLevelsComputed?: (levels: Record<string, SupportResistanceResult>) => void;
   getCachedLevels?: () => Record<string, SupportResistanceResult>;
   getEodJob?: () => EodJob | null;
+  getSignalSnapshot?: (symbol: string) => SignalSnapshot | null;
+  getMomentum?: (symbol: string) => MomentumResult | null;
 }
 
 const formatDate = (d: Date) =>
@@ -239,7 +243,12 @@ export async function stocksRoute(
         .send({ error: `Invalid interval. Valid: ${VALID_INTERVALS.join(", ")}` });
     }
 
-    const instrumentToken = instrumentMaps.symbolToToken.get(symbol);
+    let instrumentToken = instrumentMaps.symbolToToken.get(symbol);
+    // Fallback: search in allInstruments for untracked stocks
+    if (instrumentToken === undefined) {
+      const inst = instrumentMaps.allInstruments?.find((i) => i.symbol === symbol);
+      if (inst) instrumentToken = inst.token;
+    }
     if (instrumentToken === undefined) {
       return reply.status(404).send({ error: `Symbol ${symbol} not found` });
     }
@@ -281,6 +290,167 @@ export async function stocksRoute(
         .status(500)
         .send({ error: "Failed to fetch historical data", detail: err.message });
     }
+  });
+
+  // --- Stock Search (all NSE EQ instruments) ---
+  fastify.get("/api/stocks/search", async (req) => {
+    const instrumentMaps = opts.getInstrumentMaps();
+    if (!instrumentMaps?.allInstruments) return { results: [] };
+
+    const { q } = req.query as { q?: string };
+    if (!q || q.length < 2) return { results: [] };
+
+    const query = q.toUpperCase();
+    const trackedSet = new Set(instrumentMaps.symbols);
+
+    // Starts-with first, then contains
+    const startsWith: any[] = [];
+    const contains: any[] = [];
+
+    for (const inst of instrumentMaps.allInstruments) {
+      if (inst.symbol.startsWith(query)) {
+        startsWith.push(inst);
+      } else if (inst.symbol.includes(query)) {
+        contains.push(inst);
+      }
+      if (startsWith.length + contains.length >= 20) break;
+    }
+
+    const results = [...startsWith, ...contains].slice(0, 10).map((inst) => {
+      const quote = marketDataService.getQuote(inst.symbol);
+      return {
+        symbol: inst.symbol,
+        token: inst.token,
+        price: quote?.lastPrice ?? inst.lastPrice,
+        change: quote && quote.close ? Math.round(((quote.lastPrice - quote.close) / quote.close) * 10000) / 100 : 0,
+        isTracked: trackedSet.has(inst.symbol),
+      };
+    });
+
+    return { results };
+  });
+
+  // --- On-demand Stock Snapshot ---
+  const snapshotCache = new Map<string, { data: any; timestamp: number }>();
+  const SNAPSHOT_TTL = 60_000; // 60s
+
+  fastify.get("/api/stocks/:symbol/snapshot", async (req, reply) => {
+    const { symbol } = req.params as { symbol: string };
+    const accessToken = opts.getAccessToken();
+    const instrumentMaps = opts.getInstrumentMaps();
+
+    if (!accessToken || !instrumentMaps) {
+      return reply.status(503).send({ error: "Not initialized" });
+    }
+
+    // Check cache
+    const cached = snapshotCache.get(symbol);
+    if (cached && Date.now() - cached.timestamp < SNAPSHOT_TTL) {
+      return cached.data;
+    }
+
+    const quote = marketDataService.getQuote(symbol);
+    const isTracked = instrumentMaps.symbols.includes(symbol);
+    const levels = opts.getCachedLevels?.() ?? {};
+    let sr = levels[symbol] ?? null;
+    let onDemandMomentum: MomentumResult | null = null;
+
+    // Price from live quote
+    let price = quote?.lastPrice ?? 0;
+    let open = quote?.open ?? 0;
+    let high = quote?.high ?? 0;
+    let low = quote?.low ?? 0;
+    let close = quote?.close ?? 0;
+    let volume = quote?.volume ?? 0;
+
+    // For untracked stocks (or missing data): fetch candles from Kite API
+    const needsCandles = !isTracked || (!sr && price === 0);
+    if (needsCandles) {
+      const token = instrumentMaps.symbolToToken.get(symbol)
+        ?? instrumentMaps.allInstruments?.find((i) => i.symbol === symbol)?.token;
+
+      if (token && accessToken) {
+        try {
+          const kc = new KiteConnect({ api_key: opts.apiKey });
+          kc.setAccessToken(accessToken);
+          const to = new Date();
+          const from = new Date();
+          from.setDate(from.getDate() - 25);
+          const data = await kc.getHistoricalData(token, "day" as any, formatDate(from), formatDate(to));
+          const candles: Candle[] = data.map((d: any) => ({
+            time: Math.floor(new Date(d.date).getTime() / 1000),
+            open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume,
+          }));
+
+          if (candles.length >= 2) {
+            // Set price from latest candle if no live quote
+            const last = candles[candles.length - 1];
+            if (!quote) {
+              price = last.close;
+              open = last.open; high = last.high; low = last.low; close = last.close; volume = last.volume;
+            }
+
+            // Compute S/R if not cached
+            if (!sr && price > 0) {
+              sr = getSupportResistance(candles, price);
+            }
+
+            // Compute momentum from daily candles
+            if (candles.length >= 3) {
+              onDemandMomentum = getMomentum(candles.slice(-3));
+            }
+          }
+        } catch {
+          // ignore API errors
+        }
+      }
+    }
+
+    // Get existing engine data if tracked, or use on-demand computed values
+    const signalSnap = opts.getSignalSnapshot?.(symbol);
+    const momentum = opts.getMomentum?.(symbol) ?? onDemandMomentum;
+    const pressure = opts.getPressureEngine()?.getPressure(symbol) ?? null;
+
+    // Compute signal
+    const change = close !== 0 ? Math.round(((price - close) / close) * 10000) / 100 : 0;
+    let signal = signalSnap?.signal ?? null;
+
+    if (!signal && sr && price > 0) {
+      const freshSr = {
+        supportZone: sr.supportZone ? { level: sr.supportZone.level, distancePercent: Math.abs(price - sr.supportZone.level) / price * 100 } : null,
+        resistanceZone: sr.resistanceZone ? { level: sr.resistanceZone.level, distancePercent: Math.abs(price - sr.resistanceZone.level) / price * 100 } : null,
+      };
+      signal = getSignal({ price, sr: freshSr, pressure, momentum, pattern: null });
+    }
+
+    // Always compute score (even if signal came from cache — ensures scoreBreakdown)
+    if (signal && price > 0) {
+      const { score, breakdown } = computeSignalScore({ pressure, momentum, pattern: null, sr, signal, price, open, high, low });
+      signal.score = score;
+      signal.scoreBreakdown = {
+        pressure: Math.round(breakdown.pressure * 10),
+        momentum: Math.round(breakdown.momentum * 10),
+        sr: Math.round(breakdown.sr * 10),
+        pattern: Math.round(breakdown.pattern * 10),
+        volatility: Math.round(breakdown.volatility * 10),
+      };
+    }
+
+    const result = {
+      symbol,
+      price, open, high, low, close, volume, change,
+      signal,
+      momentum,
+      pressure: pressure ? pressure : { status: "UNAVAILABLE", reason: "Not tracked in real-time" },
+      srLevels: sr,
+      dataSource: isTracked ? "live" : "on-demand",
+      computedAt: Date.now(),
+    };
+
+    // Cache it
+    snapshotCache.set(symbol, { data: result, timestamp: Date.now() });
+
+    return result;
   });
 
   // --- EOD Precomputation ---

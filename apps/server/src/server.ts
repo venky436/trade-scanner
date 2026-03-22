@@ -2,10 +2,12 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { stocksRoute } from "./routes/stocks.route.js";
 import { authRoute } from "./routes/auth.route.js";
+import { adminRoute } from "./routes/admin.route.js";
 import type { WsManager } from "./ws/ws-server.js";
 import type { InstrumentMaps, SupportResistanceResult } from "./lib/types.js";
 import type { PressureEngine } from "./services/pressure.service.js";
 import type { EodJob } from "./services/eod-job.service.js";
+import type { SignalAccuracyService } from "./services/signal-accuracy.service.js";
 
 interface ServerDeps {
   apiKey: string;
@@ -18,6 +20,9 @@ interface ServerDeps {
   onLevelsComputed?: (levels: Record<string, SupportResistanceResult>) => void;
   getCachedLevels?: () => Record<string, SupportResistanceResult>;
   getEodJob?: () => EodJob | null;
+  getAccuracyService?: () => SignalAccuracyService | null;
+  getSignalSnapshot?: (symbol: string) => any;
+  getMomentum?: (symbol: string) => any;
 }
 
 export async function buildServer(deps: ServerDeps) {
@@ -43,6 +48,12 @@ export async function buildServer(deps: ServerDeps) {
     onLevelsComputed: deps.onLevelsComputed,
     getCachedLevels: deps.getCachedLevels,
     getEodJob: deps.getEodJob,
+    getSignalSnapshot: deps.getSignalSnapshot,
+    getMomentum: deps.getMomentum,
+  });
+
+  await server.register(adminRoute, {
+    getAccuracyService: deps.getAccuracyService ?? (() => null),
   });
 
   return server;

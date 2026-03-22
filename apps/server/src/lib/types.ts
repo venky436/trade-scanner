@@ -1,7 +1,14 @@
+export interface SearchableInstrument {
+  symbol: string;
+  token: number;
+  lastPrice: number;
+}
+
 export interface InstrumentMaps {
   tokenToSymbol: Map<number, string>;
   symbolToToken: Map<string, number>;
   symbols: string[]; // ordered list of tracked symbols
+  allInstruments?: SearchableInstrument[]; // full list for search
 }
 
 export interface StockSnapshot {

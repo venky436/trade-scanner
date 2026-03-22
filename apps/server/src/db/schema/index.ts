@@ -1,2 +1,2 @@
 // Schema barrel file — export all tables here
-export {};
+export { signalAccuracyLog } from "./signal-accuracy.js";

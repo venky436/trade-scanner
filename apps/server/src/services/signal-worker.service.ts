@@ -84,6 +84,7 @@ export function createSignalWorker(config: SignalWorkerConfig) {
   let batchTimer: ReturnType<typeof setInterval> | null = null;
   let priorityTimer: ReturnType<typeof setInterval> | null = null;
   let isComputingFastLane = false;
+  let onHighConfidenceSignal: ((symbol: string, signal: SignalResult, price: number) => void) | null = null;
 
   // ── Cache entry with stage protection ──
 
@@ -105,6 +106,13 @@ export function createSignalWorker(config: SignalWorkerConfig) {
       pattern: Math.round(scoreBreakdown.pattern * 10),
       volatility: Math.round(scoreBreakdown.volatility * 10),
     };
+
+    // Track high-confidence signals for accuracy evaluation
+    const wasBelow8 = !existing || (existing.score < 8);
+    if (wasBelow8 && score >= 8 && signal.action !== "WAIT" && onHighConfidenceSignal) {
+      const q = marketDataService.getQuote(symbol);
+      if (q) onHighConfidenceSignal(symbol, signal, q.lastPrice);
+    }
 
     signalCache.set(symbol, {
       signal, stage, reaction, score, scoreBreakdown,
@@ -144,7 +152,25 @@ export function createSignalWorker(config: SignalWorkerConfig) {
     const momentum = config.getMomentum(symbol);
     const pattern = config.getPattern(symbol);
     const sr = config.getLevels();
-    const symbolSr = sr[symbol];
+    let symbolSr = sr[symbol];
+
+    // Validate S/R orientation — swap if inverted relative to current price
+    if (symbolSr && symbolSr.support != null && symbolSr.resistance != null) {
+      if (symbolSr.support > q.lastPrice && symbolSr.resistance < q.lastPrice) {
+        symbolSr = {
+          ...symbolSr,
+          support: symbolSr.resistance,
+          resistance: symbolSr.support,
+          supportZone: symbolSr.resistanceZone,
+          resistanceZone: symbolSr.supportZone,
+          summary: {
+            hasNearbySupport: symbolSr.summary.hasNearbyResistance,
+            hasNearbyResistance: symbolSr.summary.hasNearbySupport,
+          },
+        };
+      }
+    }
+
     const existing = signalCache.get(symbol);
     const currentStage = existing?.stage;
 
@@ -353,6 +379,10 @@ export function createSignalWorker(config: SignalWorkerConfig) {
       allSymbols = symbols;
       prioritySymbols = symbols.slice(0, 100);
       batchIndex = 0;
+    },
+
+    setOnHighConfidenceSignal(cb: (symbol: string, signal: SignalResult, price: number) => void) {
+      onHighConfidenceSignal = cb;
     },
 
     getSignal(symbol: string): SignalSnapshot | null {

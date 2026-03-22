@@ -185,6 +185,13 @@ export async function loadInstruments(
   selected.sort((a: any, b: any) => (b.last_price || 0) - (a.last_price || 0));
   const final = selected;
 
+  // Store ALL filtered instruments for search (before selection cap)
+  const allInstruments = filtered.map((i: any) => ({
+    symbol: i.tradingsymbol as string,
+    token: Number(i.instrument_token),
+    lastPrice: Number(i.last_price) || 0,
+  }));
+
   // Build bidirectional maps
   const tokenToSymbol = new Map<number, string>();
   const symbolToToken = new Map<string, number>();
@@ -199,10 +206,10 @@ export async function loadInstruments(
   }
 
   console.log(
-    `[${mode}] Selected ${symbols.length} instruments: ${symbols.slice(0, 10).join(", ")}${symbols.length > 10 ? "..." : ""}`
+    `[${mode}] Selected ${symbols.length} instruments (${allInstruments.length} searchable): ${symbols.slice(0, 10).join(", ")}${symbols.length > 10 ? "..." : ""}`
   );
 
-  return { tokenToSymbol, symbolToToken, symbols };
+  return { tokenToSymbol, symbolToToken, symbols, allInstruments };
 }
 
 /**
