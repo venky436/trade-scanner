@@ -156,7 +156,7 @@ async function main() {
       intervalMs: 2000,
       getAccessToken: () => currentAccessToken,
       getInstrumentMaps: () => currentInstrumentMaps,
-      onLevelsUpdate: (symbol, result) => { cachedLevels[symbol] = result; },
+      onLevelsUpdate: (symbol, result) => { cachedLevels[symbol] = result; redisService.setLevel(symbol, result); },
     });
     levelsWorkerInstance = levelsWorker;
 
@@ -239,6 +239,19 @@ async function main() {
     tickerDisconnect = ticker.disconnect;
 
     console.log("Market data pipeline started");
+
+    // Delayed full snapshot: after Kite sends initial tick burst + signal-worker computes
+    // Push complete data to already-connected clients (avoids partial first load)
+    // Two pushes: 8s (initial quotes loaded) + 15s (signals fully computed with S/R context)
+    for (const delay of [8000, 15000]) {
+      setTimeout(() => {
+        if (wsManager && wsManager.clientCount() > 0) {
+          const snapshot = { type: "snapshot" as const, data: wsManager.buildSnapshot(), timestamp: Date.now() };
+          wsManager.broadcast(snapshot);
+          console.log(`[Startup] Pushed snapshot (${snapshot.data.length} stocks) to ${wsManager.clientCount()} clients at +${delay / 1000}s`);
+        }
+      }, delay);
+    }
 
     // Auto-trigger EOD job on deployment (non-blocking)
     setTimeout(async () => {

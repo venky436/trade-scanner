@@ -11,6 +11,7 @@ import type {
 } from "../lib/types.js";
 import { getSignal } from "../lib/signal-engine.js";
 import { computeSignalScore } from "../lib/score-engine.js";
+import { applyMarketPhase, getMarketPhase } from "../lib/market-phase.js";
 import { marketDataService } from "./market-data.service.js";
 
 type ReactionValue = "APPROACHING" | "REJECTING" | "BREAKING" | null;
@@ -32,6 +33,7 @@ interface SignalWorkerConfig {
   getPattern: (symbol: string) => PatternSignal | null;
   getPatternVersion: (symbol: string) => number;
   getEligibleSymbols?: () => string[];
+  onFirstCycleComplete?: () => void;
 }
 
 // ── Reaction computation ──
@@ -84,6 +86,7 @@ export function createSignalWorker(config: SignalWorkerConfig) {
   let batchTimer: ReturnType<typeof setInterval> | null = null;
   let priorityTimer: ReturnType<typeof setInterval> | null = null;
   let isComputingFastLane = false;
+  let firstCycleComplete = false;
   let onHighConfidenceSignal: ((symbol: string, signal: SignalResult, price: number) => void) | null = null;
 
   // ── Cache entry with stage protection ──
@@ -107,20 +110,51 @@ export function createSignalWorker(config: SignalWorkerConfig) {
       volatility: Math.round(scoreBreakdown.volatility * 10),
     };
 
+    // ── Market Phase Adjustment ──
+    // Apply AFTER score is computed, BEFORE storing in cache
+    const phaseResult = applyMarketPhase(signal, score);
+    signal.finalScore = phaseResult.finalScore;
+    signal.marketPhase = phaseResult.marketPhase;
+    signal.warningMessage = phaseResult.warningMessage;
+
+    // Override decision/confidence during volatile phases
+    if (phaseResult.marketPhase === "OPENING") {
+      signal.action = "WAIT";
+      signal.confidence = "LOW";
+    } else if (phaseResult.marketPhase === "STABILIZING") {
+      signal.action = phaseResult.decision;
+      signal.confidence = phaseResult.confidence;
+    }
+
+    // Use phase-adjusted score for final evaluation
+    const effectiveScore = phaseResult.finalScore;
+
     // Track high-confidence signals for accuracy evaluation
+    // Only track during NORMAL phase to avoid polluting accuracy data
     const wasBelow8 = !existing || (existing.score < 8);
-    if (wasBelow8 && score >= 8 && signal.action !== "WAIT" && onHighConfidenceSignal) {
+    if (wasBelow8 && effectiveScore >= 8 && signal.action !== "WAIT" && phaseResult.marketPhase === "NORMAL" && onHighConfidenceSignal) {
       const q = marketDataService.getQuote(symbol);
       if (q) onHighConfidenceSignal(symbol, signal, q.lastPrice);
     }
 
+    // Only mark dirty if signal actually changed (new entry, different action, or different score)
+    const signalChanged = !existing
+      || existing.signal.action !== signal.action
+      || existing.score !== effectiveScore
+      || existing.stage !== stage;
+
     signalCache.set(symbol, {
-      signal, stage, reaction, score, scoreBreakdown,
+      signal, stage, reaction, score: effectiveScore, scoreBreakdown,
       computedAt: Date.now(),
       pressureVersion: config.getPressureVersion(symbol),
       momentumVersion: config.getMomentumVersion(symbol),
       patternVersion: config.getPatternVersion(symbol),
     });
+
+    // Mark symbol dirty so broadcast picks up the signal change
+    if (signalChanged) {
+      marketDataService.markDirty(symbol);
+    }
   }
 
   // ── Progressive signal computation ──
@@ -282,6 +316,11 @@ export function createSignalWorker(config: SignalWorkerConfig) {
   function shouldSkip(symbol: string): boolean {
     const cached = signalCache.get(symbol);
     if (!cached) return false;
+
+    // Force recompute if market phase changed (OPENING→STABILIZING→NORMAL)
+    const { phase } = getMarketPhase();
+    if (cached.signal.marketPhase !== phase) return false;
+
     return (
       cached.pressureVersion === config.getPressureVersion(symbol) &&
       cached.momentumVersion === config.getMomentumVersion(symbol) &&
@@ -344,6 +383,12 @@ export function createSignalWorker(config: SignalWorkerConfig) {
       batchIndex = 0;
       batchComputedCount = 0;
       batchSkippedCount = 0;
+
+      // One-time: after first full cycle, push full snapshot to all clients
+      if (!firstCycleComplete) {
+        firstCycleComplete = true;
+        config.onFirstCycleComplete?.();
+      }
     }
   }
 

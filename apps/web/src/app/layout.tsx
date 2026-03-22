@@ -3,7 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { MarketDataProvider } from "@/context/market-data-context";
 import { ThemeProvider } from "next-themes";
-import { GlobalNav } from "@/components/global-nav";
+import { AppShell } from "@/components/app-shell";
 
 export const metadata = {
   title: "Trading Scanner",
@@ -26,8 +26,7 @@ export default function RootLayout({
       <body className="min-h-screen antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
           <MarketDataProvider>
-            <GlobalNav />
-            {children}
+            <AppShell>{children}</AppShell>
           </MarketDataProvider>
         </ThemeProvider>
       </body>

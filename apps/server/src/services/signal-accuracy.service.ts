@@ -2,6 +2,7 @@ import { eq, isNull, lte, sql, and, gte } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { signalAccuracyLog } from "../db/schema/signal-accuracy.js";
 import { marketDataService } from "./market-data.service.js";
+import { getMarketPhase } from "../lib/market-phase.js";
 import type { SignalResult } from "../lib/types.js";
 
 const MAX_ACTIVE_SIGNALS = 25;
@@ -25,6 +26,10 @@ export function createSignalAccuracyService() {
 
     // Skip if no signal type
     if (!signal.type) return;
+
+    // Skip during OPENING/STABILIZING — signals are unreliable
+    const { phase } = getMarketPhase();
+    if (phase === "OPENING" || phase === "STABILIZING") return;
 
     // Skip if too many active signals
     if (activeSymbols.size >= MAX_ACTIVE_SIGNALS) return;

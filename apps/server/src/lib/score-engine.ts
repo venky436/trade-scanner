@@ -55,13 +55,13 @@ function momentumScore(m: MomentumResult | null): number {
 // ── S/R Score (20%) ──
 
 function srScore(sr: SupportResistanceResult | null, price: number): number {
-  if (!sr) return 0;
+  if (!sr || price <= 0) return 0;
 
   let best = 0;
 
-  // Check support proximity
+  // Check support proximity — compute fresh distance from current price
   if (sr.supportZone) {
-    const dist = sr.supportZone.distancePercent;
+    const dist = Math.abs(price - sr.supportZone.level) / price * 100;
     let s = 0;
     if (dist <= 0.5) s = 1.0;
     else if (dist <= 1) s = 0.8;
@@ -73,9 +73,9 @@ function srScore(sr: SupportResistanceResult | null, price: number): number {
     best = Math.max(best, s);
   }
 
-  // Check resistance proximity
+  // Check resistance proximity — compute fresh distance from current price
   if (sr.resistanceZone) {
-    const dist = sr.resistanceZone.distancePercent;
+    const dist = Math.abs(price - sr.resistanceZone.level) / price * 100;
     let s = 0;
     if (dist <= 0.5) s = 1.0;
     else if (dist <= 1) s = 0.8;

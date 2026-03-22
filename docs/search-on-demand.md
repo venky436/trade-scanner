@@ -54,7 +54,13 @@ Backend computes ON-DEMAND:
   │ 6. Score Engine:                               │
   │    computeSignalScore(all inputs) → 1-10       │
   │                                                │
-  │ 7. Cache result (60 seconds)                   │
+  │ 7. Market Phase Control:                       │
+  │    applyMarketPhase(signal, score)             │
+  │    → OPENING: force WAIT, score ×0.6           │
+  │    → STABILIZING: confirmed only, ×0.8         │
+  │    → NORMAL/CLOSED: pass through               │
+  │                                                │
+  │ 8. Cache result (60 seconds)                   │
   └───────────────────────────────────────────────┘
         ↓
 Return to frontend:

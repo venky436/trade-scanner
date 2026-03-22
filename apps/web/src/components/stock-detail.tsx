@@ -48,7 +48,8 @@ function formatVolume(vol: number): string {
 }
 
 function computeScore(stock: StockData): number {
-  // Use server-computed score if available
+  // Use phase-adjusted finalScore if available, else raw score
+  if (stock.signal?.finalScore) return stock.signal.finalScore;
   if (stock.signal?.score) return stock.signal.score;
 
   let score = 0;
@@ -1092,6 +1093,11 @@ function TradeDecisionBox({
   const support = srLevels?.support;
   const price = stock.price;
 
+  // Market phase
+  const marketPhase = signal?.marketPhase;
+  const phaseWarning = signal?.warningMessage;
+  const effectiveScore = signal?.finalScore ?? score;
+
   // Decision logic
   let decision: "TRADE" | "WATCH" | "AVOID" | "WAIT";
   let decisionColor: string;
@@ -1099,8 +1105,22 @@ function TradeDecisionBox({
   let reason: string;
   let contextLine: string | null = null;
 
+  // Market phase overrides (highest priority)
+  if (marketPhase === "OPENING") {
+    decision = "WAIT";
+    decisionColor = "text-yellow-500 border-yellow-500/30 bg-yellow-500/5";
+    decisionIcon = "⏳";
+    reason = "Market just opened — signals restricted";
+    contextLine = phaseWarning ?? "Wait for market to stabilize";
+  } else if (marketPhase === "STABILIZING") {
+    decision = "WAIT";
+    decisionColor = "text-orange-500 border-orange-500/30 bg-orange-500/5";
+    decisionIcon = "⏳";
+    reason = "Market stabilizing — only confirmed signals";
+    contextLine = phaseWarning ?? "Wait for confirmed patterns";
+  }
   // S/R context overrides
-  if (nearResistance && momUp && signal?.action !== "WAIT") {
+  else if (nearResistance && momUp && signal?.action !== "WAIT") {
     decision = "WAIT";
     decisionColor = "text-yellow-500 border-yellow-500/30 bg-yellow-500/5";
     decisionIcon = "⚠️";
@@ -1212,6 +1232,17 @@ function TradeDecisionBox({
 
         {/* 2. One-line summary (SIGNATURE UX) */}
         <p className="text-xs text-muted-foreground">{summary}</p>
+
+        {/* 2.5. Market Phase Warning Banner */}
+        {phaseWarning && (marketPhase === "OPENING" || marketPhase === "STABILIZING") && (
+          <div className={`text-xs font-medium px-3 py-1.5 rounded-lg ${
+            marketPhase === "OPENING"
+              ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20"
+              : "bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/20"
+          }`}>
+            {marketPhase === "OPENING" ? "⏳" : "⏳"} {phaseWarning}
+          </div>
+        )}
 
         {/* 3. Location (DOMINANT) — only the strongest signal */}
         {nearResistance && (

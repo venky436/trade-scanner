@@ -179,12 +179,20 @@ These are displayed in the UI or logged for debugging. They make the engine's de
 
 ```typescript
 interface SignalResult {
-  action: SignalAction;       // "BUY" | "SELL" | "WAIT"
-  type?: SignalType;          // "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN"
+  action: SignalAction;         // "BUY" | "SELL" | "WAIT"
+  type?: SignalType;            // "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN"
   confidence: SignalConfidence; // "LOW" | "MEDIUM" | "HIGH"
-  reasons: string[];          // human-readable explanation
+  reasons: string[];            // human-readable explanation
+  score?: number;               // 1-10 raw signal strength
+  finalScore?: number;          // phase-adjusted score (may differ during OPENING/STABILIZING)
+  marketPhase?: MarketPhase;    // "OPENING" | "STABILIZING" | "NORMAL" | "CLOSED"
+  warningMessage?: string;      // phase warning (e.g., "Market opening volatility — signals restricted")
+  stage?: SignalStage;          // progressive pipeline stage
+  scoreBreakdown?: { ... };     // per-engine scores (0-10)
 }
 ```
+
+> **Note:** `finalScore`, `marketPhase`, and `warningMessage` are set by the [Market Phase Control](./market-phase.md) system in `setCacheEntry()`, not by the signal engine itself. During the first 10 minutes of trading, `finalScore` may be lower than `score` and `action` may be overridden to WAIT.
 
 ---
 

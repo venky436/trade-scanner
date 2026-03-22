@@ -4,6 +4,7 @@ import type { WsManager } from "../ws/ws-server.js";
 import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal, MomentumResult, SignalSnapshot } from "../lib/types.js";
 import { getSignal } from "../lib/signal-engine.js";
 import { computeSignalScore } from "../lib/score-engine.js";
+import { applyMarketPhase } from "../lib/market-phase.js";
 import { getSupportResistance } from "../services/levels.service.js";
 import { marketDataService } from "../services/market-data.service.js";
 import type { PressureEngine } from "../services/pressure.service.js";
@@ -434,6 +435,21 @@ export async function stocksRoute(
         pattern: Math.round(breakdown.pattern * 10),
         volatility: Math.round(breakdown.volatility * 10),
       };
+
+      // Apply market phase adjustment (same as signal-worker)
+      if (!signal.marketPhase) {
+        const phaseResult = applyMarketPhase(signal, score);
+        signal.finalScore = phaseResult.finalScore;
+        signal.marketPhase = phaseResult.marketPhase;
+        signal.warningMessage = phaseResult.warningMessage;
+        if (phaseResult.marketPhase === "OPENING") {
+          signal.action = "WAIT";
+          signal.confidence = "LOW";
+        } else if (phaseResult.marketPhase === "STABILIZING") {
+          signal.action = phaseResult.decision;
+          signal.confidence = phaseResult.confidence;
+        }
+      }
     }
 
     const result = {
