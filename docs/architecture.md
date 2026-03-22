@@ -96,6 +96,11 @@ For each eligible stock (batches of 10):
 
 **Window:** Last 10 daily candles with exponential recency decay (day 0 = 100%, day 5 = 37%, day 10 = 14%)
 
+**Intraday S/R** (see [`docs/intraday-sr.md`](./intraday-sr.md)):
+- Computed from 5-min session candles (up to 50) during market hours
+- Activates after 15+ candles (~75 min), merges with daily via `selectBestSR()`
+- Safety: distance ≤1.5%, touches ≥3, closer than daily — else falls back to daily
+
 **Output:** `SupportResistanceResult { support, resistance, supportZone, resistanceZone, summary }`
 
 **Logs:**
