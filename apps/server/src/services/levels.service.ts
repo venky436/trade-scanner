@@ -46,7 +46,7 @@ export function getSupportResistance(
   for (let i = recent.length - 1; i >= 0; i--) {
     const candle = recent[i];
     const daysAgo = recent.length - 1 - i;
-    const recency = Math.max(0.3, 1.0 - (daysAgo * 0.7) / 10);
+    const recency = Math.exp(-daysAgo / 5);
 
     candidates.push(
       { price: candle.high, weight: 1.0 * recency },
@@ -112,9 +112,15 @@ export function getSupportResistance(
   const significant = clusters.filter((c) => c.touches >= 2);
   if (significant.length === 0) return NULL_RESULT;
 
+  // Step 5.5: Post-cluster ±5% filter — cluster averages can drift outside range
+  const relevant = significant.filter(
+    (c) => Math.abs(c.level - currentPrice) / currentPrice <= 0.05,
+  );
+  if (relevant.length === 0) return NULL_RESULT;
+
   // Step 6: Classify
-  const supportClusters = significant.filter((c) => c.level < currentPrice);
-  const resistanceClusters = significant.filter((c) => c.level > currentPrice);
+  const supportClusters = relevant.filter((c) => c.level < currentPrice);
+  const resistanceClusters = relevant.filter((c) => c.level > currentPrice);
 
   // Step 7: Score each cluster
   function score(cluster: Cluster): number {
@@ -137,8 +143,16 @@ export function getSupportResistance(
     return best;
   }
 
-  const bestSupport = bestCluster(supportClusters);
-  const bestResistance = bestCluster(resistanceClusters);
+  let bestSupport = bestCluster(supportClusters);
+  let bestResistance = bestCluster(resistanceClusters);
+
+  // Final safety: ensure selected levels are within ±5% of current price
+  if (bestSupport && Math.abs(bestSupport.level - currentPrice) / currentPrice > 0.05) {
+    bestSupport = null;
+  }
+  if (bestResistance && Math.abs(bestResistance.level - currentPrice) / currentPrice > 0.05) {
+    bestResistance = null;
+  }
 
   // Reaction context: is price approaching or rejecting a level?
   const prevClose = recent[recent.length - 2].close;

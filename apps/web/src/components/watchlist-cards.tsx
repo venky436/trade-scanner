@@ -79,7 +79,7 @@ export function WatchlistCards({ stockMap }: WatchlistCardsProps) {
 
     // Sort each category by score descending
     for (const type of Object.keys(stocksByType)) {
-      stocksByType[type].sort((a, b) => (b.signal?.score ?? 0) - (a.signal?.score ?? 0));
+      stocksByType[type].sort((a, b) => (b.signal?.finalScore ?? b.signal?.score ?? 0) - (a.signal?.finalScore ?? a.signal?.score ?? 0));
       stocksByType[type] = stocksByType[type].slice(0, 5); // top 5
     }
 
@@ -192,15 +192,15 @@ export function WatchlistCards({ stockMap }: WatchlistCardsProps) {
                       <span className="text-sm font-mono tabular-nums text-foreground">
                         ₹{stock.price.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                       </span>
-                      {stock.signal?.score && (
+                      {(stock.signal?.finalScore ?? stock.signal?.score) ? (
                         <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                          stock.signal.score >= 8 ? "bg-green-500/15 text-green-600 dark:text-green-400" :
-                          stock.signal.score >= 5 ? "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400" :
+                          (stock.signal!.finalScore ?? stock.signal!.score!) >= 8 ? "bg-green-500/15 text-green-600 dark:text-green-400" :
+                          (stock.signal!.finalScore ?? stock.signal!.score!) >= 5 ? "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400" :
                           "bg-muted text-muted-foreground"
                         }`}>
-                          {stock.signal.score}/10
+                          {stock.signal!.finalScore ?? stock.signal!.score}/10
                         </span>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 );

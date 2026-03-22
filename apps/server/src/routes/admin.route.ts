@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { SignalAccuracyService } from "../services/signal-accuracy.service.js";
+import { authMiddleware, adminGuard } from "../modules/auth/auth.middleware.js";
 
 interface AdminRouteOpts {
   getAccuracyService: () => SignalAccuracyService | null;
@@ -7,7 +8,7 @@ interface AdminRouteOpts {
 
 export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts) {
   // Today's accuracy metrics
-  fastify.get("/api/admin/accuracy", async (_req, reply) => {
+  fastify.get("/api/admin/accuracy", { preHandler: [authMiddleware, adminGuard] }, async (_req, reply) => {
     const service = opts.getAccuracyService();
     if (!service) return reply.status(503).send({ error: "Accuracy service not initialized" });
 
@@ -16,7 +17,7 @@ export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts)
   });
 
   // Accuracy for a specific date
-  fastify.get("/api/admin/accuracy/:date", async (req, reply) => {
+  fastify.get("/api/admin/accuracy/:date", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
     const service = opts.getAccuracyService();
     if (!service) return reply.status(503).send({ error: "Accuracy service not initialized" });
 
@@ -26,7 +27,7 @@ export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts)
   });
 
   // Recent signal records
-  fastify.get("/api/admin/accuracy/signals", async (_req, reply) => {
+  fastify.get("/api/admin/accuracy/signals", { preHandler: [authMiddleware, adminGuard] }, async (_req, reply) => {
     const service = opts.getAccuracyService();
     if (!service) return reply.status(503).send({ error: "Accuracy service not initialized" });
 

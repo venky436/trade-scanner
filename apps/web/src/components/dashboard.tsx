@@ -48,11 +48,11 @@ export function Dashboard() {
     if (stockMap.size > 0) setKiteConnected(true);
   }, [stockMap.size]);
 
-  // Fetch S/R levels (skip if cached)
+  // Fetch S/R levels — immediately when stocks appear, then again after 10s
+  // (server may still be loading data on first connect)
   const hasStocks = stockMap.size > 0;
-  const hasCachedLevels = Object.keys(srLevelsCache).length > 0;
   useEffect(() => {
-    if (!hasStocks || hasCachedLevels) return;
+    if (!hasStocks) return;
     let active = true;
     async function fetchLevels() {
       try {
@@ -68,8 +68,10 @@ export function Dashboard() {
       }
     }
     fetchLevels();
-    return () => { active = false; };
-  }, [hasStocks, hasCachedLevels]);
+    // Re-fetch after 10s to pick up data loaded after initial connect
+    const retry = setTimeout(fetchLevels, 10_000);
+    return () => { active = false; clearTimeout(retry); };
+  }, [hasStocks]);
 
   const isLoading = stockMap.size === 0 && kiteConnected;
 

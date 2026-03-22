@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Sun, Moon, LogOut, TrendingUp, Search, X } from "lucide-react";
+import { Sun, Moon, LogOut, TrendingUp, Search, X, Shield } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMarketData } from "@/hooks/use-market-data";
+import { useAuth } from "@/context/auth-context";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { INDEX_NAMES } from "@/lib/constants";
 
@@ -21,6 +22,7 @@ interface SearchResult {
 
 export function GlobalNav() {
   const { stockMap, isConnected } = useMarketData();
+  const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
@@ -199,23 +201,58 @@ export function GlobalNav() {
         </div>
 
         {/* Right side */}
-        <div className="flex items-center gap-2">
-          {kiteConnected ? (
-            <>
+        <div className="flex items-center gap-3">
+          {/* Live status — show market phase context */}
+          {kiteConnected ? (() => {
+            const now = new Date();
+            const hour = now.getHours();
+            const min = now.getMinutes();
+            const time = hour * 60 + min;
+            const day = now.getDay();
+            const openMin = 9 * 60 + 15; // 9:15 AM
+            const closeMin = 15 * 60 + 30; // 3:30 PM
+            const isWeekday = day >= 1 && day <= 5;
+            const isMarketHours = isWeekday && time >= openMin && time <= closeMin;
+
+            if (!isMarketHours) {
+              return (
+                <Badge variant="outline" className="gap-1.5 border-zinc-500/50 text-muted-foreground">
+                  <span className="inline-block h-2 w-2 rounded-full bg-zinc-400" />
+                  Market Closed
+                </Badge>
+              );
+            }
+
+            const elapsed = time - openMin;
+
+            // OPENING phase: 0-5 min
+            if (elapsed < 5) {
+              return (
+                <Badge variant="outline" className="gap-1.5 border-yellow-500/50 text-yellow-600 dark:text-yellow-400">
+                  <span className="inline-block h-2 w-2 rounded-full bg-yellow-500 animate-pulse" />
+                  Opening ({5 - elapsed}m)
+                </Badge>
+              );
+            }
+
+            // STABILIZING phase: 5-10 min
+            if (elapsed < 10) {
+              return (
+                <Badge variant="outline" className="gap-1.5 border-orange-500/50 text-orange-600 dark:text-orange-400">
+                  <span className="inline-block h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
+                  Stabilizing ({10 - elapsed}m)
+                </Badge>
+              );
+            }
+
+            // NORMAL phase
+            return (
               <Badge variant="outline" className="gap-1.5 border-green-500/50">
                 <span className={`inline-block h-2 w-2 rounded-full ${isConnected ? "bg-green-500 animate-pulse" : "bg-red-400"}`} />
                 {isConnected ? "Live" : "Offline"}
               </Badge>
-              {stockCount > 0 && (
-                <Badge variant="secondary" className="tabular-nums text-xs hidden sm:flex">
-                  {stockCount}
-                </Badge>
-              )}
-              <a href={`${API_URL}/api/auth/login`}>
-                <Button variant="outline" size="sm" className="h-7 text-xs hidden sm:flex">Re-login</Button>
-              </a>
-            </>
-          ) : (
+            );
+          })() : (
             <a href={`${API_URL}/api/auth/login`}>
               <Badge variant="outline" className="cursor-pointer gap-1.5 border-yellow-500/50 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/10 transition-colors">
                 <span className="inline-block h-2 w-2 rounded-full bg-yellow-500 dark:bg-yellow-400" />
@@ -224,19 +261,42 @@ export function GlobalNav() {
             </a>
           )}
 
+          {/* Admin only: Re-login + Admin icon */}
+          {user?.role === "ADMIN" && (
+            <>
+              {kiteConnected && (
+                <a href={`${API_URL}/api/auth/login`}>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground hover:text-foreground">
+                    Re-login
+                  </Button>
+                </a>
+              )}
+              <Link href="/admin">
+                <Button variant="ghost" size="icon-sm" aria-label="Admin Dashboard" className="text-muted-foreground hover:text-foreground">
+                  <Shield className="size-4" />
+                </Button>
+              </Link>
+            </>
+          )}
+
+          {/* Theme toggle */}
           {mounted && (
             <Button variant="ghost" size="icon-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">
               {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
             </Button>
           )}
 
-          <Link href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors hidden sm:block">
-            Admin
-          </Link>
-
-          <Button variant="ghost" size="icon-sm" aria-label="Logout">
-            <LogOut className="size-4" />
-          </Button>
+          {/* User + Logout */}
+          <div className="flex items-center gap-2 pl-1 border-l border-border/30">
+            {user && (
+              <span className="text-xs text-muted-foreground hidden sm:block">
+                {user.name || user.email.split("@")[0]}
+              </span>
+            )}
+            <Button variant="ghost" size="icon-sm" aria-label="Logout" onClick={logout} className="text-muted-foreground hover:text-red-500">
+              <LogOut className="size-4" />
+            </Button>
+          </div>
         </div>
       </div>
     </header>

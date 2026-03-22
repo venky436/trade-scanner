@@ -16,7 +16,8 @@ interface TopOpportunitiesProps {
 }
 
 function getScore(stock: StockData): number {
-  return stock.signal?.score ?? 0;
+  // Use phase-adjusted finalScore if available, fallback to raw score
+  return stock.signal?.finalScore ?? stock.signal?.score ?? 0;
 }
 
 function scoreColor(score: number): string {
@@ -214,6 +215,15 @@ export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, m
                   {signal.reasons[0]
                     ? signal.reasons[0].startsWith("STRONG") ? "Strong momentum building" : signal.reasons[0]
                     : "Setup developing"}
+                </p>
+              )}
+
+              {/* Row 3.5: Phase warning */}
+              {signal.warningMessage && (signal.marketPhase === "OPENING" || signal.marketPhase === "STABILIZING") && (
+                <p className={`text-[10px] font-medium ${
+                  signal.marketPhase === "OPENING" ? "text-yellow-600 dark:text-yellow-400" : "text-orange-600 dark:text-orange-400"
+                }`}>
+                  ⏳ {signal.warningMessage}
                 </p>
               )}
 

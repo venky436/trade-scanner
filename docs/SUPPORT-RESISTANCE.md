@@ -132,26 +132,25 @@ All zone fields are nullable — a stock may only have support or only resistanc
 
 ## 4. Algorithm
 
-Ten synchronous steps. The core clustering/ATR/scoring logic is unchanged from
-the original implementation. Steps 1–9 are documented below; step 10 now
-includes the enhanced trader context fields.
+Twelve synchronous steps optimized for intraday relevance. Recent levels dominate
+via exponential decay, and multiple ±5% filters ensure no stale levels leak through.
 
 ```
 Candles ──> Extract Candidates ──> Filter +-5% ──> ATR Threshold
               (high/low/close        (relevance     (adaptive
-               + recency)              gate)        cluster size)
-                                         |
+               + exponential          gate)        cluster size)
+                 recency)                |
            +-----------------------------+
            v
-       Cluster ──> Filter >=2 ──> Classify ──> Score ──> Select Best
-       (merge       touches      S vs R       weight/     per side
-        nearby)                               distance
-                                                  |
-                                     +------------+
-                                     v
-                                Cap Width ──> Trader Context ──> Result
-                                (ATR-based    (reaction, score,   + summary
-                                 zone cap)     actionable, hint)
+       Cluster ──> Filter >=2 ──> Filter +-5% ──> Classify ──> Score ──> Select Best
+       (merge       touches      (post-cluster   S vs R       weight/     per side
+        nearby)                   relevance)                  distance
+                                                                 |
+                                                    +------------+
+                                                    v
+                                         Safety ──> Cap Width ──> Trader Context ──> Result
+                                         Check      (ATR-based    (reaction, score,   + summary
+                                         (+-5%)      zone cap)     actionable, hint)
 ```
 
 ### Step 1 — Extract Weighted Candidates
@@ -164,7 +163,23 @@ From each candle (last N, default 10), extract three price points:
 | `low`   | 1.0         |
 | `close` | 0.6         |
 
-Recency scaling: `recency = max(0.3, 1.0 - daysAgo * 0.7 / 10)`
+Recency scaling uses **exponential decay** for strong intraday relevance:
+
+```
+recency = exp(-daysAgo / 5)
+```
+
+| Days Ago | Weight |
+|----------|--------|
+| 0        | 1.00   |
+| 1        | 0.82   |
+| 2        | 0.67   |
+| 3        | 0.55   |
+| 5        | 0.37   |
+| 7        | 0.25   |
+| 10       | 0.14   |
+
+Recent levels dominate naturally. Old levels fade without an artificial floor.
 
 ### Step 2 — Filter +/-5%
 
@@ -186,6 +201,10 @@ weighted average.
 
 Single-touch clusters are noise.
 
+### Step 5.5 — Post-Cluster ±5% Filter
+
+Even though individual candidates passed the ±5% filter in Step 2, cluster averages can drift outside the range after weighted merging. This step removes any clusters whose level is >5% from the current price.
+
 ### Step 6 — Classify
 
 Support: `level < currentPrice`. Resistance: `level > currentPrice`.
@@ -199,6 +218,10 @@ score = weightSum / max(distance, currentPrice * 0.001)
 ### Step 8 — Select Best
 
 Highest-scoring cluster per side.
+
+### Step 8.5 — Final ±5% Safety Check
+
+Belt-and-suspenders: after selecting the best support and resistance, validate that each is within ±5% of the current price. If not, discard it (set to null). This catches any edge case that slips through the earlier filters.
 
 ### Step 9 — Cap Zone Width
 
@@ -358,6 +381,8 @@ If price were at 102.3, the support zone proximity would shift to "VERY_CLOSE",
 | Fewer than 2 candles        | All-null + summary both false           |
 | All candidates outside +/-5% | All-null + summary both false          |
 | No cluster has >= 2 touches | All-null + summary both false           |
+| All clusters drift outside ±5% | All-null (post-cluster filter)       |
+| Best level >5% from price  | Discarded by safety check → null        |
 | Only support clusters found | resistance/resistanceZone = null        |
 | Only resistance clusters    | support/supportZone = null              |
 | Stock at all-time high      | Likely no resistance (no price above)   |
@@ -371,8 +396,8 @@ If price were at 102.3, the support zone proximity would shift to "VERY_CLOSE",
 GET /api/stocks/levels
 ```
 
-Fetches 10 daily candles per tracked stock from Kite API, runs
-`getSupportResistance()` for each using the live price, and returns all results.
+Fetches daily candles per tracked stock from Kite API, runs
+`getSupportResistance()` for each using the live price (default window: last 10 candles), and returns all results.
 
 **Response:**
 ```json

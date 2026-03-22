@@ -52,6 +52,10 @@ export const marketDataService = {
   },
 
   // --- Dirty symbols (changed since last scan) ---
+  markDirty(symbol: string): void {
+    dirtySymbols.add(symbol);
+  },
+
   getDirtySymbols(): string[] {
     return [...dirtySymbols];
   },

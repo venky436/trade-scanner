@@ -17,6 +17,8 @@ NSE Instruments (~9400 stocks)
         ↓
   Engines: Pressure → Momentum → Pattern → Signal
         ↓
+  Market Phase Control (score penalty + decision override)
+        ↓
   Stock Filter (top 150 active, every 5s)
         ↓
   WebSocket Broadcast (max 150/tick)
@@ -81,14 +83,18 @@ For each eligible stock (batches of 10):
 ```
 
 **S/R Algorithm** (`apps/server/src/services/levels.service.ts`):
-1. Extract weighted price candidates (high, low, close) with recency decay
+1. Extract weighted price candidates (high, low, close) with **exponential recency decay** (`exp(-daysAgo/5)`)
 2. Filter within ±5% of current price
 3. ATR-based cluster threshold
 4. Weighted clustering — group nearby price levels
 5. Filter clusters with ≥2 touches
-6. Score: `weightSum / distance`
-7. Select best support (below) and resistance (above)
-8. Build zones with proximity, reaction context, direction hints
+6. Post-cluster ±5% filter (cluster averages can drift)
+7. Score: `weightSum / distance`
+8. Select best support (below) and resistance (above)
+9. Final ±5% safety check on selected levels
+10. Build zones with proximity, reaction context, direction hints
+
+**Window:** Last 10 daily candles with exponential recency decay (day 0 = 100%, day 5 = 37%, day 10 = 14%)
 
 **Output:** `SupportResistanceResult { support, resistance, supportZone, resistanceZone, summary }`
 
@@ -274,6 +280,36 @@ Clamped to 1-10, rounded
 
 ---
 
+## Stage 5.5: Market Phase Control
+
+**File:** `apps/server/src/lib/market-phase.ts`
+**Full docs:** [`docs/market-phase.md`](./market-phase.md)
+
+Protects traders from unreliable signals during the first 10 minutes after market open (9:15 AM IST).
+
+```
+  9:15         9:20           9:25                    15:30
+   │  OPENING   │ STABILIZING  │       NORMAL           │
+   │  (5 min)   │  (5 min)     │      (full speed)      │
+   │            │              │                         │
+   │ ALL → WAIT │ Confirmed    │ No restrictions         │
+   │ Score ×0.6 │ types only   │ Score ×1.0              │
+   │            │ Score ×0.8   │                         │
+```
+
+**Applied in:** `setCacheEntry()` of signal-worker — after score computed, before cache write.
+
+| Phase | Score | Decision | Accuracy Tracking |
+|-------|-------|----------|-------------------|
+| OPENING (0-5 min) | ×0.6 | Force WAIT, LOW confidence | Disabled |
+| STABILIZING (5-10 min) | ×0.8 | Only confirmed types (BREAKOUT, BOUNCE, etc.) pass | Disabled |
+| NORMAL (10+ min) | ×1.0 | No change | Enabled |
+| CLOSED | ×1.0 | No change | N/A |
+
+**Frontend:** Nav badge shows phase with countdown ("Opening (3m)"). Trade Decision Box shows phase warning banner. Score displays use `finalScore` (phase-adjusted).
+
+---
+
 ## Stage 6: Signal Worker — Progressive Pipeline
 
 **File:** `apps/server/src/services/signal-worker.service.ts`
@@ -331,6 +367,8 @@ TATASTEEL:
 - **No downgrades:** CONFIRMED never goes back to MOMENTUM
 - **Staleness protection:** If `computedAt > 30s`, confidence auto-downgrades one level
 - **Version-based skip:** Skip recomputation when pressure/momentum/pattern versions unchanged
+- **Phase-aware skip:** Force recomputation when market phase changes (OPENING → STABILIZING → NORMAL)
+- **Market phase control:** Penalizes scores and restricts decisions during first 10 minutes (see [market-phase.md](./market-phase.md))
 - **Dedup:** Skip symbols computed within last 500ms
 
 ---
@@ -432,14 +470,17 @@ KEY LEVELS (Near Support + Near Resistance, top 7 each)
 ### Signal Score in UI
 
 **Top Opportunities** (`top-opportunities.tsx`):
-- Uses `stock.signal?.score` from server (not frontend `computeScore`)
+- Uses `stock.signal?.finalScore ?? stock.signal?.score` (phase-adjusted, with raw fallback)
 - Filters: score ≥ 3 (hides weak/empty signals)
 - Sorts by score descending
 - Score circle shows 1-10 with color: ≥8 green, ≥5 yellow, <5 gray
+- During OPENING/STABILIZING: shows phase warning on each card
 
 **Stock Detail** (`stock-detail.tsx`):
-- Uses server score if available, falls back to frontend calculation
+- Uses `finalScore` if available, then `score`, then frontend calculation
 - Shows score breakdown (pressure, momentum, S/R, pattern, volatility)
+- Trade Decision Box: phase overrides take highest priority (OPENING → WAIT, STABILIZING → WAIT)
+- Phase warning banner shown below summary during OPENING/STABILIZING
 
 ### Watchlist Click-to-Expand
 
@@ -487,6 +528,11 @@ KEY LEVELS (Near Support + Near Resistance, top 7 each)
 │    └─ Batch: 200 stocks / 1s                                  │
 │    Stages: ACTIVITY → MOMENTUM → PRESSURE → CONFIRMED        │
 │              ↓                                                │
+│  Market Phase Control (in setCacheEntry)                       │
+│    ├─ OPENING (0-5 min): WAIT forced, score ×0.6              │
+│    ├─ STABILIZING (5-10 min): confirmed only, score ×0.8      │
+│    └─ NORMAL (10+ min): pass through                          │
+│              ↓                                                │
 │  Stock Filter (every 5s) → top 150 active                    │
 │              ↓                                                │
 │  Broadcast (every 500ms)                                      │
@@ -522,6 +568,9 @@ First tick arrives:
   5 min  → CONFIRMED signals (full engine: S/R + pressure + momentum + pattern)
 
 During market:
+  0-5 min      → OPENING phase: all signals forced WAIT, score ×0.6
+  5-10 min     → STABILIZING phase: only confirmed types, score ×0.8
+  10+ min      → NORMAL phase: full speed, no restrictions
   Every 500ms  → Broadcast to clients
   Every 5s     → Stock filter re-evaluates active stocks
   Every 30s    → Priority symbols rebuilt
@@ -560,3 +609,4 @@ During market:
 8. **Staleness protection** — Signals >30s auto-downgrade confidence
 9. **Stage-sorted broadcast** — CONFIRMED signals sent first
 10. **Never empty UI** — Fallback "Loading..." signal prevents blank columns
+11. **Market phase control** — First 10 minutes penalized: score ×0.6/×0.8, WAIT forced, accuracy tracking disabled

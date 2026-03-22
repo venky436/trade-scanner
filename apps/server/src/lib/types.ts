@@ -114,12 +114,17 @@ export type SignalAction = "BUY" | "SELL" | "WAIT";
 export type SignalType = "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN";
 export type SignalConfidence = "LOW" | "MEDIUM" | "HIGH";
 
+export type MarketPhase = "OPENING" | "STABILIZING" | "NORMAL" | "CLOSED";
+
 export interface SignalResult {
   action: SignalAction;
   type?: SignalType;
   confidence: SignalConfidence;
   reasons: string[];
   score?: number; // 1-10 signal strength
+  finalScore?: number; // phase-adjusted score
+  marketPhase?: MarketPhase;
+  warningMessage?: string | null;
   stage?: SignalStage; // progressive pipeline stage
   scoreBreakdown?: {
     pressure: number;   // 0-10
