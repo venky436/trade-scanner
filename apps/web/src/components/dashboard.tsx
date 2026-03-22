@@ -15,8 +15,7 @@ import { ScannerDashboard } from "./scanner-dashboard";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { useMarketData } from "@/hooks/use-market-data";
 import type { SupportResistanceResult } from "@/lib/types";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
+import { apiFetch } from "@/lib/api";
 
 // Module-level cache so S/R levels survive component remounts
 let srLevelsCache: Record<string, SupportResistanceResult> = {};
@@ -31,7 +30,7 @@ export function Dashboard() {
     let active = true;
     async function check() {
       try {
-        const res = await fetch(`${API_URL}/api/auth/status`);
+        const res = await apiFetch("/api/auth/status");
         const data = await res.json();
         if (active) setKiteConnected(data.connected);
       } catch {
@@ -56,7 +55,7 @@ export function Dashboard() {
     let active = true;
     async function fetchLevels() {
       try {
-        const res = await fetch(`${API_URL}/api/stocks/levels`);
+        const res = await apiFetch("/api/stocks/levels");
         if (!res.ok) return;
         const data = await res.json();
         if (active && data.levels) {

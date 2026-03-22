@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Target, TrendingUp, TrendingDown, Activity } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
+import { apiFetch } from "@/lib/api";
 
 interface AccuracyMetrics {
   date: string;
@@ -60,8 +59,8 @@ export function AdminDashboard() {
     async function fetchData() {
       try {
         const [metricsRes, signalsRes] = await Promise.all([
-          fetch(`${API_URL}/api/admin/accuracy`),
-          fetch(`${API_URL}/api/admin/accuracy/signals`),
+          apiFetch("/api/admin/accuracy"),
+          apiFetch("/api/admin/accuracy/signals"),
         ]);
 
         if (metricsRes.ok) {

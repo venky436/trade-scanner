@@ -25,8 +25,7 @@ import type {
   SignalAction,
   SignalType,
 } from "@/lib/types";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
+import { apiFetch } from "@/lib/api";
 
 // Module-level cache for SR levels (survives remounts)
 let srCache: Record<string, SupportResistanceResult> = {};
@@ -234,7 +233,7 @@ export function StockDetail({ symbol }: { symbol: string }) {
 
     async function fetchSnapshot() {
       try {
-        const res = await fetch(`${API_URL}/api/stocks/${encodeURIComponent(symbol)}/snapshot`);
+        const res = await apiFetch(`/api/stocks/${encodeURIComponent(symbol)}/snapshot`);
         if (!res.ok) return;
         const data = await res.json();
         if (active && data.symbol) {
@@ -285,7 +284,7 @@ export function StockDetail({ symbol }: { symbol: string }) {
     let active = true;
     async function fetchLevels() {
       try {
-        const res = await fetch(`${API_URL}/api/stocks/levels`);
+        const res = await apiFetch("/api/stocks/levels");
         if (!res.ok) return;
         const data = await res.json();
         if (active && data.levels) {

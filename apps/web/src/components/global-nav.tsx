@@ -10,8 +10,7 @@ import { useMarketData } from "@/hooks/use-market-data";
 import { useAuth } from "@/context/auth-context";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { INDEX_NAMES } from "@/lib/constants";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
+import { apiFetch, API_URL } from "@/lib/api";
 
 interface SearchResult {
   symbol: string;
@@ -42,7 +41,7 @@ export function GlobalNav() {
     let active = true;
     async function check() {
       try {
-        const res = await fetch(`${API_URL}/api/auth/status`);
+        const res = await apiFetch("/api/auth/status");
         const data = await res.json();
         if (active) setKiteConnected(data.connected);
       } catch { /* ignore */ }
@@ -75,7 +74,7 @@ export function GlobalNav() {
       return;
     }
     try {
-      const res = await fetch(`${API_URL}/api/stocks/search?q=${encodeURIComponent(q)}`);
+      const res = await apiFetch(`/api/stocks/search?q=${encodeURIComponent(q)}`);
       if (!res.ok) return;
       const data = await res.json();
       setResults(data.results ?? []);
