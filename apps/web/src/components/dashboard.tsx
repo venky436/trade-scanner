@@ -1,20 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BarChart3,
   Zap,
+  Eye,
   Shield,
-  Flame,
+  Crosshair,
 } from "lucide-react";
-import { Header } from "./header";
 import { MarketOverview } from "./market-overview";
+import { WatchlistCards } from "./watchlist-cards";
 import { TopOpportunities } from "./top-opportunities";
 import { ScannerDashboard } from "./scanner-dashboard";
-import { WatchlistCards } from "./watchlist-cards";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { useMarketData } from "@/hooks/use-market-data";
-import { INDEX_NAMES } from "@/lib/constants";
 import type { SupportResistanceResult } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
@@ -23,8 +22,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
 let srLevelsCache: Record<string, SupportResistanceResult> = {};
 
 export function Dashboard() {
-  const { stockMap, isConnected } = useMarketData();
-  const [searchQuery, setSearchQuery] = useState("");
+  const { stockMap } = useMarketData();
   const [kiteConnected, setKiteConnected] = useState(false);
   const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>(srLevelsCache);
 
@@ -73,22 +71,10 @@ export function Dashboard() {
     return () => { active = false; };
   }, [hasStocks, hasCachedLevels]);
 
-  const stockCount = useMemo(
-    () => Array.from(stockMap.values()).filter((s) => !INDEX_NAMES.has(s.symbol)).length,
-    [stockMap]
-  );
-
   const isLoading = stockMap.size === 0 && kiteConnected;
 
   return (
     <main className="min-h-screen bg-background">
-      <Header
-        isConnected={isConnected}
-        kiteConnected={kiteConnected}
-        stockCount={stockCount}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-      />
       <div className="max-w-[1400px] mx-auto px-4 py-4 space-y-8">
         {!kiteConnected ? (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
@@ -116,29 +102,43 @@ export function Dashboard() {
               <MarketOverview stockMap={stockMap} />
             </div>
 
-            {/* Top Opportunities */}
+            {/* Best Setups (score ≥ 8) */}
             <div>
               <div className="flex items-center gap-2 mb-4">
                 <Zap className="size-4 text-yellow-500 fill-yellow-500" />
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                  Top Opportunities
+                  Best Setups
                 </h2>
                 <span className="text-xs text-muted-foreground/60">
-                  Best setups right now
+                  These are actionable
                 </span>
               </div>
-              <TopOpportunities stockMap={stockMap} srLevels={srLevels} />
+              <TopOpportunities stockMap={stockMap} srLevels={srLevels} minScore={8} maxItems={5} />
             </div>
 
-            {/* Watchlists (Breakout/Rejection) */}
+            {/* Watchlist (score 6-7) */}
             <div>
               <div className="flex items-center gap-2 mb-4">
-                <Flame className="size-4 text-orange-500" />
+                <Eye className="size-4 text-blue-400" />
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                  Watchlists
+                  Watchlist
                 </h2>
                 <span className="text-xs text-muted-foreground/60">
-                  Actionable setups near key levels
+                  Monitor only — not yet actionable
+                </span>
+              </div>
+              <TopOpportunities stockMap={stockMap} srLevels={srLevels} minScore={6} maxScore={8} maxItems={5} />
+            </div>
+
+            {/* Trade Setups (Breakout/Bounce/Rejection/Breakdown) */}
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <Crosshair className="size-4 text-orange-500" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                  Trade Setups
+                </h2>
+                <span className="text-xs text-muted-foreground/60">
+                  Active patterns near key levels
                 </span>
               </div>
               <WatchlistCards stockMap={stockMap} />

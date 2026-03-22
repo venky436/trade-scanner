@@ -1,15 +1,16 @@
 import "./globals.css";
-import { Geist, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { MarketDataProvider } from "@/context/market-data-context";
 import { ThemeProvider } from "next-themes";
+import { GlobalNav } from "@/components/global-nav";
 
 export const metadata = {
   title: "Trading Scanner",
   description: "Real-time market scanner",
 };
 
-const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
+const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
@@ -21,10 +22,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={cn("font-sans", geist.variable, jetbrainsMono.variable)} suppressHydrationWarning>
+    <html lang="en" className={cn("font-sans", inter.variable, jetbrainsMono.variable)} suppressHydrationWarning>
       <body className="min-h-screen antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          <MarketDataProvider>{children}</MarketDataProvider>
+          <MarketDataProvider>
+            <GlobalNav />
+            {children}
+          </MarketDataProvider>
         </ThemeProvider>
       </body>
     </html>

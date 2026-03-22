@@ -10,6 +10,7 @@ import { createSignalWorker, type SignalWorker } from "./services/signal-worker.
 import { createLevelsWorker, type LevelsWorker } from "./services/levels-worker.service.js";
 import { createStockFilter, type StockFilter } from "./services/stock-filter.service.js";
 import { createEodJob, type EodJob } from "./services/eod-job.service.js";
+import { createSignalAccuracyService, type SignalAccuracyService } from "./services/signal-accuracy.service.js";
 import { redisService } from "./services/redis.service.js";
 import { getMomentum } from "./lib/momentum-engine.js";
 import { detectPattern } from "./lib/pattern-engine.js";
@@ -37,11 +38,13 @@ async function main() {
   let levelsWorkerInstance: LevelsWorker | null = null;
   let stockFilterInstance: StockFilter | null = null;
   let eodJobInstance: EodJob | null = null;
+  let accuracyServiceInstance: SignalAccuracyService | null = null;
 
-  // Exposed so the history route can use them
+  // Exposed so routes can use them
   let currentAccessToken: string | null = null;
   let currentInstrumentMaps: InstrumentMaps | null = null;
   let currentPressureEngine: PressureEngine | null = null;
+  let currentMomentumMap: Map<string, MomentumResult> | null = null;
 
   // Shared S/R levels cache (populated by levels-worker, read by signal-worker + broadcast)
   let cachedLevels: Record<string, SupportResistanceResult> = {};
@@ -99,6 +102,7 @@ async function main() {
 
     // In-memory maps for candle-driven analysis
     const momentumMap = new Map<string, MomentumResult>();
+    currentMomentumMap = momentumMap;
     const patternMap = new Map<string, PatternSignal>();
     const momentumVersion = new Map<string, number>();
     const patternVersion = new Map<string, number>();
@@ -134,6 +138,15 @@ async function main() {
     });
     signalWorker.setSymbols(instrumentMaps.symbols);
     signalWorkerInstance = signalWorker;
+
+    // Create signal accuracy service
+    const accuracyService = createSignalAccuracyService();
+    accuracyServiceInstance = accuracyService;
+
+    // Hook: record high-confidence signals for accuracy tracking
+    signalWorker.setOnHighConfidenceSignal((symbol, signal, price) => {
+      accuracyService.recordSignal(symbol, signal, price);
+    });
 
     // Create levels worker (background S/R computation)
     if (levelsWorkerInstance) levelsWorkerInstance.stop();
@@ -205,6 +218,7 @@ async function main() {
     stockFilter.start();
     signalWorker.start();
     levelsWorker.start();
+    accuracyService.start();
 
     // Connect to Kite ticker
     if (tickerDisconnect) tickerDisconnect();
@@ -252,6 +266,9 @@ async function main() {
     onLevelsComputed: (levels) => { cachedLevels = levels; },
     getCachedLevels: () => cachedLevels,
     getEodJob: () => eodJobInstance,
+    getSignalSnapshot: (s: string) => signalWorkerInstance?.getSignal(s) ?? null,
+    getMomentum: (s: string) => currentMomentumMap?.get(s) ?? null,
+    getAccuracyService: () => accuracyServiceInstance,
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });
@@ -275,6 +292,7 @@ async function main() {
     if (stockFilterInstance) stockFilterInstance.stop();
     if (signalWorkerInstance) signalWorkerInstance.stop();
     if (levelsWorkerInstance) levelsWorkerInstance.stop();
+    if (accuracyServiceInstance) accuracyServiceInstance.stop();
     if (broadcastStop) broadcastStop();
     if (tickerDisconnect) tickerDisconnect();
     if (wsManager) wsManager.close();

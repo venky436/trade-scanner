@@ -53,10 +53,6 @@ interface CandlestickChartProps {
   resistanceLevel?: number | null;
   supportTouches?: number;
   resistanceTouches?: number;
-  supportZoneMin?: number;
-  supportZoneMax?: number;
-  resistanceZoneMin?: number;
-  resistanceZoneMax?: number;
   className?: string;
 }
 
@@ -69,10 +65,6 @@ export function CandlestickChart({
   resistanceLevel,
   supportTouches,
   resistanceTouches,
-  supportZoneMin,
-  supportZoneMax,
-  resistanceZoneMin,
-  resistanceZoneMax,
   className,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -85,8 +77,6 @@ export function CandlestickChart({
   const intervalSecondsRef = useRef(60);
   const supportLineRef = useRef<IPriceLine | null>(null);
   const resistanceLineRef = useRef<IPriceLine | null>(null);
-  const supportZoneDiv = useRef<HTMLDivElement | null>(null);
-  const resistanceZoneDiv = useRef<HTMLDivElement | null>(null);
   const [chartReady, setChartReady] = useState(false);
 
   const { resolvedTheme } = useTheme();
@@ -179,8 +169,6 @@ export function CandlestickChart({
       ma50SeriesRef.current = null;
       supportLineRef.current = null;
       resistanceLineRef.current = null;
-      if (supportZoneDiv.current) { supportZoneDiv.current.remove(); supportZoneDiv.current = null; }
-      if (resistanceZoneDiv.current) { resistanceZoneDiv.current.remove(); resistanceZoneDiv.current = null; }
       setChartReady(false);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,50 +189,14 @@ export function CandlestickChart({
     });
   }, [resolvedTheme, getThemeColors]);
 
-  // Draw S/R price lines + zone bands (HTML overlays)
+  // Draw S/R price lines
   useEffect(() => {
-    if (!chartReady || !candleSeriesRef.current || !containerRef.current) return;
+    if (!chartReady || !candleSeriesRef.current) return;
     const series = candleSeriesRef.current;
 
-    // Remove old price lines
     if (supportLineRef.current) { series.removePriceLine(supportLineRef.current); supportLineRef.current = null; }
     if (resistanceLineRef.current) { series.removePriceLine(resistanceLineRef.current); resistanceLineRef.current = null; }
 
-    // Remove old zone divs
-    if (supportZoneDiv.current) { supportZoneDiv.current.remove(); supportZoneDiv.current = null; }
-    if (resistanceZoneDiv.current) { resistanceZoneDiv.current.remove(); resistanceZoneDiv.current = null; }
-
-    // Helper: create a zone overlay div
-    function createZoneOverlay(zoneMin: number, zoneMax: number, color: string): HTMLDivElement | null {
-      if (!candleSeriesRef.current || !containerRef.current) return null;
-      const topY = candleSeriesRef.current.priceToCoordinate(zoneMax);
-      const bottomY = candleSeriesRef.current.priceToCoordinate(zoneMin);
-      if (topY === null || bottomY === null) return null;
-
-      const div = document.createElement("div");
-      div.style.position = "absolute";
-      div.style.left = "0";
-      div.style.right = "60px"; // leave room for price axis
-      div.style.top = `${Math.min(topY, bottomY)}px`;
-      div.style.height = `${Math.abs(bottomY - topY)}px`;
-      div.style.backgroundColor = color;
-      div.style.pointerEvents = "none";
-      div.style.zIndex = "0";
-      containerRef.current.appendChild(div);
-      return div;
-    }
-
-    // ── Support zone (green band) ──
-    if (supportZoneMin != null && supportZoneMax != null) {
-      supportZoneDiv.current = createZoneOverlay(supportZoneMin, supportZoneMax, "rgba(34,197,94,0.10)");
-    }
-
-    // ── Resistance zone (red band) ──
-    if (resistanceZoneMin != null && resistanceZoneMax != null) {
-      resistanceZoneDiv.current = createZoneOverlay(resistanceZoneMin, resistanceZoneMax, "rgba(239,68,68,0.10)");
-    }
-
-    // ── Support level line ──
     if (supportLevel != null) {
       const label = supportTouches ? `S (${supportTouches}t)` : "S";
       supportLineRef.current = series.createPriceLine({
@@ -257,7 +209,6 @@ export function CandlestickChart({
       });
     }
 
-    // ── Resistance level line ──
     if (resistanceLevel != null) {
       const label = resistanceTouches ? `R (${resistanceTouches}t)` : "R";
       resistanceLineRef.current = series.createPriceLine({
@@ -269,36 +220,7 @@ export function CandlestickChart({
         title: label,
       });
     }
-
-    // Update zone positions when chart rescales
-    const updateZones = () => {
-      if (!candleSeriesRef.current) return;
-      if (supportZoneDiv.current && supportZoneMin != null && supportZoneMax != null) {
-        const topY = candleSeriesRef.current.priceToCoordinate(supportZoneMax);
-        const bottomY = candleSeriesRef.current.priceToCoordinate(supportZoneMin);
-        if (topY !== null && bottomY !== null) {
-          supportZoneDiv.current.style.top = `${Math.min(topY, bottomY)}px`;
-          supportZoneDiv.current.style.height = `${Math.abs(bottomY - topY)}px`;
-        }
-      }
-      if (resistanceZoneDiv.current && resistanceZoneMin != null && resistanceZoneMax != null) {
-        const topY = candleSeriesRef.current.priceToCoordinate(resistanceZoneMax);
-        const bottomY = candleSeriesRef.current.priceToCoordinate(resistanceZoneMin);
-        if (topY !== null && bottomY !== null) {
-          resistanceZoneDiv.current.style.top = `${Math.min(topY, bottomY)}px`;
-          resistanceZoneDiv.current.style.height = `${Math.abs(bottomY - topY)}px`;
-        }
-      }
-    };
-
-    // Subscribe to chart rescale events
-    chartRef.current?.timeScale().subscribeVisibleLogicalRangeChange(updateZones);
-
-    return () => {
-      chartRef.current?.timeScale().unsubscribeVisibleLogicalRangeChange(updateZones);
-    };
-  }, [supportLevel, resistanceLevel, supportTouches, resistanceTouches,
-      supportZoneMin, supportZoneMax, resistanceZoneMin, resistanceZoneMax, chartReady]);
+  }, [supportLevel, resistanceLevel, supportTouches, resistanceTouches, chartReady]);
 
   // Fetch candle data + compute MAs
   const fetchCandles = useCallback(async () => {
@@ -424,7 +346,7 @@ export function CandlestickChart({
     <div
       ref={containerRef}
       className={className}
-      style={{ width: "100%", height: "100%", position: "relative" }}
+      style={{ width: "100%", height: "100%" }}
     />
   );
 }

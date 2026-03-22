@@ -86,12 +86,27 @@ export function WatchlistCards({ stockMap }: WatchlistCardsProps) {
     return { counts, stocksByType };
   }, [stockMap]);
 
+  const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  if (totalCount === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+        <Flame className="size-10 mb-3 text-muted-foreground/15" />
+        <p className="text-sm font-medium">No active trade setups</p>
+        <p className="text-xs text-muted-foreground/60 mt-1">
+          Breakout, bounce & rejection setups will appear here during market hours
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      {/* Category cards */}
+      {/* Category cards — only show tabs with stocks */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {CATEGORIES.map(({ type, label, icon: Icon, accent, bg, iconBg, glow }) => {
           const count = counts[type] ?? 0;
+          if (count === 0) return null; // hide empty tabs
           const isExpanded = expandedType === type;
 
           return (
