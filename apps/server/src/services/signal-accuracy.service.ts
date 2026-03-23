@@ -6,24 +6,70 @@ import { getMarketPhase } from "../lib/market-phase.js";
 import type { SignalResult } from "../lib/types.js";
 
 const MAX_ACTIVE_SIGNALS = 25;
+const MAX_PER_STOCK = 2; // diversity: max 2 signals per stock
+const MIN_RISK_REWARD = 1.0; // minimum RR ratio to accept
 const EVALUATION_WINDOW_MS = 20 * 60 * 1000; // 20 minutes
 const EVAL_CRON_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
-// Track active (unevaluated) signals to avoid duplicates
-const activeSymbols = new Set<string>();
+// ── Priority Queue: track active signals with scores for eviction ──
+interface ActiveSignal {
+  symbol: string;
+  score: number;
+  dbId?: number; // DB row id for deletion if evicted
+  recordedAt: number;
+}
+
+// Active signals sorted by score (lowest first for easy eviction)
+const activeSignals: ActiveSignal[] = [];
+// Quick lookup: how many active signals per stock
+const stockCount = new Map<string, number>();
+
+function getLowestSignal(): ActiveSignal | null {
+  if (activeSignals.length === 0) return null;
+  let lowest = activeSignals[0];
+  for (let i = 1; i < activeSignals.length; i++) {
+    if (activeSignals[i].score < lowest.score) lowest = activeSignals[i];
+  }
+  return lowest;
+}
+
+function removeSignalBySymbol(symbol: string): void {
+  const idx = activeSignals.findIndex((s) => s.symbol === symbol);
+  if (idx !== -1) {
+    activeSignals.splice(idx, 1);
+    const count = stockCount.get(symbol) ?? 0;
+    if (count <= 1) stockCount.delete(symbol);
+    else stockCount.set(symbol, count - 1);
+  }
+}
+
+function removeLowestSignal(): ActiveSignal | null {
+  const lowest = getLowestSignal();
+  if (!lowest) return null;
+  const idx = activeSignals.indexOf(lowest);
+  if (idx !== -1) {
+    activeSignals.splice(idx, 1);
+    const count = stockCount.get(lowest.symbol) ?? 0;
+    if (count <= 1) stockCount.delete(lowest.symbol);
+    else stockCount.set(lowest.symbol, count - 1);
+  }
+  return lowest;
+}
+
+function addSignal(entry: ActiveSignal): void {
+  activeSignals.push(entry);
+  stockCount.set(entry.symbol, (stockCount.get(entry.symbol) ?? 0) + 1);
+}
 
 export function createSignalAccuracyService() {
   let evalTimer: ReturnType<typeof setInterval> | null = null;
 
-  // ── Record a high-confidence signal ──
+  // ── Record a high-confidence signal (priority-based) ──
   async function recordSignal(
     symbol: string,
     signal: SignalResult,
     price: number,
   ): Promise<void> {
-    // Skip if already tracking this symbol
-    if (activeSymbols.has(symbol)) return;
-
     // Skip if no signal type
     if (!signal.type) return;
 
@@ -31,31 +77,48 @@ export function createSignalAccuracyService() {
     const { phase } = getMarketPhase();
     if (phase === "OPENING" || phase === "STABILIZING") return;
 
-    // Skip if too many active signals
-    if (activeSymbols.size >= MAX_ACTIVE_SIGNALS) return;
+    const score = signal.score ?? 0;
 
-    const now = new Date();
+    // Diversity: max 2 signals per stock
+    if ((stockCount.get(symbol) ?? 0) >= MAX_PER_STOCK) return;
+
     const isBuy = signal.action === "BUY";
-
     const targetPrice = isBuy ? price * 1.016 : price * 0.984;
     const stopLoss = isBuy ? price * 0.989 : price * 1.011;
+
+    // Risk-reward filter: reward must be >= risk
+    const risk = Math.abs(price - stopLoss);
+    const reward = Math.abs(targetPrice - price);
+    if (risk > 0 && reward / risk < MIN_RISK_REWARD) return;
+
+    // Priority queue: if full, evict lowest score if new signal is better
+    if (activeSignals.length >= MAX_ACTIVE_SIGNALS) {
+      const lowest = getLowestSignal();
+      if (!lowest || score <= lowest.score) return; // new signal not better → discard
+
+      // Evict lowest
+      removeLowestSignal();
+      console.log(`[Accuracy] Evicted: ${lowest.symbol} (score ${lowest.score}) → replaced by ${symbol} (score ${score})`);
+    }
+
+    const now = new Date();
     const evaluationTime = new Date(now.getTime() + EVALUATION_WINDOW_MS);
 
     try {
-      await db.insert(signalAccuracyLog).values({
+      const [inserted] = await db.insert(signalAccuracyLog).values({
         symbol,
         signalType: signal.type,
         action: signal.action,
-        signalScore: signal.score ?? 0,
+        signalScore: score,
         entryPrice: price.toFixed(2),
         entryTime: now,
         targetPrice: targetPrice.toFixed(2),
         stopLoss: stopLoss.toFixed(2),
         evaluationTime,
-      });
+      }).returning({ id: signalAccuracyLog.id });
 
-      activeSymbols.add(symbol);
-      console.log(`[Accuracy] Recorded: ${symbol} ${signal.action} ${signal.type} score=${signal.score} entry=₹${price.toFixed(2)} target=₹${targetPrice.toFixed(2)} SL=₹${stopLoss.toFixed(2)}`);
+      addSignal({ symbol, score, dbId: inserted?.id, recordedAt: Date.now() });
+      console.log(`[Accuracy] Recorded: ${symbol} ${signal.action} ${signal.type} score=${score} entry=₹${price.toFixed(2)} target=₹${targetPrice.toFixed(2)} SL=₹${stopLoss.toFixed(2)} [${activeSignals.length}/${MAX_ACTIVE_SIGNALS} active]`);
     } catch (err: any) {
       console.warn(`[Accuracy] Failed to record ${symbol}:`, err.message);
     }
@@ -136,8 +199,8 @@ export function createSignalAccuracyService() {
           })
           .where(eq(signalAccuracyLog.id, record.id));
 
-        activeSymbols.delete(record.symbol);
-        console.log(`[Accuracy] Evaluated: ${record.symbol} ${record.action} → ${result} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%)`);
+        removeSignalBySymbol(record.symbol);
+        console.log(`[Accuracy] Evaluated: ${record.symbol} ${record.action} → ${result} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%) [${activeSignals.length}/${MAX_ACTIVE_SIGNALS} active]`);
       }
     } catch (err: any) {
       console.warn("[Accuracy] Evaluation error:", err.message);
