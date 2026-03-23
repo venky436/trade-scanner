@@ -643,7 +643,6 @@ export function StockDetail({ symbol }: { symbol: string }) {
                   { label: "Pressure", value: signal.scoreBreakdown.pressure, color: "bg-blue-500" },
                   { label: "Momentum", value: signal.scoreBreakdown.momentum, color: "bg-purple-500" },
                   { label: "S/R", value: signal.scoreBreakdown.sr, color: "bg-yellow-500" },
-                  { label: "Pattern", value: signal.scoreBreakdown.pattern, color: "bg-green-500" },
                   { label: "Volatility", value: signal.scoreBreakdown.volatility, color: "bg-orange-500" },
                 ].map(({ label, value, color }) => (
                   <div key={label} className="space-y-1">
@@ -661,13 +660,23 @@ export function StockDetail({ symbol }: { symbol: string }) {
                     </div>
                   </div>
                 ))}
+                {/* Pattern badge (not part of score — visual bonus) */}
+                {pattern && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-xs text-muted-foreground">Pattern:</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                      pattern.direction === "BULLISH" ? "bg-green-500/15 text-green-500" : "bg-red-500/15 text-red-500"
+                    }`}>
+                      {formatPatternName(pattern.pattern)} ({pattern.direction === "BULLISH" ? "Bullish" : "Bearish"})
+                    </span>
+                  </div>
+                )}
                 {/* Weakness summary */}
                 {(() => {
                   const weak = [
                     { label: "Pressure", value: signal.scoreBreakdown!.pressure },
                     { label: "Momentum", value: signal.scoreBreakdown!.momentum },
                     { label: "S/R", value: signal.scoreBreakdown!.sr },
-                    { label: "Pattern", value: signal.scoreBreakdown!.pattern },
                   ].filter(e => e.value < 5);
                   if (weak.length === 0) return null;
                   return (

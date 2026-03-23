@@ -5,66 +5,31 @@ import { marketDataService } from "./market-data.service.js";
 import { getMarketPhase } from "../lib/market-phase.js";
 import type { SignalResult } from "../lib/types.js";
 
-const MAX_ACTIVE_SIGNALS = 25;
-const MAX_PER_STOCK = 2; // diversity: max 2 signals per stock
-const MIN_RISK_REWARD = 1.0; // minimum RR ratio to accept
-const EVALUATION_WINDOW_MS = 20 * 60 * 1000; // 20 minutes
-const EVAL_CRON_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_ACTIVE_SIGNALS = 100;
+const MIN_RISK_REWARD = 1.0; // reward must be > risk
+const EVALUATION_WINDOW_MS = 20 * 60 * 1000; // 20 minutes max wait
+const REALTIME_CHECK_INTERVAL_MS = 1000; // check every 1 second
+const TIMEOUT_CHECK_INTERVAL_MS = 5 * 60 * 1000; // timeout check every 5 min
 
-// ── Priority Queue: track active signals with scores for eviction ──
+// ── Active signal tracking (no replacement, no duplicates) ──
 interface ActiveSignal {
   symbol: string;
-  score: number;
-  dbId?: number; // DB row id for deletion if evicted
+  dbId: number;
+  action: "BUY" | "SELL";
+  entryPrice: number;
+  targetPrice: number;
+  stopLoss: number;
   recordedAt: number;
 }
 
-// Active signals sorted by score (lowest first for easy eviction)
-const activeSignals: ActiveSignal[] = [];
-// Quick lookup: how many active signals per stock
-const stockCount = new Map<string, number>();
-
-function getLowestSignal(): ActiveSignal | null {
-  if (activeSignals.length === 0) return null;
-  let lowest = activeSignals[0];
-  for (let i = 1; i < activeSignals.length; i++) {
-    if (activeSignals[i].score < lowest.score) lowest = activeSignals[i];
-  }
-  return lowest;
-}
-
-function removeSignalBySymbol(symbol: string): void {
-  const idx = activeSignals.findIndex((s) => s.symbol === symbol);
-  if (idx !== -1) {
-    activeSignals.splice(idx, 1);
-    const count = stockCount.get(symbol) ?? 0;
-    if (count <= 1) stockCount.delete(symbol);
-    else stockCount.set(symbol, count - 1);
-  }
-}
-
-function removeLowestSignal(): ActiveSignal | null {
-  const lowest = getLowestSignal();
-  if (!lowest) return null;
-  const idx = activeSignals.indexOf(lowest);
-  if (idx !== -1) {
-    activeSignals.splice(idx, 1);
-    const count = stockCount.get(lowest.symbol) ?? 0;
-    if (count <= 1) stockCount.delete(lowest.symbol);
-    else stockCount.set(lowest.symbol, count - 1);
-  }
-  return lowest;
-}
-
-function addSignal(entry: ActiveSignal): void {
-  activeSignals.push(entry);
-  stockCount.set(entry.symbol, (stockCount.get(entry.symbol) ?? 0) + 1);
-}
+// Simple map: symbol → active signal (one per stock, no duplicates)
+const activeMap = new Map<string, ActiveSignal>();
 
 export function createSignalAccuracyService() {
-  let evalTimer: ReturnType<typeof setInterval> | null = null;
+  let realtimeTimer: ReturnType<typeof setInterval> | null = null;
+  let timeoutTimer: ReturnType<typeof setInterval> | null = null;
 
-  // ── Record a high-confidence signal (priority-based) ──
+  // ── Record signal (first-come, no replacement, no duplicates) ──
   async function recordSignal(
     symbol: string,
     signal: SignalResult,
@@ -73,15 +38,17 @@ export function createSignalAccuracyService() {
     // Skip if no signal type
     if (!signal.type) return;
 
-    // Skip during OPENING/STABILIZING — signals are unreliable
+    // Skip during OPENING/STABILIZING
     const { phase } = getMarketPhase();
     if (phase === "OPENING" || phase === "STABILIZING") return;
 
+    // No duplicates: if already tracking this stock → skip
+    if (activeMap.has(symbol)) return;
+
+    // Queue full → stop accepting (wait for evaluations to free slots)
+    if (activeMap.size >= MAX_ACTIVE_SIGNALS) return;
+
     const score = signal.score ?? 0;
-
-    // Diversity: max 2 signals per stock
-    if ((stockCount.get(symbol) ?? 0) >= MAX_PER_STOCK) return;
-
     const isBuy = signal.action === "BUY";
     const targetPrice = isBuy ? price * 1.016 : price * 0.984;
     const stopLoss = isBuy ? price * 0.989 : price * 1.011;
@@ -90,16 +57,6 @@ export function createSignalAccuracyService() {
     const risk = Math.abs(price - stopLoss);
     const reward = Math.abs(targetPrice - price);
     if (risk > 0 && reward / risk < MIN_RISK_REWARD) return;
-
-    // Priority queue: if full, evict lowest score if new signal is better
-    if (activeSignals.length >= MAX_ACTIVE_SIGNALS) {
-      const lowest = getLowestSignal();
-      if (!lowest || score <= lowest.score) return; // new signal not better → discard
-
-      // Evict lowest
-      removeLowestSignal();
-      console.log(`[Accuracy] Evicted: ${lowest.symbol} (score ${lowest.score}) → replaced by ${symbol} (score ${score})`);
-    }
 
     const now = new Date();
     const evaluationTime = new Date(now.getTime() + EVALUATION_WINDOW_MS);
@@ -117,93 +74,111 @@ export function createSignalAccuracyService() {
         evaluationTime,
       }).returning({ id: signalAccuracyLog.id });
 
-      addSignal({ symbol, score, dbId: inserted?.id, recordedAt: Date.now() });
-      console.log(`[Accuracy] Recorded: ${symbol} ${signal.action} ${signal.type} score=${score} entry=₹${price.toFixed(2)} target=₹${targetPrice.toFixed(2)} SL=₹${stopLoss.toFixed(2)} [${activeSignals.length}/${MAX_ACTIVE_SIGNALS} active]`);
+      activeMap.set(symbol, {
+        symbol,
+        dbId: inserted.id,
+        action: signal.action as "BUY" | "SELL",
+        entryPrice: price,
+        targetPrice,
+        stopLoss,
+        recordedAt: Date.now(),
+      });
+
+      console.log(`[Accuracy] Recorded: ${symbol} ${signal.action} ${signal.type} score=${score} entry=₹${price.toFixed(2)} target=₹${targetPrice.toFixed(2)} SL=₹${stopLoss.toFixed(2)} [${activeMap.size}/${MAX_ACTIVE_SIGNALS}]`);
     } catch (err: any) {
       console.warn(`[Accuracy] Failed to record ${symbol}:`, err.message);
     }
   }
 
-  // ── Evaluate pending signals ──
-  async function evaluatePending(): Promise<void> {
-    try {
-      const pending = await db
-        .select()
-        .from(signalAccuracyLog)
-        .where(
-          and(
-            isNull(signalAccuracyLog.result),
-            lte(signalAccuracyLog.evaluationTime, new Date()),
-          )
-        )
-        .limit(25);
+  // ── Real-time evaluation: check live price against target/SL every second ──
+  async function evaluateRealTime(): Promise<void> {
+    if (activeMap.size === 0) return;
 
-      if (pending.length === 0) return;
+    const toClose: { symbol: string; result: "SUCCESS" | "FAILED"; price: number }[] = [];
 
-      console.log(`[Accuracy] Evaluating ${pending.length} pending signals...`);
+    for (const [symbol, sig] of activeMap) {
+      const quote = marketDataService.getQuote(symbol);
+      if (!quote || quote.lastPrice <= 0) continue;
 
-      for (const record of pending) {
-        const quote = marketDataService.getQuote(record.symbol);
-        const currentPrice = quote?.lastPrice ?? 0;
-        const high = quote?.high ?? 0;
-        const low = quote?.low ?? 0;
+      const price = quote.lastPrice;
 
-        const entryPrice = Number(record.entryPrice);
-        const targetPrice = Number(record.targetPrice);
-        const stopLoss = Number(record.stopLoss);
-        const isBuy = record.action === "BUY";
-
-        // Use day's high/low as proxy for max/min in evaluation window
-        const maxPrice = Math.max(high, currentPrice);
-        const minPrice = low > 0 ? Math.min(low, currentPrice) : currentPrice;
-        const finalPrice = currentPrice > 0 ? currentPrice : entryPrice;
-
-        // First-hit logic
-        let targetHit = false;
-        let stopHit = false;
-
-        if (isBuy) {
-          targetHit = maxPrice >= targetPrice;
-          stopHit = minPrice <= stopLoss;
-        } else {
-          targetHit = minPrice <= targetPrice;
-          stopHit = maxPrice >= stopLoss;
+      if (sig.action === "BUY") {
+        if (price >= sig.targetPrice) {
+          toClose.push({ symbol, result: "SUCCESS", price });
+        } else if (price <= sig.stopLoss) {
+          toClose.push({ symbol, result: "FAILED", price });
         }
-
-        let result: "SUCCESS" | "FAILED" | "NEUTRAL";
-        if (targetHit && !stopHit) {
-          result = "SUCCESS";
-        } else if (stopHit && !targetHit) {
-          result = "FAILED";
-        } else if (targetHit && stopHit) {
-          // Both hit — use final price to decide
-          const pnl = isBuy ? finalPrice - entryPrice : entryPrice - finalPrice;
-          result = pnl > 0 ? "SUCCESS" : "FAILED";
-        } else {
-          result = "NEUTRAL";
+      } else {
+        // SELL
+        if (price <= sig.targetPrice) {
+          toClose.push({ symbol, result: "SUCCESS", price });
+        } else if (price >= sig.stopLoss) {
+          toClose.push({ symbol, result: "FAILED", price });
         }
-
-        const pnlPercent = isBuy
-          ? ((finalPrice - entryPrice) / entryPrice) * 100
-          : ((entryPrice - finalPrice) / entryPrice) * 100;
-
-        await db
-          .update(signalAccuracyLog)
-          .set({
-            maxPrice: maxPrice.toFixed(2),
-            minPrice: minPrice.toFixed(2),
-            finalPrice: finalPrice.toFixed(2),
-            targetHitTime: targetHit ? new Date() : null,
-            stopHitTime: stopHit ? new Date() : null,
-            result,
-          })
-          .where(eq(signalAccuracyLog.id, record.id));
-
-        removeSignalBySymbol(record.symbol);
-        console.log(`[Accuracy] Evaluated: ${record.symbol} ${record.action} → ${result} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%) [${activeSignals.length}/${MAX_ACTIVE_SIGNALS} active]`);
       }
-    } catch (err: any) {
-      console.warn("[Accuracy] Evaluation error:", err.message);
+    }
+
+    // Close signals that hit target or SL
+    for (const { symbol, result, price } of toClose) {
+      const sig = activeMap.get(symbol);
+      if (!sig) continue;
+
+      const pnlPercent = sig.action === "BUY"
+        ? ((price - sig.entryPrice) / sig.entryPrice) * 100
+        : ((sig.entryPrice - price) / sig.entryPrice) * 100;
+
+      try {
+        await db.update(signalAccuracyLog).set({
+          finalPrice: price.toFixed(2),
+          maxPrice: price.toFixed(2),
+          minPrice: price.toFixed(2),
+          targetHitTime: result === "SUCCESS" ? new Date() : null,
+          stopHitTime: result === "FAILED" ? new Date() : null,
+          result,
+        }).where(eq(signalAccuracyLog.id, sig.dbId));
+
+        activeMap.delete(symbol);
+        console.log(`[Accuracy] ${result}: ${symbol} ${sig.action} at ₹${price.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%) [${activeMap.size}/${MAX_ACTIVE_SIGNALS}]`);
+      } catch (err: any) {
+        console.warn(`[Accuracy] Failed to close ${symbol}:`, err.message);
+      }
+    }
+  }
+
+  // ── Timeout evaluation: close signals that exceeded 20 min without hitting target/SL ──
+  async function evaluateTimeouts(): Promise<void> {
+    const now = Date.now();
+    const toTimeout: string[] = [];
+
+    for (const [symbol, sig] of activeMap) {
+      if (now - sig.recordedAt >= EVALUATION_WINDOW_MS) {
+        toTimeout.push(symbol);
+      }
+    }
+
+    for (const symbol of toTimeout) {
+      const sig = activeMap.get(symbol);
+      if (!sig) continue;
+
+      const quote = marketDataService.getQuote(symbol);
+      const finalPrice = quote?.lastPrice ?? sig.entryPrice;
+      const pnlPercent = sig.action === "BUY"
+        ? ((finalPrice - sig.entryPrice) / sig.entryPrice) * 100
+        : ((sig.entryPrice - finalPrice) / sig.entryPrice) * 100;
+
+      try {
+        await db.update(signalAccuracyLog).set({
+          finalPrice: finalPrice.toFixed(2),
+          maxPrice: (quote?.high ?? finalPrice).toFixed(2),
+          minPrice: (quote?.low ?? finalPrice).toFixed(2),
+          result: "NEUTRAL",
+        }).where(eq(signalAccuracyLog.id, sig.dbId));
+
+        activeMap.delete(symbol);
+        console.log(`[Accuracy] NEUTRAL (timeout): ${symbol} ${sig.action} at ₹${finalPrice.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%) [${activeMap.size}/${MAX_ACTIVE_SIGNALS}]`);
+      } catch (err: any) {
+        console.warn(`[Accuracy] Failed to timeout ${symbol}:`, err.message);
+      }
     }
   }
 
@@ -300,16 +275,22 @@ export function createSignalAccuracyService() {
 
   return {
     recordSignal,
+    evaluateRealTime,
 
     start() {
-      evalTimer = setInterval(evaluatePending, EVAL_CRON_INTERVAL_MS);
-      evalTimer.unref();
-      console.log("[Accuracy] Evaluation cron started (every 5 min)");
+      // Real-time: check target/SL every 1 second
+      realtimeTimer = setInterval(evaluateRealTime, REALTIME_CHECK_INTERVAL_MS);
+      realtimeTimer.unref();
+      // Timeout: close expired signals every 5 min
+      timeoutTimer = setInterval(evaluateTimeouts, TIMEOUT_CHECK_INTERVAL_MS);
+      timeoutTimer.unref();
+      console.log("[Accuracy] Started — real-time eval (1s) + timeout eval (5 min)");
     },
 
     stop() {
-      if (evalTimer) { clearInterval(evalTimer); evalTimer = null; }
-      console.log("[Accuracy] Evaluation cron stopped");
+      if (realtimeTimer) { clearInterval(realtimeTimer); realtimeTimer = null; }
+      if (timeoutTimer) { clearInterval(timeoutTimer); timeoutTimer = null; }
+      console.log("[Accuracy] Stopped");
     },
 
     getMetrics,

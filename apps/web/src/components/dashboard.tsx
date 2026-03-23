@@ -114,10 +114,10 @@ export function Dashboard() {
                   These are actionable
                 </span>
               </div>
-              <TopOpportunities stockMap={stockMap} srLevels={srLevels} minScore={8} maxItems={5} />
+              <TopOpportunities stockMap={stockMap} srLevels={srLevels} minScore={9} maxItems={5} />
             </div>
 
-            {/* Watchlist (score 6-7) */}
+            {/* Watchlist (score 7-8) */}
             <div>
               <div className="flex items-center gap-2 mb-4">
                 <Eye className="size-4 text-blue-400" />
@@ -128,7 +128,7 @@ export function Dashboard() {
                   Monitor only — not yet actionable
                 </span>
               </div>
-              <TopOpportunities stockMap={stockMap} srLevels={srLevels} minScore={6} maxScore={8} maxItems={5} />
+              <TopOpportunities stockMap={stockMap} srLevels={srLevels} minScore={7} maxScore={9} maxItems={5} />
             </div>
 
             {/* Trade Setups (Breakout/Bounce/Rejection/Breakdown) */}

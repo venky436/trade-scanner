@@ -2,149 +2,265 @@
 
 ## Overview
 
-The Signal Accuracy Engine tracks the real-world performance of high-confidence trading signals. When a signal reaches score >= 8 during NORMAL market phase, it's recorded with entry price, target, and stoploss. After 20 minutes, the system evaluates whether the target or stoploss was hit first.
+The Signal Accuracy Engine tracks the real-world performance of high-confidence trading signals. When a signal reaches score >= 9 during NORMAL market phase, it's recorded with entry price, target, and stoploss. The system evaluates **in real-time** (every 1 second) — if target or stoploss is hit, the signal is closed immediately. If neither is hit within 20 minutes, it's marked NEUTRAL.
 
 Results are stored permanently in PostgreSQL and displayed on the admin dashboard (`/admin`).
 
 ---
 
-## Priority-Based Signal Selection
-
-The engine maintains a **priority queue of the top 25 highest-quality signals**, not the first 25. When the queue is full and a better signal arrives, the lowest-scoring signal is evicted.
-
-### Why Priority Queue?
-
-**Problem (old system):**
-```
-25 signals with score 6-7 → accepted (queue full)
-New signal with score 9 → rejected (no room)
-```
-
-**Solution (current system):**
-```
-25 signals active, lowest score = 6
-New signal with score 9 arrives
-  → Evict score 6
-  → Insert score 9
-Result: always tracking the best 25 signals
-```
-
-### Selection Flow
+## Complete Flow
 
 ```
-New signal arrives (score >= 8)
-  │
-  ├─ Phase check: OPENING/STABILIZING? → reject
-  │
-  ├─ Signal type exists? (BREAKOUT/BOUNCE/etc) → required
-  │
-  ├─ Risk-reward >= 1.0? → required
-  │
-  ├─ Max 2 per stock? → check diversity
-  │
-  ├─ Queue has room (< 25)?
-  │    └─ YES → add signal
-  │
-  └─ Queue full (25)?
-       │
-       ├─ New score > lowest score in queue?
-       │    └─ YES → evict lowest, add new
-       │
-       └─ NO → discard (not good enough)
+MARKET OPENS (9:15 AM IST)
+        │
+        ▼
+   OPENING PHASE (9:15 - 9:20)
+   ❌ All signals blocked — no accuracy tracking
+        │
+        ▼
+   STABILIZING PHASE (9:20 - 9:25)
+   ❌ Still blocked — signals unreliable
+        │
+        ▼
+   NORMAL PHASE (9:25+)
+   ✅ Accuracy tracking ENABLED
+        │
+        ▼
+┌─────────────────────────────────────────────────┐
+│            SIGNAL WORKER (every 500ms-1s)        │
+│                                                  │
+│  Computes signal for each stock:                 │
+│    pressure + momentum + S/R + pattern           │
+│         ↓                                        │
+│    Score computed (1-10)                          │
+│         ↓                                        │
+│    Score >= 9?  ──NO──→ skip (not tracked)       │
+│         │                                        │
+│        YES                                       │
+│         │                                        │
+│    Action != WAIT?  ──NO──→ skip                 │
+│         │                                        │
+│        YES                                       │
+│         │                                        │
+│    Phase == NORMAL?  ──NO──→ skip                │
+│         │                                        │
+│        YES                                       │
+│         ▼                                        │
+│    FIRES: onHighConfidenceSignal(symbol,         │
+│           signal, price)                         │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│         ACCURACY SERVICE: recordSignal()         │
+│                                                  │
+│  Gate 1: Phase == NORMAL?  ──NO──→ reject        │
+│         │                                        │
+│        YES                                       │
+│         │                                        │
+│  Gate 2: Signal has type?  ──NO──→ reject        │
+│          (BREAKOUT/BOUNCE/etc)                   │
+│         │                                        │
+│        YES                                       │
+│         │                                        │
+│  Gate 3: Already tracking this stock?            │
+│         ──YES──→ reject (no duplicates)          │
+│         │                                        │
+│        NO                                        │
+│         │                                        │
+│  Gate 4: Queue full (100)?                       │
+│         ──YES──→ reject (wait for slots)         │
+│         │                                        │
+│        NO                                        │
+│         │                                        │
+│  Gate 5: Risk/Reward >= 1.0?  ──NO──→ reject     │
+│         │                                        │
+│        YES                                       │
+│         ▼                                        │
+│    ADD signal (no replacement ever)              │
+│                                                  │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│              RECORD TO DATABASE                   │
+│                                                  │
+│  INSERT signal_accuracy_log:                     │
+│    symbol     = "TATASTEEL"                      │
+│    type       = "BOUNCE"                         │
+│    action     = "BUY"                            │
+│    score      = 9                                │
+│    entry      = ₹145.50                          │
+│    target     = ₹147.83  (+1.6%)                 │
+│    stoploss   = ₹143.90  (-1.1%)                 │
+│    eval_time  = now + 20 minutes                 │
+│    result     = NULL (pending)                   │
+│                                                  │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│     REAL-TIME EVALUATION (every 1 second)        │
+│                                                  │
+│  For each active signal:                         │
+│    Get live price from marketDataService         │
+│         │                                        │
+│    BUY signal:                                   │
+│      price >= target?  → ✅ SUCCESS (close now)  │
+│      price <= SL?      → ❌ FAILED (close now)   │
+│                                                  │
+│    SELL signal:                                  │
+│      price <= target?  → ✅ SUCCESS (close now)  │
+│      price >= SL?      → ❌ FAILED (close now)   │
+│                                                  │
+│    Neither hit?  → continue watching             │
+│                                                  │
+│  On close:                                       │
+│    UPDATE DB: result, final_price, hit_time      │
+│    Remove from active map (frees slot)           │
+│                                                  │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       │  ... if 20 min passes without hit ...
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│     TIMEOUT CHECK (every 5 minutes)              │
+│                                                  │
+│  For each active signal:                         │
+│    recordedAt + 20 min < now?                    │
+│         │                                        │
+│        YES → ⚪ NEUTRAL                          │
+│         │    (neither target nor SL hit)          │
+│         │    UPDATE DB: result = NEUTRAL          │
+│         │    Remove from active map               │
+│         │                                        │
+│        NO → continue watching                    │
+│                                                  │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│           ADMIN DASHBOARD (/admin)               │
+│                                                  │
+│  ┌──────────┐ ┌──────────┐ ┌────────┐ ┌───────┐│
+│  │Total: 26 │ │Accuracy: │ │Avg Gain│ │AvgLoss││
+│  │          │ │  68%     │ │+0.8%   │ │-0.5%  ││
+│  └──────────┘ └──────────┘ └────────┘ └───────┘│
+│                                                  │
+│  Win Rate by Type:                               │
+│    BOUNCE:    72%  (best)                        │
+│    BREAKOUT:  45%                                │
+│    BREAKDOWN: 0/0                                │
+│    REJECTION: 0/0                                │
+│                                                  │
+│  Recent Signals:                                 │
+│    TATASTEEL BOUNCE BUY 9 → SUCCESS (+1.2%)     │
+│    RELIANCE  BREAKOUT BUY 9 → FAILED (-0.8%)    │
+│    ...                                           │
+└─────────────────────────────────────────────────┘
 ```
 
-### Safety Rules
+---
+
+## Key Design: True Accuracy (No Bias)
+
+```
+OLD SYSTEM (biased):
+  25 slots, priority queue
+  Score 7 signal recorded → later score 9 arrives → EVICTS score 7
+  Result: only high scores tracked → inflated accuracy
+
+NEW SYSTEM (unbiased):
+  100 slots, first-come first-served
+  Score 9 signal recorded → same stock later score 10 → SKIPPED (already tracking)
+  Score 9 fills slot → queue full → new score 9 → REJECTED (wait for slots)
+  Result: true accuracy of ALL signals that pass threshold
+```
 
 | Rule | Value | Purpose |
 |------|-------|---------|
-| Max active signals | 25 | Prevent overload |
-| Max per stock | 2 | Diversity — avoid tracking same stock repeatedly |
-| Min risk-reward | 1.0 | Reject trades where risk > reward |
-| Min score | 8 | Only high-confidence signals (enforced by signal-worker callback) |
-| Market phase | NORMAL only | Skip OPENING/STABILIZING (unreliable signals) |
-
-### Risk-Reward Filter
-
-Before accepting a signal, the engine checks:
-
-```
-BUY signal:
-  target = entry × 1.016 (+1.6%)
-  stoploss = entry × 0.989 (-1.1%)
-  reward = target - entry
-  risk = entry - stoploss
-  RR = reward / risk = 1.6 / 1.1 = 1.45 ✓ (passes RR >= 1.0)
-
-SELL signal:
-  target = entry × 0.984 (-1.6%)
-  stoploss = entry × 1.011 (+1.1%)
-  reward = entry - target
-  risk = stoploss - entry
-  RR = reward / risk = 1.45 ✓
-```
-
-With the current target/stoploss percentages, all signals pass the RR filter. The filter becomes meaningful if target/stoploss percentages are tuned in the future.
+| No replacement | Never evict a signal for a better one | True unbiased accuracy |
+| No duplicates | One signal per stock at a time | Avoid tracking same stock twice |
+| First-come | First 100 signals accepted, rest wait | Measure real system performance |
+| Slots freed on close | SUCCESS/FAILED/NEUTRAL frees slot | New signals can enter after evaluation |
 
 ---
 
-## Signal Lifecycle
+## Evaluation Results Explained
 
 ```
-Signal Worker
-  │
-  │  score >= 8, action != WAIT, phase == NORMAL
-  │
-  ▼
-onHighConfidenceSignal callback
-  │
-  ▼
-recordSignal(symbol, signal, price)
-  │
-  ├─ Validation (phase, type, RR, diversity)
-  │
-  ├─ Priority check (evict lowest if needed)
-  │
-  ├─ Insert into DB (signal_accuracy_log)
-  │
-  └─ Add to active queue
+Signal recorded at 10:00 AM
+  entry = ₹100, target = ₹101.60, SL = ₹98.90
 
-  ... 20 minutes pass ...
+REAL-TIME CHECK (every 1 second):
 
-evaluatePending() (every 5 min cron)
-  │
-  ├─ Query DB: unevaluated + past evaluation time
-  │
-  ├─ For each signal:
-  │    ├─ Get current price + day high/low
-  │    ├─ Check: target hit? stoploss hit?
-  │    ├─ Determine result: SUCCESS / FAILED / NEUTRAL
-  │    └─ Update DB record
-  │
-  └─ Remove from active queue (frees slot)
+  10:00:01 — price = ₹100.20 → neither hit → continue
+  10:00:02 — price = ₹100.50 → neither hit → continue
+  ...
+  10:03:15 — price = ₹101.65 → TARGET HIT → ✅ SUCCESS
+             Close immediately, update DB, free slot
+
+OR:
+
+  10:00:01 — price = ₹100.20 → continue
+  10:01:30 — price = ₹98.85 → SL HIT → ❌ FAILED
+             Close immediately, update DB, free slot
+
+OR:
+
+  ... 20 minutes pass, price stays between SL and target ...
+  10:20:00 — TIMEOUT → ⚪ NEUTRAL
+             Close, update DB, free slot
 ```
 
 ---
 
-## Evaluation Logic
-
-After 20 minutes, each signal is evaluated using the **first-hit** method:
+## Signal Selection Flow (No Priority Queue)
 
 ```
-BUY signal:
-  Target hit = day's high >= target price
-  Stop hit   = day's low <= stoploss
+Time 9:30 — Active: 15/100
+  BOUNCE TATASTEEL score=9 → NEW stock → ADDED [16/100]
 
-SELL signal:
-  Target hit = day's low <= target price
-  Stop hit   = day's high >= stoploss
+Time 9:31 — Active: 16/100
+  BOUNCE TATASTEEL score=10 → ALREADY tracking → SKIPPED
+
+Time 9:35 — Active: 100/100 (FULL)
+  BOUNCE RELIANCE score=10 → FULL → REJECTED (wait for slots)
+
+Time 9:36 — TATASTEEL hits target
+  → SUCCESS, removed from active [99/100]
+
+Time 9:37 — Active: 99/100
+  BOUNCE RELIANCE score=10 → has room → ADDED [100/100]
 ```
 
-| Condition | Result |
-|-----------|--------|
-| Target hit, stop NOT hit | SUCCESS |
-| Stop hit, target NOT hit | FAILED |
-| Both hit | Use final price to decide (P&L positive = SUCCESS) |
-| Neither hit | NEUTRAL |
+---
+
+## Evaluation Timers
+
+| Timer | Interval | Purpose |
+|-------|----------|---------|
+| Real-time eval | Every 1 second | Check live price vs target/SL for all active signals |
+| Timeout eval | Every 5 minutes | Close signals that exceeded 20 min without hit → NEUTRAL |
+
+The real-time timer is the primary evaluation method — most signals close within seconds or minutes of recording. The timeout timer is a safety net for slow-moving stocks.
+
+---
+
+## Safety Rules
+
+| Rule | Value | Purpose |
+|------|-------|---------|
+| Max active signals | 100 | Prevent overload |
+| No duplicates | 1 signal per stock | True accuracy, no bias |
+| No replacement | Never evict | Unbiased measurement |
+| Min risk-reward | 1.0 | Reward must be >= risk |
+| Min score | 9 | Only highest-confidence signals |
+| Market phase | NORMAL only | Skip OPENING/STABILIZING |
+| Target (BUY) | entry × 1.016 (+1.6%) | Profit target |
+| Stoploss (BUY) | entry × 0.989 (-1.1%) | Risk limit |
+| RR ratio | 1.6 / 1.1 = 1.45x | Risk always less than profit |
 
 ---
 
@@ -196,30 +312,14 @@ CREATE TABLE signal_accuracy_log (
 
 ---
 
-## Configuration
-
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `MAX_ACTIVE_SIGNALS` | 25 | Max concurrent tracked signals |
-| `MAX_PER_STOCK` | 2 | Max signals per stock (diversity) |
-| `MIN_RISK_REWARD` | 1.0 | Minimum RR ratio to accept |
-| `EVALUATION_WINDOW_MS` | 20 min | Time before evaluation |
-| `EVAL_CRON_INTERVAL_MS` | 5 min | Evaluation check frequency |
-| Target (BUY) | entry × 1.016 | +1.6% target |
-| Stoploss (BUY) | entry × 0.989 | -1.1% stoploss |
-| Target (SELL) | entry × 0.984 | -1.6% target |
-| Stoploss (SELL) | entry × 1.011 | +1.1% stoploss |
-
----
-
 ## Double Protection for Market Phase
 
 The accuracy engine has two independent phase guards:
 
-1. **Signal-worker callback** (line 133 in signal-worker.service.ts): Only fires `onHighConfidenceSignal` when `phaseResult.marketPhase === "NORMAL"`
+1. **Signal-worker callback**: Only fires `onHighConfidenceSignal` when `phaseResult.marketPhase === "NORMAL"` and `effectiveScore >= 9`
 2. **Accuracy service** (recordSignal): Independently calls `getMarketPhase()` and skips OPENING/STABILIZING
 
-Both must pass for a signal to be recorded. This prevents opening volatility from polluting accuracy data.
+Both must pass for a signal to be recorded.
 
 ---
 
@@ -227,7 +327,7 @@ Both must pass for a signal to be recorded. This prevents opening volatility fro
 
 | File | Role |
 |------|------|
-| `apps/server/src/services/signal-accuracy.service.ts` | Core engine: priority queue, recording, evaluation, metrics |
+| `apps/server/src/services/signal-accuracy.service.ts` | Core engine: recording, real-time eval, timeout eval, metrics |
 | `apps/server/src/db/schema/signal-accuracy.ts` | Drizzle schema for `signal_accuracy_log` table |
 | `apps/server/src/routes/admin.route.ts` | Admin API endpoints (accuracy + signals) |
 | `apps/web/src/components/admin-dashboard.tsx` | Admin dashboard UI |
@@ -238,12 +338,20 @@ Both must pass for a signal to be recorded. This prevents opening volatility fro
 ## Example Log Output
 
 ```
-[Accuracy] Recorded: PERSISTENT BUY BOUNCE score=8 entry=₹4721.00 target=₹4796.54 SL=₹4669.07 [1/25 active]
-[Accuracy] Recorded: TATASTEEL BUY BREAKOUT score=9 entry=₹145.50 target=₹147.83 SL=₹143.90 [2/25 active]
-...
-[Accuracy] Evicted: CHEMCON (score 8) → replaced by RELIANCE (score 9) [25/25 active]
-...
-[Accuracy] Evaluating 5 pending signals...
-[Accuracy] Evaluated: PERSISTENT BUY → SUCCESS (+1.2%) [24/25 active]
-[Accuracy] Evaluated: TATASTEEL BUY → FAILED (-0.8%) [23/25 active]
+[Accuracy] Started — real-time eval (1s) + timeout eval (5 min)
+[Accuracy] Recorded: TATASTEEL BUY BOUNCE score=9 entry=₹145.50 target=₹147.83 SL=₹143.90 [1/100]
+[Accuracy] Recorded: RELIANCE BUY BREAKOUT score=9 entry=₹2850.00 target=₹2895.60 SL=₹2818.65 [2/100]
+[Accuracy] SUCCESS: TATASTEEL BUY at ₹147.90 (+1.65%) [1/100]
+[Accuracy] FAILED: RELIANCE BUY at ₹2818.00 (-1.12%) [0/100]
+[Accuracy] NEUTRAL (timeout): INFY BUY at ₹1520.00 (+0.30%) [5/100]
 ```
+
+---
+
+## Frontend Score Thresholds
+
+| Section | Score Range | Description |
+|---------|-------------|-------------|
+| Best Setups | >= 9 | Actionable — highest confidence |
+| Watchlist | 7 - 8 | Monitor only — not yet actionable |
+| Trade Setups | >= 8 | Active patterns near key levels |

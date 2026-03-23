@@ -173,6 +173,13 @@ export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, m
                     {signalLabel.label}
                   </span>
                   <span className="text-sm font-bold text-foreground">{stock.symbol}</span>
+                  {stock.pattern && (
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                      stock.pattern.direction === "BULLISH" ? "bg-green-500/15 text-green-500" : "bg-red-500/15 text-red-500"
+                    }`}>
+                      {stock.pattern.pattern.split("_").map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}
+                    </span>
+                  )}
                   <span className={`text-xs font-mono tabular-nums ${
                     positive ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
                   }`}>

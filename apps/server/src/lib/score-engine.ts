@@ -137,11 +137,11 @@ export function computeSignalScore(input: ScoreInput): { score: number; breakdow
     signal: signalScore(input.signal),
   };
 
+  // Pattern excluded from score — shown as visual badge only on frontend
   const raw =
-    breakdown.pressure * 0.25 +
-    breakdown.momentum * 0.20 +
-    breakdown.sr * 0.20 +
-    breakdown.pattern * 0.15 +
+    breakdown.pressure * 0.30 +
+    breakdown.momentum * 0.25 +
+    breakdown.sr * 0.25 +
     breakdown.volatility * 0.10 +
     breakdown.signal * 0.10;
 

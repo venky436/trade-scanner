@@ -259,16 +259,17 @@ Converts all engine outputs into a single **Signal Score (1-10)** using weighted
 
 | Engine | Weight | Score Range | Mapping |
 |--------|--------|-------------|---------|
-| Pressure | 25% | 0-1 | STRONG_BUY=1, BUY=0.75, NEUTRAL=0.5, SELL=0.25, STRONG_SELL=0 |
-| Momentum | 20% | 0-1 | STRONG_UP=1, UP=0.75, FLAT=0.5, DOWN=0.25, STRONG_DOWN=0 (+0.1 acceleration bonus) |
-| S/R Proximity | 20% | 0-1 | <0.5%=1, <1%=0.8, <2%=0.6, <5%=0.3, else=0.1 (+0.1 touches bonus) |
-| Pattern | 15% | 0-1 | Engulfing/Star=1, Hammer/ShootingStar=0.7, Doji=0.5, none=0 |
+| Pressure | 30% | 0-1 | STRONG_BUY=1, BUY=0.75, NEUTRAL=0.5, SELL=0.25, STRONG_SELL=0 |
+| Momentum | 25% | 0-1 | STRONG_UP=1, UP=0.75, FLAT=0.5, DOWN=0.25, STRONG_DOWN=0 (+0.1 acceleration bonus) |
+| S/R Proximity | 25% | 0-1 | <0.5%=1, <1%=0.8, <2%=0.6, <5%=0.3, else=0.1 (+0.1 touches bonus) |
 | Volatility | 10% | 0-1 | Range ≥3%=1, ≥2%=0.8, ≥1%=0.6, ≥0.5%=0.4, else=0.2 |
 | Signal Boost | 10% | 0-1 | BUY/SELL HIGH=1, MEDIUM=0.7, LOW=0.5, WAIT=0 |
 
+> **Pattern** is excluded from score calculation — shown as a visual badge on the UI when detected (e.g., "Hammer", "Bullish Engulfing"). Pattern detection on 5-min candles is too unreliable to affect scoring but provides useful visual confirmation.
+
 **Formula:**
 ```
-finalScore = (pressure×0.25 + momentum×0.20 + sr×0.20 + pattern×0.15 + volatility×0.10 + signal×0.10) × 10
+finalScore = (pressure×0.30 + momentum×0.25 + sr×0.25 + volatility×0.10 + signal×0.10) × 10
 Clamped to 1-10, rounded
 ```
 

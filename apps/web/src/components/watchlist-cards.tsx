@@ -71,16 +71,18 @@ export function WatchlistCards({ stockMap }: WatchlistCardsProps) {
 
     for (const stock of stockMap.values()) {
       if (INDEX_NAMES.has(stock.symbol)) continue;
-      if (stock.signal && stock.signal.action !== "WAIT" && stock.signal.type) {
+      const score = stock.signal?.finalScore ?? stock.signal?.score ?? 0;
+      if (stock.signal && stock.signal.action !== "WAIT" && stock.signal.type && score >= 8) {
         counts[stock.signal.type] = (counts[stock.signal.type] ?? 0) + 1;
         stocksByType[stock.signal.type]?.push(stock);
       }
     }
 
-    // Sort each category by score descending
+    // Sort each category by score descending, keep top 5
     for (const type of Object.keys(stocksByType)) {
       stocksByType[type].sort((a, b) => (b.signal?.finalScore ?? b.signal?.score ?? 0) - (a.signal?.finalScore ?? a.signal?.score ?? 0));
-      stocksByType[type] = stocksByType[type].slice(0, 5); // top 5
+      stocksByType[type] = stocksByType[type].slice(0, 5);
+      counts[type] = stocksByType[type].length; // show displayed count, not total
     }
 
     return { counts, stocksByType };
@@ -181,6 +183,13 @@ export function WatchlistCards({ stockMap }: WatchlistCardsProps) {
                   >
                     <div className="flex items-center gap-3">
                       <span className="font-medium text-sm text-foreground">{stock.symbol}</span>
+                      {stock.pattern && (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                          stock.pattern.direction === "BULLISH" ? "bg-green-500/15 text-green-500" : "bg-red-500/15 text-red-500"
+                        }`}>
+                          {stock.pattern.pattern.split("_").map((w: string) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}
+                        </span>
+                      )}
                       <span className={`text-xs font-mono tabular-nums ${
                         positive ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
                       }`}>

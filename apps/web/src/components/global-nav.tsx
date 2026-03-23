@@ -128,8 +128,10 @@ export function GlobalNav() {
           </span>
         </Link>
 
-        {/* Search */}
-        <div ref={searchRef} className="relative flex-1 max-w-md">
+        {/* Right side */}
+        <div className="flex items-center gap-3">
+          {/* Search */}
+          <div ref={searchRef} className="relative flex-1 max-w-md">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground/50" />
             <input
@@ -199,8 +201,6 @@ export function GlobalNav() {
           )}
         </div>
 
-        {/* Right side */}
-        <div className="flex items-center gap-3">
           {/* Live status — show market phase context */}
           {kiteConnected ? (() => {
             const now = new Date();
