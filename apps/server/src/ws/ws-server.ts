@@ -25,8 +25,9 @@ export function createWsManager(config: WsManagerConfig) {
     const quotes = marketDataService.getAllQuotes();
     const snapshots: StockSnapshot[] = [];
 
-    // Send only eligible stocks (filtered top 150) instead of all symbols
-    const symbolList = config.getEligibleSymbols?.() ?? symbols;
+    // Send eligible stocks, fallback to all symbols when market closed (few eligible)
+    let symbolList = config.getEligibleSymbols?.() ?? symbols;
+    if (symbolList.length < 50) symbolList = symbols;
     for (const symbol of symbolList) {
       const q = quotes.get(symbol);
       if (!q) continue;
