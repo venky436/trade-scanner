@@ -36,8 +36,11 @@ interface StocksRouteOpts {
   getMomentum?: (symbol: string) => MomentumResult | null;
 }
 
-const formatDate = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+// Format date in IST for Kite API (production servers may run in UTC)
+const formatDate = (d: Date) => {
+  const ist = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  return `${ist.getFullYear()}-${String(ist.getMonth() + 1).padStart(2, "0")}-${String(ist.getDate()).padStart(2, "0")} ${String(ist.getHours()).padStart(2, "0")}:${String(ist.getMinutes()).padStart(2, "0")}:${String(ist.getSeconds()).padStart(2, "0")}`;
+};
 
 // Cache for S/R levels (daily candles don't change intraday)
 let levelsCache: {
