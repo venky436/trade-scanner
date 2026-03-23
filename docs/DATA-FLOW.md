@@ -569,6 +569,8 @@ The frontend uses human-readable labels that map to Kite API interval values:
 Valid intervals accepted by the backend (validated in `stocks.route.ts`):
 `minute`, `3minute`, `5minute`, `15minute`, `30minute`, `60minute`, `day`
 
+**Timezone:** The `formatDate()` function in `stocks.route.ts` converts dates to IST before sending to Kite API. This is critical for production servers running in UTC — without it, intraday candle requests would miss the current trading session (UTC is 5:30 hours behind IST).
+
 ### 5.4 Real-Time Candle Updates
 
 Once historical candles are loaded, the chart also receives live tick updates

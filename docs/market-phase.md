@@ -369,3 +369,4 @@ If a user searches for any stock during OPENING (via search bar → on-demand sn
 | Phase-aware `shouldSkip()` | Without this, batch-lane stocks could stay stuck in OPENING's WAIT after phase transition |
 | On-demand snapshot applies phase too | Users searching for stocks during OPENING should see the same restrictions |
 | Double protection for accuracy | Both callback guard + service guard prevent recording during volatile phases |
+| Explicit IST timezone | `getMarketPhase()` uses `toLocaleString("en-US", { timeZone: "Asia/Kolkata" })` — production servers in UTC would miscalculate market hours without this |

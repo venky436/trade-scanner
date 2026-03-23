@@ -615,3 +615,4 @@ During market:
 9. **Stage-sorted broadcast** — CONFIRMED signals sent first
 10. **Never empty UI** — Fallback "Loading..." signal prevents blank columns
 11. **Market phase control** — First 10 minutes penalized: score ×0.6/×0.8, WAIT forced, accuracy tracking disabled
+12. **Explicit IST timezone** — All time-sensitive functions (market phase, chart history, candle tracking) use `Asia/Kolkata` timezone to work correctly on UTC production servers
