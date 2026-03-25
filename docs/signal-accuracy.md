@@ -252,15 +252,19 @@ The real-time timer is the primary evaluation method — most signals close with
 
 | Rule | Value | Purpose |
 |------|-------|---------|
-| Max active signals | 100 | Prevent overload |
+| Max daily signals | 100 per day total | Hard daily cap — stops after 100 regardless |
 | No duplicates | 1 signal per stock | True accuracy, no bias |
 | No replacement | Never evict | Unbiased measurement |
+| No time limit | Until target or SL hit | Let the trade play out fully |
+| Market close cleanup | 3:30 PM IST | Remaining active signals → NEUTRAL |
 | Min risk-reward | 1.0 | Reward must be >= risk |
 | Min score | 9 | Only highest-confidence signals |
 | Market phase | NORMAL only | Skip OPENING/STABILIZING |
-| Target (BUY) | entry × 1.016 (+1.6%) | Profit target |
-| Stoploss (BUY) | entry × 0.989 (-1.1%) | Risk limit |
-| RR ratio | 1.6 / 1.1 = 1.45x | Risk always less than profit |
+| Target (BUY) | entry × 1.010 (+1.0%) | Profit target |
+| Stoploss (BUY) | entry × 0.993 (-0.7%) | Risk limit |
+| Target (SELL) | entry × 0.990 (-1.0%) | Profit target |
+| Stoploss (SELL) | entry × 1.007 (+0.7%) | Risk limit |
+| RR ratio | 1.0 / 0.7 = 1.43x | Risk always less than profit |
 
 ---
 
@@ -312,14 +316,15 @@ CREATE TABLE signal_accuracy_log (
 
 ---
 
-## Double Protection for Market Phase
+## Triple Protection
 
-The accuracy engine has two independent phase guards:
+The accuracy engine has three independent guards:
 
-1. **Signal-worker callback**: Only fires `onHighConfidenceSignal` when `phaseResult.marketPhase === "NORMAL"` and `effectiveScore >= 9`
-2. **Accuracy service** (recordSignal): Independently calls `getMarketPhase()` and skips OPENING/STABILIZING
+1. **Market filter** (signal-worker): Blocks signal generation when market/stock is too quiet (DEAD/SLOW/SIDEWAYS). See [`docs/market-filter.md`](./market-filter.md)
+2. **Signal-worker callback**: Only fires `onHighConfidenceSignal` when `phaseResult.marketPhase === "NORMAL"` and `effectiveScore >= 9`
+3. **Accuracy service** (recordSignal): Independently calls `getMarketPhase()` and skips OPENING/STABILIZING
 
-Both must pass for a signal to be recorded.
+All three must pass for a signal to be recorded. This ensures only high-quality signals in active markets get tracked.
 
 ---
 

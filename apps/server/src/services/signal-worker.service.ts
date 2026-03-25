@@ -8,6 +8,7 @@ import type {
   SupportResistanceResult,
   MomentumResult,
   PatternSignal,
+  Candle,
 } from "../lib/types.js";
 import { getSignal } from "../lib/signal-engine.js";
 import { computeSignalScore } from "../lib/score-engine.js";
@@ -36,8 +37,15 @@ interface SignalWorkerConfig {
   getEligibleSymbols?: () => string[];
   getIntradayLevels?: () => Record<string, SupportResistanceResult>;
   getSessionCandleCount?: (symbol: string) => number;
+  getLastCandle?: (symbol: string) => Candle | null;
+  getGlobalMarketState?: () => "DEAD" | "SLOW" | "ACTIVE";
   onFirstCycleComplete?: () => void;
 }
+
+// ── Market Filter thresholds ──
+const STOCK_DEAD_RANGE = 0.004;    // 0.4% — skip stock
+const STOCK_SIDEWAYS_RANGE = 0.008; // 0.8% — block breakouts
+const SLOW_MARKET_RANGE = 0.006;    // 0.6% — higher threshold during slow market
 
 // ── Reaction computation ──
 
@@ -89,6 +97,8 @@ export function createSignalWorker(config: SignalWorkerConfig) {
   let batchTimer: ReturnType<typeof setInterval> | null = null;
   let priorityTimer: ReturnType<typeof setInterval> | null = null;
   let isComputingFastLane = false;
+  // Market filter rejection counters (reset each batch cycle)
+  let filterRejects = { globalDead: 0, lowRange: 0, slowMarket: 0, sidewaysBreakout: 0 };
   let firstCycleComplete = false;
   let onHighConfidenceSignal: ((symbol: string, signal: SignalResult, price: number) => void) | null = null;
 
@@ -185,6 +195,24 @@ export function createSignalWorker(config: SignalWorkerConfig) {
     const q = marketDataService.getQuote(symbol);
     if (!q || q.lastPrice <= 0) return;
 
+    // ── Market Filter Layer ──
+    const globalState = config.getGlobalMarketState?.() ?? "ACTIVE";
+
+    // Global DEAD → skip all stocks
+    if (globalState === "DEAD") { filterRejects.globalDead++; return; }
+
+    // Per-stock 5-min range check
+    const lastCandle = config.getLastCandle?.(symbol);
+    if (lastCandle && lastCandle.high > 0 && lastCandle.low > 0) {
+      const stockRange = (lastCandle.high - lastCandle.low) / q.lastPrice;
+
+      // Stock too quiet → skip
+      if (stockRange < STOCK_DEAD_RANGE) { filterRejects.lowRange++; return; }
+
+      // Global SLOW + stock not active enough → skip
+      if (globalState === "SLOW" && stockRange < SLOW_MARKET_RANGE) { filterRejects.slowMarket++; return; }
+    }
+
     const pressure = config.getPressure(symbol);
     const momentum = config.getMomentum(symbol);
     const pattern = config.getPattern(symbol);
@@ -192,10 +220,14 @@ export function createSignalWorker(config: SignalWorkerConfig) {
     const intradayLevels = config.getIntradayLevels?.() ?? {};
     const sessionCandleCount = config.getSessionCandleCount?.(symbol) ?? 0;
 
-    // Merge daily + intraday S/R (intraday wins if closer + valid)
-    const { sr: mergedSr, srType } = selectBestSR(
-      dailyLevels[symbol], intradayLevels[symbol] ?? null, q.lastPrice, sessionCandleCount,
-    );
+    // Early market (before 9:30 AM IST) → force daily S/R only
+    const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const earlyMarket = istNow.getHours() === 9 && istNow.getMinutes() < 30;
+
+    // Merge daily + intraday S/R (force daily before 9:30 AM)
+    const { sr: mergedSr, srType } = earlyMarket
+      ? { sr: dailyLevels[symbol], srType: "DAILY" as const }
+      : selectBestSR(dailyLevels[symbol], intradayLevels[symbol] ?? null, q.lastPrice, sessionCandleCount);
     let symbolSr = mergedSr;
 
     // Validate S/R orientation — swap if inverted relative to current price
@@ -226,6 +258,19 @@ export function createSignalWorker(config: SignalWorkerConfig) {
         pressure, momentum: momentum ?? null, pattern: pattern ?? null,
       });
       signal.srType = srType;
+
+      // Sideways filter: block BREAKOUT/BREAKDOWN in sideways market
+      if (lastCandle && lastCandle.high > 0 && lastCandle.low > 0) {
+        const stockRange = (lastCandle.high - lastCandle.low) / q.lastPrice;
+        if (stockRange < STOCK_SIDEWAYS_RANGE && (signal.type === "BREAKOUT" || signal.type === "BREAKDOWN")) {
+          filterRejects.sidewaysBreakout++;
+          // Still cache as WAIT so UI doesn't show stale data
+          signal.action = "WAIT";
+          signal.confidence = "LOW";
+          signal.reasons = ["Sideways market — breakout signals suppressed"];
+        }
+      }
+
       const reaction = computeReaction(q.lastPrice, symbolSr, pressure);
       const { score, breakdown } = getScore(signal, pressure, momentum, pattern, symbolSr, q);
       setCacheEntry(symbol, signal, "CONFIRMED", reaction, score, breakdown);
@@ -386,14 +431,18 @@ export function createSignalWorker(config: SignalWorkerConfig) {
       }
       const highScore = [...signalCache.values()].filter((s) => s.score >= 8).length;
       const midScore = [...signalCache.values()].filter((s) => s.score >= 6 && s.score < 8).length;
+      const fr = filterRejects;
+      const totalFiltered = fr.globalDead + fr.lowRange + fr.slowMarket + fr.sidewaysBreakout;
       console.log(
         `[SignalWorker] Cycle: ${signalCache.size} cached, ${batchComputedCount} computed, ${batchSkippedCount} skipped | ` +
         `ACTIVITY: ${activity}, MOMENTUM: ${momentum}, PRESSURE: ${pressure}, CONFIRMED: ${confirmed} | ` +
-        `BUY: ${buyCount}, SELL: ${sellCount} | score≥8: ${highScore}, score≥6: ${midScore}`
+        `BUY: ${buyCount}, SELL: ${sellCount} | score≥8: ${highScore}, score≥6: ${midScore}` +
+        (totalFiltered > 0 ? ` | FILTERED: ${totalFiltered} (dead:${fr.globalDead} low:${fr.lowRange} slow:${fr.slowMarket} sideways:${fr.sidewaysBreakout})` : "")
       );
       batchIndex = 0;
       batchComputedCount = 0;
       batchSkippedCount = 0;
+      filterRejects = { globalDead: 0, lowRange: 0, slowMarket: 0, sidewaysBreakout: 0 };
 
       // One-time: after first full cycle, push full snapshot to all clients
       if (!firstCycleComplete) {

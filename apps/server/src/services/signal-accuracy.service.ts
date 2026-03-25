@@ -5,11 +5,9 @@ import { marketDataService } from "./market-data.service.js";
 import { getMarketPhase } from "../lib/market-phase.js";
 import type { SignalResult } from "../lib/types.js";
 
-const MAX_ACTIVE_SIGNALS = 100;
+const MAX_DAILY_SIGNALS = 100; // total per day (not concurrent)
 const MIN_RISK_REWARD = 1.0; // reward must be > risk
-const EVALUATION_WINDOW_MS = 20 * 60 * 1000; // 20 minutes max wait
 const REALTIME_CHECK_INTERVAL_MS = 1000; // check every 1 second
-const TIMEOUT_CHECK_INTERVAL_MS = 5 * 60 * 1000; // timeout check every 5 min
 
 // ── Active signal tracking (no replacement, no duplicates) ──
 interface ActiveSignal {
@@ -24,10 +22,24 @@ interface ActiveSignal {
 
 // Simple map: symbol → active signal (one per stock, no duplicates)
 const activeMap = new Map<string, ActiveSignal>();
+// Daily cap tracking
+let dailyCount = 0;
+let dailyDate = "";
+
+function getISTDate(): string {
+  return new Date().toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
+}
+
+function checkDailyReset(): void {
+  const today = getISTDate();
+  if (dailyDate !== today) {
+    dailyCount = 0;
+    dailyDate = today;
+  }
+}
 
 export function createSignalAccuracyService() {
   let realtimeTimer: ReturnType<typeof setInterval> | null = null;
-  let timeoutTimer: ReturnType<typeof setInterval> | null = null;
 
   // ── Record signal (first-come, no replacement, no duplicates) ──
   async function recordSignal(
@@ -45,13 +57,14 @@ export function createSignalAccuracyService() {
     // No duplicates: if already tracking this stock → skip
     if (activeMap.has(symbol)) return;
 
-    // Queue full → stop accepting (wait for evaluations to free slots)
-    if (activeMap.size >= MAX_ACTIVE_SIGNALS) return;
+    // Daily cap: max 100 signals per day total (not concurrent)
+    checkDailyReset();
+    if (dailyCount >= MAX_DAILY_SIGNALS) return;
 
     const score = signal.score ?? 0;
     const isBuy = signal.action === "BUY";
-    const targetPrice = isBuy ? price * 1.016 : price * 0.984;
-    const stopLoss = isBuy ? price * 0.989 : price * 1.011;
+    const targetPrice = isBuy ? price * 1.010 : price * 0.990;  // +1.0% / -1.0%
+    const stopLoss = isBuy ? price * 0.993 : price * 1.007;     // -0.7% / +0.7%
 
     // Risk-reward filter: reward must be >= risk
     const risk = Math.abs(price - stopLoss);
@@ -59,7 +72,8 @@ export function createSignalAccuracyService() {
     if (risk > 0 && reward / risk < MIN_RISK_REWARD) return;
 
     const now = new Date();
-    const evaluationTime = new Date(now.getTime() + EVALUATION_WINDOW_MS);
+    // No time limit — signal stays active until target or SL is hit
+    const evaluationTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // far future (end of day fallback)
 
     try {
       const [inserted] = await db.insert(signalAccuracyLog).values({
@@ -83,8 +97,9 @@ export function createSignalAccuracyService() {
         stopLoss,
         recordedAt: Date.now(),
       });
+      dailyCount++;
 
-      console.log(`[Accuracy] Recorded: ${symbol} ${signal.action} ${signal.type} score=${score} entry=₹${price.toFixed(2)} target=₹${targetPrice.toFixed(2)} SL=₹${stopLoss.toFixed(2)} [${activeMap.size}/${MAX_ACTIVE_SIGNALS}]`);
+      console.log(`[Accuracy] Recorded: ${symbol} ${signal.action} ${signal.type} score=${score} entry=₹${price.toFixed(2)} target=₹${targetPrice.toFixed(2)} SL=₹${stopLoss.toFixed(2)} [${dailyCount}/${MAX_DAILY_SIGNALS} today, ${activeMap.size} active]`);
     } catch (err: any) {
       console.warn(`[Accuracy] Failed to record ${symbol}:`, err.message);
     }
@@ -138,28 +153,22 @@ export function createSignalAccuracyService() {
         }).where(eq(signalAccuracyLog.id, sig.dbId));
 
         activeMap.delete(symbol);
-        console.log(`[Accuracy] ${result}: ${symbol} ${sig.action} at ₹${price.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%) [${activeMap.size}/${MAX_ACTIVE_SIGNALS}]`);
+        console.log(`[Accuracy] ${result}: ${symbol} ${sig.action} at ₹${price.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%) [${activeMap.size} active]`);
       } catch (err: any) {
         console.warn(`[Accuracy] Failed to close ${symbol}:`, err.message);
       }
     }
   }
 
-  // ── Timeout evaluation: close signals that exceeded 20 min without hitting target/SL ──
-  async function evaluateTimeouts(): Promise<void> {
-    const now = Date.now();
-    const toTimeout: string[] = [];
+  // ── Market close cleanup: close all remaining signals as NEUTRAL at end of day ──
+  async function evaluateMarketClose(): Promise<void> {
+    // Only run after market close (3:30 PM IST = 15:30)
+    const { phase } = getMarketPhase();
+    if (phase !== "CLOSED" || activeMap.size === 0) return;
 
-    for (const [symbol, sig] of activeMap) {
-      if (now - sig.recordedAt >= EVALUATION_WINDOW_MS) {
-        toTimeout.push(symbol);
-      }
-    }
+    console.log(`[Accuracy] Market closed — closing ${activeMap.size} remaining signals as NEUTRAL`);
 
-    for (const symbol of toTimeout) {
-      const sig = activeMap.get(symbol);
-      if (!sig) continue;
-
+    for (const [symbol, sig] of [...activeMap]) {
       const quote = marketDataService.getQuote(symbol);
       const finalPrice = quote?.lastPrice ?? sig.entryPrice;
       const pnlPercent = sig.action === "BUY"
@@ -175,9 +184,9 @@ export function createSignalAccuracyService() {
         }).where(eq(signalAccuracyLog.id, sig.dbId));
 
         activeMap.delete(symbol);
-        console.log(`[Accuracy] NEUTRAL (timeout): ${symbol} ${sig.action} at ₹${finalPrice.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%) [${activeMap.size}/${MAX_ACTIVE_SIGNALS}]`);
+        console.log(`[Accuracy] NEUTRAL (market close): ${symbol} ${sig.action} at ₹${finalPrice.toFixed(2)} (${pnlPercent >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}%)`);
       } catch (err: any) {
-        console.warn(`[Accuracy] Failed to timeout ${symbol}:`, err.message);
+        console.warn(`[Accuracy] Failed to close ${symbol}:`, err.message);
       }
     }
   }
@@ -281,15 +290,14 @@ export function createSignalAccuracyService() {
       // Real-time: check target/SL every 1 second
       realtimeTimer = setInterval(evaluateRealTime, REALTIME_CHECK_INTERVAL_MS);
       realtimeTimer.unref();
-      // Timeout: close expired signals every 5 min
-      timeoutTimer = setInterval(evaluateTimeouts, TIMEOUT_CHECK_INTERVAL_MS);
-      timeoutTimer.unref();
-      console.log("[Accuracy] Started — real-time eval (1s) + timeout eval (5 min)");
+      // Market close cleanup: check every 5 min, closes remaining signals after 3:30 PM
+      const marketCloseTimer = setInterval(evaluateMarketClose, 5 * 60 * 1000);
+      marketCloseTimer.unref();
+      console.log("[Accuracy] Started — real-time eval (1s), no time limit, market close cleanup");
     },
 
     stop() {
       if (realtimeTimer) { clearInterval(realtimeTimer); realtimeTimer = null; }
-      if (timeoutTimer) { clearInterval(timeoutTimer); timeoutTimer = null; }
       console.log("[Accuracy] Stopped");
     },
 
