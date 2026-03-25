@@ -41,6 +41,35 @@ function checkDailyReset(): void {
 export function createSignalAccuracyService() {
   let realtimeTimer: ReturnType<typeof setInterval> | null = null;
 
+  // ── Load pending signals from DB on startup (survive restarts) ──
+  async function loadPending(): Promise<void> {
+    try {
+      const pending = await db
+        .select()
+        .from(signalAccuracyLog)
+        .where(isNull(signalAccuracyLog.result));
+
+      for (const record of pending) {
+        if (activeMap.has(record.symbol)) continue;
+        activeMap.set(record.symbol, {
+          symbol: record.symbol,
+          dbId: record.id,
+          action: record.action as "BUY" | "SELL",
+          entryPrice: Number(record.entryPrice),
+          targetPrice: Number(record.targetPrice),
+          stopLoss: Number(record.stopLoss),
+          recordedAt: new Date(record.entryTime).getTime(),
+        });
+      }
+
+      if (pending.length > 0) {
+        console.log(`[Accuracy] Loaded ${pending.length} pending signals from DB [${activeMap.size} active]`);
+      }
+    } catch (err: any) {
+      console.warn("[Accuracy] Failed to load pending:", err.message);
+    }
+  }
+
   // ── Record signal (first-come, no replacement, no duplicates) ──
   async function recordSignal(
     symbol: string,
@@ -286,7 +315,9 @@ export function createSignalAccuracyService() {
     recordSignal,
     evaluateRealTime,
 
-    start() {
+    async start() {
+      // Load pending signals from DB (survive restarts)
+      await loadPending();
       // Real-time: check target/SL every 1 second
       realtimeTimer = setInterval(evaluateRealTime, REALTIME_CHECK_INTERVAL_MS);
       realtimeTimer.unref();
