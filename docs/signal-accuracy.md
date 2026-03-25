@@ -242,9 +242,31 @@ Time 9:37 — Active: 99/100
 | Timer | Interval | Purpose |
 |-------|----------|---------|
 | Real-time eval | Every 1 second | Check live price vs target/SL for all active signals |
-| Timeout eval | Every 5 minutes | Close signals that exceeded 20 min without hit → NEUTRAL |
+| Market close cleanup | Every 5 minutes | Close remaining signals as NEUTRAL after 3:30 PM IST |
 
-The real-time timer is the primary evaluation method — most signals close within seconds or minutes of recording. The timeout timer is a safety net for slow-moving stocks.
+The real-time timer is the primary evaluation method — most signals close within seconds or minutes of recording. Market close cleanup is a safety net for signals that never hit target or SL during the day.
+
+---
+
+## Restart Recovery
+
+On startup, the accuracy engine loads all **pending signals** (result = NULL) from the database into the in-memory `activeMap`. This ensures:
+
+- Server restarts don't lose tracking of active signals
+- Orphaned signals from previous sessions resume evaluation
+- No manual intervention needed
+
+```
+Server starts
+  ↓
+loadPending() queries DB: WHERE result IS NULL
+  ↓
+Loads into activeMap (symbol → entry/target/SL)
+  ↓
+Real-time eval (1s) resumes checking these signals
+  ↓
+Log: "[Accuracy] Loaded 12 pending signals from DB [12 active]"
+```
 
 ---
 
