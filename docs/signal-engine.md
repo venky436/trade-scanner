@@ -106,52 +106,61 @@ If the stock is more than **1%** away from both support and resistance, return W
 
 Rules are checked in strict priority order. The **first** matching rule wins:
 
-#### Rule 1: BREAKOUT (BUY)
+### Core Principle: Wait at S/R, Act on Confirmation
+
+The signal engine **never decides at the level**. When price is near support or resistance, the default is always WAIT. A signal only fires after the price **confirms** a breakout, rejection, bounce, or breakdown.
+
+```
+Price approaching S/R → WAIT (always)
+  │
+  ├─ At Resistance:
+  │    ├─ Price crosses ABOVE resistance + 0.2% → CONFIRMED BUY BREAKOUT
+  │    ├─ Price falls + SELL pressure + weakening momentum → CONFIRMED SELL REJECTION
+  │    └─ Neither → WAIT ("waiting for breakout or rejection")
+  │
+  └─ At Support:
+       ├─ Price drops BELOW support - 0.2% → CONFIRMED SELL BREAKDOWN
+       ├─ Price rises + BUY pressure + UP momentum → CONFIRMED BUY BOUNCE
+       └─ Neither → WAIT ("waiting for bounce or breakdown")
+```
+
+#### Rule 1: BREAKOUT (BUY) — Confirmed
 
 All conditions must be true:
-- Near resistance (≤ 1% away)
+- Price is **above** resistance + 0.2% buffer (confirmed break)
 - Pressure is `STRONG_BUY`
 - Momentum is `STRONG_UP`
-- Acceleration is `INCREASING`
 
-This is the most demanding signal — everything must align for a breakout call. The stock is pushing toward resistance with strong buying pressure and accelerating upward momentum.
+The 0.2% buffer prevents false triggers from minor wick touches. Price must decisively cross resistance.
 
-#### Rule 2: BREAKDOWN (SELL)
-
-All conditions must be true:
-- Near support (≤ 1% away)
-- Pressure is `STRONG_SELL`
-- Momentum is `STRONG_DOWN`
-- Acceleration is `DECREASING`
-
-**Why DECREASING, not INCREASING?** The momentum engine computes acceleration as `acc = r1 - r2` (most recent candle return minus previous). In a strengthening downtrend, candle returns become more negative over time, so `r1 < r2`, making `acc` negative → `DECREASING`. This is the correct representation of an accelerating sell-off. Using `INCREASING` here would indicate the downtrend is *weakening* (which is the opposite of what a breakdown signal needs).
-
-#### Rule 3: BOUNCE (BUY)
+#### Rule 2: REJECTION (SELL) — Confirmed
 
 All conditions must be true:
-- Near support (≤ 1% away)
-- Pressure is `BUY` or `STRONG_BUY`
-- Momentum is `UP` or `STRONG_UP`
-
-Less strict than BREAKOUT — any buy-side pressure with upward momentum near support qualifies. This catches stocks bouncing off support levels.
-
-#### Rule 4: REJECTION (SELL)
-
-All conditions must be true:
-- Near resistance (≤ 1% away)
+- Price is **below** resistance (falling back)
 - Pressure is `SELL` or `STRONG_SELL`
 - Momentum is `DOWN`/`STRONG_DOWN` **OR** momentum is `UP`/`STRONG_UP` with `DECREASING` acceleration (weakening)
 
-The "momentum weakening" condition catches **early rejections** — when price is still moving up toward resistance but losing steam while sellers are active. Without this, REJECTION signals would rarely trigger because by the time momentum turns DOWN, price has already moved away from resistance.
+Catches both classic rejections (momentum already down) and early rejections (momentum fading at resistance).
 
-```
-Classic rejection:  near resistance + SELL pressure + DOWN momentum
-Early rejection:    near resistance + SELL pressure + UP momentum (decelerating)
-```
+#### Rule 3: BOUNCE (BUY) — Confirmed
+
+All conditions must be true:
+- Price is **above** support + 0.2% buffer (confirmed hold)
+- Pressure is `BUY` or `STRONG_BUY`
+- Momentum is `UP` or `STRONG_UP`
+
+Price must have risen away from support — not just sitting on it.
+
+#### Rule 4: BREAKDOWN (SELL) — Confirmed
+
+All conditions must be true:
+- Price is **below** support - 0.2% buffer (confirmed break)
+- Pressure is `STRONG_SELL`
+- Momentum is `STRONG_DOWN`
 
 #### Default: WAIT
 
-If none of the above rules match, return WAIT with LOW confidence. Conditions aren't aligned for a clear signal.
+At any S/R level without confirmation → WAIT with the reason "waiting for breakout or rejection" / "waiting for bounce or breakdown".
 
 ### 5. Confidence Assignment
 

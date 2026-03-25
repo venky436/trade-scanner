@@ -236,13 +236,16 @@ Requires confirming pressure (BUY pressure for bullish patterns, SELL for bearis
 
 **Rules (in order):**
 
+**Core principle: Never decide at the level. Wait for confirmation.**
+
 | Rule | Condition | Signal |
 |---|---|---|
-| BREAKOUT | Near resistance + STRONG_BUY + STRONG_UP + INCREASING | BUY |
-| BREAKDOWN | Near support + STRONG_SELL + STRONG_DOWN + DECREASING | SELL |
-| BOUNCE | Near support + BUY pressure + UP momentum | BUY |
-| REJECTION | Near resistance + SELL pressure + (DOWN momentum OR weakening momentum) | SELL |
-| Default | None matched | WAIT |
+| BREAKOUT | Price ABOVE resistance + 0.2% buffer + STRONG_BUY + STRONG_UP | BUY (confirmed) |
+| BREAKDOWN | Price BELOW support - 0.2% buffer + STRONG_SELL + STRONG_DOWN | SELL (confirmed) |
+| BOUNCE | Price ABOVE support + 0.2% buffer + BUY pressure + UP momentum | BUY (confirmed) |
+| REJECTION | Price below resistance + SELL pressure + (DOWN or weakening momentum) | SELL (confirmed) |
+| At S/R level | Near S/R but no confirmation | WAIT |
+| Default | Not near any level | WAIT |
 
 **Confidence:** HIGH (confirming pattern) / MEDIUM (no pattern) / LOW (contradicting)
 
