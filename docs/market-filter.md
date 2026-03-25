@@ -31,10 +31,10 @@ computeForSymbol(symbol)
 ┌──────────────────────────────────────┐
 │ GLOBAL FILTER (NIFTY 50 range)       │
 │                                      │
-│ NIFTY 5-min range < 0.25%?          │
+│ NIFTY 5-min range < 0.10%?          │
 │   → DEAD → skip ALL stocks           │
 │                                      │
-│ NIFTY 5-min range < 0.60%?          │
+│ NIFTY 5-min range < 0.30%?          │
 │   → SLOW → raise per-stock threshold │
 │                                      │
 │ else → ACTIVE (normal)               │
@@ -46,13 +46,13 @@ computeForSymbol(symbol)
 │                                      │
 │ stockRange = (high - low) / price    │
 │                                      │
-│ stockRange < 0.4%?                   │
+│ stockRange < 0.2%?                   │
 │   → DEAD stock → skip                │
 │                                      │
-│ GLOBAL_SLOW + stockRange < 0.6%?    │
+│ GLOBAL_SLOW + stockRange < 0.4%?    │
 │   → Not active enough → skip         │
 │                                      │
-│ stockRange < 0.8%?                   │
+│ stockRange < 0.5%?                   │
 │   → SIDEWAYS → mark flag             │
 └──────────┬───────────────────────────┘
            │
@@ -80,9 +80,9 @@ computeForSymbol(symbol)
 
 | NIFTY 5-min Range | State | Action |
 |-------------------|-------|--------|
-| < 0.25% | DEAD | Block ALL signal generation |
-| < 0.60% | SLOW | Raise per-stock threshold to 0.6% |
-| >= 0.60% | ACTIVE | Normal — no restrictions |
+| < 0.10% | DEAD | Block ALL signal generation |
+| < 0.30% | SLOW | Raise per-stock threshold to 0.4% |
+| >= 0.30% | ACTIVE | Normal — no restrictions |
 
 Updated every 5-min candle close for "NIFTY 50" symbol.
 
@@ -90,9 +90,9 @@ Updated every 5-min candle close for "NIFTY 50" symbol.
 
 | Stock 5-min Range | Market State | Action |
 |-------------------|--------------|--------|
-| < 0.4% | Any | Skip — stock too quiet |
-| < 0.6% | SLOW | Skip — not enough activity for slow market |
-| < 0.8% | Any | SIDEWAYS — block BREAKOUT/BREAKDOWN, allow BOUNCE/REJECTION |
+| < 0.2% | Any | Skip — stock too quiet |
+| < 0.4% | SLOW | Skip — not enough activity for slow market |
+| < 0.5% | Any | SIDEWAYS — block BREAKOUT/BREAKDOWN, allow BOUNCE/REJECTION |
 | >= 0.8% | Any | ACTIVE — allow all signal types |
 
 ---
@@ -111,8 +111,8 @@ Every batch cycle logs filter rejection counts:
 | Counter | Meaning |
 |---------|---------|
 | `dead` | Skipped due to GLOBAL_DEAD (entire market flat) |
-| `low` | Skipped due to stock 5-min range < 0.4% |
-| `slow` | Skipped due to GLOBAL_SLOW + stock range < 0.6% |
+| `low` | Skipped due to stock 5-min range < 0.2% |
+| `slow` | Skipped due to GLOBAL_SLOW + stock range < 0.4% |
 | `sideways` | BREAKOUT/BREAKDOWN suppressed in sideways stock |
 
 Global state changes are also logged:

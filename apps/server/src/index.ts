@@ -201,8 +201,8 @@ async function main() {
           if (niftyPrice > 0 && lastCandle.high > 0 && lastCandle.low > 0) {
             const niftyRange = (lastCandle.high - lastCandle.low) / niftyPrice;
             const prev = globalMarketState;
-            if (niftyRange < 0.0025) globalMarketState = "DEAD";       // < 0.25%
-            else if (niftyRange < 0.006) globalMarketState = "SLOW";   // < 0.6%
+            if (niftyRange < 0.001) globalMarketState = "DEAD";        // < 0.10%
+            else if (niftyRange < 0.003) globalMarketState = "SLOW";   // < 0.30%
             else globalMarketState = "ACTIVE";
             if (prev !== globalMarketState) {
               console.log(`[MarketFilter] Global state: ${prev} → ${globalMarketState} (NIFTY range: ${(niftyRange * 100).toFixed(2)}%)`);

@@ -44,9 +44,9 @@ interface SignalWorkerConfig {
 }
 
 // ── Market Filter thresholds ──
-const STOCK_DEAD_RANGE = 0.004;    // 0.4% — skip stock
-const STOCK_SIDEWAYS_RANGE = 0.008; // 0.8% — block breakouts
-const SLOW_MARKET_RANGE = 0.006;    // 0.6% — higher threshold during slow market
+const STOCK_DEAD_RANGE = 0.002;    // 0.2% — skip stock (truly flat)
+const STOCK_SIDEWAYS_RANGE = 0.005; // 0.5% — block breakouts
+const SLOW_MARKET_RANGE = 0.004;    // 0.4% — higher threshold during slow market
 
 // ── Bounce Quality Filter thresholds ──
 const BOUNCE_MAX_RECENT_MOVE = 0.025;  // 2.5% — reject bounce if stock already rallied this much
