@@ -620,4 +620,5 @@ During market:
 10. **Never empty UI** — Fallback "Loading..." signal prevents blank columns
 11. **Market phase control** — First 10 minutes penalized: score ×0.6/×0.8, WAIT forced, accuracy tracking disabled
 12. **Explicit IST timezone** — All time-sensitive functions (market phase, chart history, candle tracking) use `Asia/Kolkata` timezone to work correctly on UTC production servers
-13. **Market filter layer** — Blocks signals when market/stock is too quiet (DEAD < 0.25%, SLOW < 0.6%, per-stock < 0.4%). See [`docs/market-filter.md`](./market-filter.md)
+13. **Market filter layer** — Blocks signals when market/stock is too quiet (DEAD < 0.10%, SLOW < 0.30%, per-stock < 0.2%). See [`docs/market-filter.md`](./market-filter.md)
+14. **Accuracy requires CONFIRMED stage** — Only signals with `signal.type` (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN) from CONFIRMED stage get tracked. MOMENTUM/PRESSURE stages bypass S/R confirmation and are excluded.

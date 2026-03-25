@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Sun, Moon, LogOut, TrendingUp, Search, X, Shield } from "lucide-react";
+import { Sun, Moon, LogOut, TrendingUp, Search, X, Shield, BookOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMarketData } from "@/hooks/use-market-data";
@@ -270,6 +270,11 @@ export function GlobalNav() {
                   </Button>
                 </a>
               )}
+              <Link href="/docs">
+                <Button variant="ghost" size="icon-sm" aria-label="Documentation" className="text-muted-foreground hover:text-foreground">
+                  <BookOpen className="size-4" />
+                </Button>
+              </Link>
               <Link href="/admin">
                 <Button variant="ghost" size="icon-sm" aria-label="Admin Dashboard" className="text-muted-foreground hover:text-foreground">
                   <Shield className="size-4" />

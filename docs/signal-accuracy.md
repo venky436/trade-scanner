@@ -338,15 +338,35 @@ CREATE TABLE signal_accuracy_log (
 
 ---
 
-## Triple Protection
+## Five-Gate Protection
 
-The accuracy engine has three independent guards:
+The accuracy engine has five independent guards that ALL must pass:
 
-1. **Market filter** (signal-worker): Blocks signal generation when market/stock is too quiet (DEAD/SLOW/SIDEWAYS). See [`docs/market-filter.md`](./market-filter.md)
-2. **Signal-worker callback**: Only fires `onHighConfidenceSignal` when `phaseResult.marketPhase === "NORMAL"` and `effectiveScore >= 9`
-3. **Accuracy service** (recordSignal): Independently calls `getMarketPhase()` and skips OPENING/STABILIZING
+```
+Signal arrives at setCacheEntry()
+  │
+  Gate 1: score >= 9?                    → skip if low score
+  Gate 2: action != WAIT?                → skip if unconfirmed at S/R
+  Gate 3: signal.type exists?            → skip if no BREAKOUT/BOUNCE/REJECTION/BREAKDOWN
+  Gate 4: stage == CONFIRMED?            → skip if MOMENTUM/PRESSURE stage
+  Gate 5: marketPhase == NORMAL?         → skip if OPENING/STABILIZING
+  │
+  ALL PASS → record for accuracy
+```
 
-All three must pass for a signal to be recorded. This ensures only high-quality signals in active markets get tracked.
+| Gate | What it checks | What it blocks |
+|------|---------------|----------------|
+| score >= 9 | Signal quality | Low-confidence signals |
+| action != WAIT | Confirmed direction | Stocks sitting at S/R without confirmation |
+| signal.type exists | Has BREAKOUT/BOUNCE/REJECTION/BREAKDOWN | MOMENTUM/PRESSURE stage signals (no S/R validation) |
+| stage == CONFIRMED | Passed through signal engine with S/R checks | Early-stage signals that bypass S/R confirmation |
+| phase == NORMAL | Market is past opening volatility | First 10 minutes of trading |
+
+Plus the accuracy service adds:
+- **Market filter**: blocks quiet stocks before signal generation
+- **Daily cap**: max 100 per day
+- **No duplicates**: one per stock
+- **RR filter**: reward must be >= risk
 
 ---
 
