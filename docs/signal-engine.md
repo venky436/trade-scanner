@@ -140,9 +140,14 @@ Less strict than BREAKOUT — any buy-side pressure with upward momentum near su
 All conditions must be true:
 - Near resistance (≤ 1% away)
 - Pressure is `SELL` or `STRONG_SELL`
-- Momentum is `DOWN` or `STRONG_DOWN`
+- Momentum is `DOWN`/`STRONG_DOWN` **OR** momentum is `UP`/`STRONG_UP` with `DECREASING` acceleration (weakening)
 
-The mirror of BOUNCE — sell-side pressure with downward momentum near resistance. This catches stocks being turned away from resistance.
+The "momentum weakening" condition catches **early rejections** — when price is still moving up toward resistance but losing steam while sellers are active. Without this, REJECTION signals would rarely trigger because by the time momentum turns DOWN, price has already moved away from resistance.
+
+```
+Classic rejection:  near resistance + SELL pressure + DOWN momentum
+Early rejection:    near resistance + SELL pressure + UP momentum (decelerating)
+```
 
 #### Default: WAIT
 

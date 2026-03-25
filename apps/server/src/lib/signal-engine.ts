@@ -96,13 +96,18 @@ export function getSignal(input: SignalInput): SignalResult {
     };
   }
 
-  // Rule 6: REJECTION — near resistance + SELL/STRONG_SELL + DOWN/STRONG_DOWN
+  // Rule 6: REJECTION — near resistance + SELL pressure + (DOWN momentum OR weakening momentum)
   const isSellPressure = pressure.signal === "SELL" || pressure.signal === "STRONG_SELL";
   const isDownMomentum = momentum?.signal === "DOWN" || momentum?.signal === "STRONG_DOWN";
-  if (nearResistance && isSellPressure && isDownMomentum) {
+  const isMomentumWeakening = (momentum?.signal === "UP" || momentum?.signal === "STRONG_UP") && momentum?.acceleration === "DECREASING";
+  if (nearResistance && isSellPressure && (isDownMomentum || isMomentumWeakening)) {
     reasons.push(`Near resistance at ${sr.resistanceZone!.level.toFixed(2)} (${sr.resistanceZone!.distancePercent.toFixed(2)}%)`);
     reasons.push(`${pressure.signal} pressure`);
-    reasons.push(`${momentum!.signal} momentum`);
+    if (isDownMomentum) {
+      reasons.push(`${momentum!.signal} momentum`);
+    } else {
+      reasons.push(`Momentum weakening (${momentum!.signal} but decelerating)`);
+    }
     if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
     return {
       action: "SELL",

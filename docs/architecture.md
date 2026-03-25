@@ -241,7 +241,7 @@ Requires confirming pressure (BUY pressure for bullish patterns, SELL for bearis
 | BREAKOUT | Near resistance + STRONG_BUY + STRONG_UP + INCREASING | BUY |
 | BREAKDOWN | Near support + STRONG_SELL + STRONG_DOWN + DECREASING | SELL |
 | BOUNCE | Near support + BUY pressure + UP momentum | BUY |
-| REJECTION | Near resistance + SELL pressure + DOWN momentum | SELL |
+| REJECTION | Near resistance + SELL pressure + (DOWN momentum OR weakening momentum) | SELL |
 | Default | None matched | WAIT |
 
 **Confidence:** HIGH (confirming pattern) / MEDIUM (no pattern) / LOW (contradicting)
