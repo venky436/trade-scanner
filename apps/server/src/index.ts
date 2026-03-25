@@ -51,6 +51,8 @@ async function main() {
   let cachedLevels: Record<string, SupportResistanceResult> = {};
   // Intraday S/R levels (computed from 5-min session candles)
   const intradayLevels: Record<string, SupportResistanceResult> = {};
+  // Global market state (computed from NIFTY 50 5-min range)
+  let globalMarketState: "DEAD" | "SLOW" | "ACTIVE" = "ACTIVE";
 
   // Called after Kite login succeeds
   async function startMarketData(accessToken: string) {
@@ -143,6 +145,8 @@ async function main() {
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
       getIntradayLevels: () => intradayLevels,
       getSessionCandleCount: (s) => candleTrackerRef?.getSessionCandleCount(s) ?? 0,
+      getLastCandle: (s) => candleTrackerRef?.getLastCandle(s) ?? null,
+      getGlobalMarketState: () => globalMarketState,
     });
     signalWorker.setSymbols(instrumentMaps.symbols);
     signalWorkerInstance = signalWorker;
@@ -188,6 +192,22 @@ async function main() {
         if (mom) momentumMap.set(symbol, mom);
         else momentumMap.delete(symbol);
         momentumVersion.set(symbol, (momentumVersion.get(symbol) ?? 0) + 1);
+
+        // Update global market state from NIFTY 50 range
+        if (symbol === "NIFTY 50" && candles.length > 0) {
+          const lastCandle = candles[candles.length - 1];
+          const niftyPrice = marketDataService.getQuote("NIFTY 50")?.lastPrice ?? 0;
+          if (niftyPrice > 0 && lastCandle.high > 0 && lastCandle.low > 0) {
+            const niftyRange = (lastCandle.high - lastCandle.low) / niftyPrice;
+            const prev = globalMarketState;
+            if (niftyRange < 0.0025) globalMarketState = "DEAD";       // < 0.25%
+            else if (niftyRange < 0.006) globalMarketState = "SLOW";   // < 0.6%
+            else globalMarketState = "ACTIVE";
+            if (prev !== globalMarketState) {
+              console.log(`[MarketFilter] Global state: ${prev} → ${globalMarketState} (NIFTY range: ${(niftyRange * 100).toFixed(2)}%)`);
+            }
+          }
+        }
 
         // Compute pattern (needs S/R + pressure)
         const sr = cachedLevels[symbol];

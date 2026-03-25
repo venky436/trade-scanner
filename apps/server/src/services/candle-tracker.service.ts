@@ -123,5 +123,10 @@ export function createCandleTracker(config: CandleTrackerConfig) {
     return getSessionCandles(symbol).length;
   }
 
-  return { processTick, getSessionCandles, getSessionCandleCount };
+  function getLastCandle(symbol: string): Candle | null {
+    const candles = getSessionCandles(symbol);
+    return candles.length > 0 ? candles[candles.length - 1] : null;
+  }
+
+  return { processTick, getSessionCandles, getSessionCandleCount, getLastCandle };
 }
