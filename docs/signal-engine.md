@@ -208,6 +208,8 @@ interface SignalResult {
 
 > **Note:** `finalScore`, `marketPhase`, and `warningMessage` are set by the [Market Phase Control](./market-phase.md) system in `setCacheEntry()`, not by the signal engine itself. During the first 10 minutes of trading, `finalScore` may be lower than `score` and `action` may be overridden to WAIT.
 
+> **Accuracy tracking:** Only signals from the CONFIRMED stage with a `type` (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN) are tracked for accuracy. MOMENTUM and PRESSURE stage signals bypass the signal engine's S/R confirmation and are excluded from accuracy measurement. This ensures only confirmed breakouts/bounces/rejections/breakdowns — where price has actually crossed or bounced from S/R — are evaluated.
+
 ---
 
 ## Data Flow

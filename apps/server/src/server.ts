@@ -4,6 +4,7 @@ import cookie from "@fastify/cookie";
 import { stocksRoute } from "./routes/stocks.route.js";
 import { authRoute } from "./routes/auth.route.js";
 import { adminRoute } from "./routes/admin.route.js";
+import { docsRoute } from "./routes/docs.route.js";
 import { userAuthRoute } from "./modules/auth/auth.routes.js";
 import type { WsManager } from "./ws/ws-server.js";
 import type { InstrumentMaps, SupportResistanceResult } from "./lib/types.js";
@@ -60,6 +61,8 @@ export async function buildServer(deps: ServerDeps) {
   await server.register(adminRoute, {
     getAccuracyService: deps.getAccuracyService ?? (() => null),
   });
+
+  await server.register(docsRoute);
 
   return server;
 }

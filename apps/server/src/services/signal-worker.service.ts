@@ -151,7 +151,7 @@ export function createSignalWorker(config: SignalWorkerConfig) {
     // Track high-confidence signals for accuracy evaluation
     // Only track during NORMAL phase to avoid polluting accuracy data
     const wasBelow9 = !existing || (existing.score < 9);
-    if (wasBelow9 && effectiveScore >= 9 && signal.action !== "WAIT" && phaseResult.marketPhase === "NORMAL" && onHighConfidenceSignal) {
+    if (wasBelow9 && effectiveScore >= 9 && signal.action !== "WAIT" && signal.type && stage === "CONFIRMED" && phaseResult.marketPhase === "NORMAL" && onHighConfidenceSignal) {
       const q = marketDataService.getQuote(symbol);
       if (q) onHighConfidenceSignal(symbol, signal, q.lastPrice);
     }
