@@ -146,6 +146,41 @@ This complements the existing market phase guard (OPENING 9:15-9:20, STABILIZING
 
 ---
 
+---
+
+## Bounce Quality Filter
+
+In addition to the market-level filter, BOUNCE signals go through a quality validation before being accepted. This prevents late entries on overextended stocks.
+
+```
+BOUNCE signal generated
+  │
+  ├─ Overextension check: stock moved >2.5% in last 30 min?
+  │   → YES → reject "Overextended"
+  │
+  ├─ Pullback depth: pullback from recent high < 0.5%?
+  │   → YES → reject "Shallow pullback"
+  │
+  ├─ Support distance: price < 0.2% from support?
+  │   → YES → reject "Too close to support (no reaction room)"
+  │
+  ├─ Strong uptrend: STRONG_UP momentum + day change > 2%?
+  │   → YES → reject "Strong uptrend — bounce unlikely"
+  │
+  └─ All checks pass → allow BOUNCE signal
+```
+
+| Check | Threshold | Purpose |
+|-------|-----------|---------|
+| Overextension | > 2.5% move in 30 min | Prevents late entry after rally |
+| Pullback depth | < 0.5% from recent high | Requires meaningful retracement |
+| Support distance | < 0.2% from support | Needs room for bounce reaction |
+| Strong uptrend | STRONG_UP + >2% day change | Breakouts work better in strong trends |
+
+Bounce rejections are logged in the `bounce` counter in the batch cycle stats.
+
+---
+
 ## What Stays Unchanged
 
 - Signal engine logic (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN rules)

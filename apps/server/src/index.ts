@@ -146,6 +146,7 @@ async function main() {
       getIntradayLevels: () => intradayLevels,
       getSessionCandleCount: (s) => candleTrackerRef?.getSessionCandleCount(s) ?? 0,
       getLastCandle: (s) => candleTrackerRef?.getLastCandle(s) ?? null,
+      getSessionCandles: (s) => candleTrackerRef?.getSessionCandles(s) ?? [],
       getGlobalMarketState: () => globalMarketState,
     });
     signalWorker.setSymbols(instrumentMaps.symbols);
