@@ -21,34 +21,40 @@ interface ScoreInput {
 
 // ── Pressure Score (25%) ──
 
-const PRESSURE_SCORES: Record<string, number> = {
-  STRONG_BUY: 1.0,
-  BUY: 0.75,
-  NEUTRAL: 0.5,
-  SELL: 0.25,
-  STRONG_SELL: 0.0,
+// Pressure and momentum scores are direction-aware:
+// For BUY signals: STRONG_BUY=1.0, STRONG_SELL=0.0 (buying strength)
+// For SELL signals: STRONG_SELL=1.0, STRONG_BUY=0.0 (selling strength)
+// We use signal action to determine which direction to score
+
+const PRESSURE_BUY_SCORES: Record<string, number> = {
+  STRONG_BUY: 1.0, BUY: 0.75, NEUTRAL: 0.5, SELL: 0.25, STRONG_SELL: 0.0,
+};
+const PRESSURE_SELL_SCORES: Record<string, number> = {
+  STRONG_SELL: 1.0, SELL: 0.75, NEUTRAL: 0.5, BUY: 0.25, STRONG_BUY: 0.0,
 };
 
-function pressureScore(p: PressureResult | null): number {
+function pressureScore(p: PressureResult | null, action?: string): number {
   if (!p) return 0;
-  return PRESSURE_SCORES[p.signal] ?? 0.5;
+  const scores = action === "SELL" ? PRESSURE_SELL_SCORES : PRESSURE_BUY_SCORES;
+  return scores[p.signal] ?? 0.5;
 }
 
 // ── Momentum Score (20%) ──
 
-const MOMENTUM_SCORES: Record<string, number> = {
-  STRONG_UP: 1.0,
-  UP: 0.75,
-  FLAT: 0.5,
-  DOWN: 0.25,
-  STRONG_DOWN: 0.0,
+const MOMENTUM_BUY_SCORES: Record<string, number> = {
+  STRONG_UP: 1.0, UP: 0.75, FLAT: 0.5, DOWN: 0.25, STRONG_DOWN: 0.0,
+};
+const MOMENTUM_SELL_SCORES: Record<string, number> = {
+  STRONG_DOWN: 1.0, DOWN: 0.75, FLAT: 0.5, UP: 0.25, STRONG_UP: 0.0,
 };
 
-function momentumScore(m: MomentumResult | null): number {
+function momentumScore(m: MomentumResult | null, action?: string): number {
   if (!m) return 0;
-  let score = MOMENTUM_SCORES[m.signal] ?? 0.5;
-  // Acceleration bonus
-  if (m.acceleration === "INCREASING") score = Math.min(1, score + 0.1);
+  const scores = action === "SELL" ? MOMENTUM_SELL_SCORES : MOMENTUM_BUY_SCORES;
+  let score = scores[m.signal] ?? 0.5;
+  // Acceleration bonus (INCREASING for BUY, DECREASING for SELL)
+  const goodAccel = action === "SELL" ? "DECREASING" : "INCREASING";
+  if (m.acceleration === goodAccel) score = Math.min(1, score + 0.1);
   return score;
 }
 
@@ -128,10 +134,13 @@ function signalScore(s: SignalResult): number {
 // ── Main Score Function ──
 
 export function computeSignalScore(input: ScoreInput): { score: number; breakdown: ScoreBreakdown } {
+  const action = input.signal.action;
+  const isConfirmed = input.signal.type != null; // BREAKOUT/BOUNCE/REJECTION/BREAKDOWN
   const breakdown: ScoreBreakdown = {
-    pressure: pressureScore(input.pressure),
-    momentum: momentumScore(input.momentum),
-    sr: srScore(input.sr, input.price),
+    pressure: pressureScore(input.pressure, action),
+    momentum: momentumScore(input.momentum, action),
+    // Confirmed signals at S/R get minimum 0.8 — crossing the level IS the strongest setup
+    sr: isConfirmed ? Math.max(0.8, srScore(input.sr, input.price)) : srScore(input.sr, input.price),
     pattern: patternScore(input.pattern),
     volatility: volatilityScore(input.price, input.open, input.high, input.low),
     signal: signalScore(input.signal),
