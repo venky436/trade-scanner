@@ -85,6 +85,7 @@ interface SignalInput {
   pressure: PressureResult | null;
   momentum: MomentumResult | null;
   pattern: PatternSignal | null;
+  recentCandles?: Candle[];  // last 3 session candles (for bounce detection)
 }
 ```
 
@@ -114,13 +115,13 @@ The signal engine **never decides at the level**. When price is near support or 
 Price approaching S/R → WAIT (always)
   │
   ├─ At Resistance:
-  │    ├─ Price crosses ABOVE resistance + 0.2% → CONFIRMED BUY BREAKOUT
+  │    ├─ Price crosses ABOVE resistance + 0.2% + BUY pressure + UP momentum → CONFIRMED BUY BREAKOUT
   │    ├─ Price falls + SELL pressure + weakening momentum → CONFIRMED SELL REJECTION
   │    └─ Neither → WAIT ("waiting for breakout or rejection")
   │
   └─ At Support:
        ├─ Price drops BELOW support - 0.2% → CONFIRMED SELL BREAKDOWN
-       ├─ Price rises + BUY pressure + UP momentum → CONFIRMED BUY BOUNCE
+       ├─ Rejection candle at support + hold candle + UP momentum → CONFIRMED BUY BOUNCE
        └─ Neither → WAIT ("waiting for bounce or breakdown")
 ```
 
@@ -128,8 +129,8 @@ Price approaching S/R → WAIT (always)
 
 All conditions must be true:
 - Price is **above** resistance + 0.2% buffer (confirmed break)
-- Pressure is `STRONG_BUY`
-- Momentum is `STRONG_UP`
+- Pressure is `BUY` or `STRONG_BUY`
+- Momentum is `UP` or `STRONG_UP`
 
 The 0.2% buffer prevents false triggers from minor wick touches. Price must decisively cross resistance.
 
@@ -144,12 +145,20 @@ Catches both classic rejections (momentum already down) and early rejections (mo
 
 #### Rule 3: BOUNCE (BUY) — Confirmed
 
-All conditions must be true:
-- Price is **above** support + 0.2% buffer (confirmed hold)
-- Pressure is `BUY` or `STRONG_BUY`
+Uses candle-based rejection + hold pattern (requires `recentCandles` with at least 2 candles):
+
+**Step 1 — Rejection candle at support:**
+- Previous candle's low touched or pierced support (`low <= supportLevel`)
+- Previous candle is bullish (`close > open`)
+- Close is in the upper 60% of the candle range (strong rejection wick)
+
+**Step 2 — Hold confirmation:**
+- Most recent candle's low stays above support (`low > supportLevel`)
+
+**Step 3 — Momentum confirmation:**
 - Momentum is `UP` or `STRONG_UP`
 
-Price must have risen away from support — not just sitting on it.
+This replaces the old logic (price above support + buy pressure + up momentum) which had 0% accuracy. The new approach requires actual candle evidence of a support rejection and hold, preventing falling knife entries.
 
 #### Rule 4: BREAKDOWN (SELL) — Confirmed
 
@@ -282,8 +291,8 @@ Confidence affects the badge appearance:
 
 | Type | What's Happening | Confidence Meaning |
 |------|-----------------|-------------------|
-| **BOUNCE** | Stock is near support with buy-side pressure and upward momentum. Classic support hold. | HIGH = confirming pattern (e.g., HAMMER), MEDIUM = no pattern, LOW = conflicting pattern |
-| **BREAKOUT** | Stock is near resistance with STRONG_BUY pressure, STRONG_UP momentum, and accelerating. All engines aligned for a resistance break. | HIGH = pattern confirms, MEDIUM = no pattern but all other conditions max-strength |
+| **BOUNCE** | Rejection candle at support (wick touched support, closed bullish near high) + next candle holds above support + UP momentum. Candle-confirmed support hold. | HIGH = confirming pattern (e.g., HAMMER), MEDIUM = no pattern, LOW = conflicting pattern |
+| **BREAKOUT** | Stock has crossed above resistance + 0.2% buffer with BUY/STRONG_BUY pressure and UP/STRONG_UP momentum. All engines aligned for a resistance break. | HIGH = pattern confirms, MEDIUM = no pattern |
 
 ### SELL Signals
 

@@ -50,8 +50,6 @@ const SLOW_MARKET_RANGE = 0.004;    // 0.4% — higher threshold during slow mar
 
 // ── Bounce Quality Filter thresholds ──
 const BOUNCE_MAX_RECENT_MOVE = 0.025;  // 2.5% — reject bounce if stock already rallied this much
-const BOUNCE_MIN_PULLBACK = 0.005;     // 0.5% — require meaningful pullback from recent high
-const BOUNCE_MIN_SUPPORT_DIST = 0.002; // 0.2% — need room above support, not sitting on it
 
 // ── Reaction computation ──
 
@@ -259,9 +257,11 @@ export function createSignalWorker(config: SignalWorkerConfig) {
     // ── STAGE 4: CONFIRMED (full signal engine — S/R + pressure) ──
     if (symbolSr && pressure) {
       const freshSr = buildFreshSr(q.lastPrice, symbolSr);
+      const sessionCandles = config.getSessionCandles?.(symbol) ?? [];
       const signal = getSignal({
         price: q.lastPrice, sr: freshSr,
         pressure, momentum: momentum ?? null, pattern: pattern ?? null,
+        recentCandles: sessionCandles.slice(-3),
       });
       signal.srType = srType;
 
@@ -276,58 +276,19 @@ export function createSignalWorker(config: SignalWorkerConfig) {
         }
       }
 
-      // Bounce quality filter: reject low-quality bounce entries
+      // Bounce quality filter: reject overextended bounces
       if (signal.type === "BOUNCE" && signal.action !== "WAIT") {
-        const sessionCandles = config.getSessionCandles?.(symbol) ?? [];
-        let rejectBounce = false;
-        let rejectReason = "";
+        const bounceCandles = config.getSessionCandles?.(symbol) ?? [];
 
-        if (sessionCandles.length >= 6) {
-          // Fix 1: Overextension — stock already moved >2.5% in last 30 min
-          const oldCandle = sessionCandles[Math.max(0, sessionCandles.length - 6)];
+        if (bounceCandles.length >= 6) {
+          const oldCandle = bounceCandles[Math.max(0, bounceCandles.length - 6)];
           const recentMove = Math.abs(q.lastPrice - oldCandle.close) / oldCandle.close;
           if (recentMove > BOUNCE_MAX_RECENT_MOVE) {
-            rejectBounce = true;
-            rejectReason = `Overextended — ${(recentMove * 100).toFixed(1)}% move in 30 min`;
+            filterRejects.bounceRejected++;
+            signal.action = "WAIT";
+            signal.confidence = "LOW";
+            signal.reasons = [`Overextended — ${(recentMove * 100).toFixed(1)}% move in 30 min`];
           }
-
-          // Fix 2: Pullback depth — must have pulled back at least 0.5% from recent high
-          if (!rejectBounce) {
-            let recentHigh = 0;
-            for (let i = Math.max(0, sessionCandles.length - 6); i < sessionCandles.length; i++) {
-              if (sessionCandles[i].high > recentHigh) recentHigh = sessionCandles[i].high;
-            }
-            const pullback = recentHigh > 0 ? (recentHigh - q.lastPrice) / recentHigh : 0;
-            if (pullback < BOUNCE_MIN_PULLBACK) {
-              rejectBounce = true;
-              rejectReason = `Shallow pullback — only ${(pullback * 100).toFixed(2)}% from high`;
-            }
-          }
-        }
-
-        // Fix 3: Support distance — not sitting directly on support
-        if (!rejectBounce && symbolSr?.supportZone) {
-          const supportDist = Math.abs(q.lastPrice - symbolSr.supportZone.level) / q.lastPrice;
-          if (supportDist < BOUNCE_MIN_SUPPORT_DIST) {
-            rejectBounce = true;
-            rejectReason = `Too close to support — ${(supportDist * 100).toFixed(2)}% (no reaction room)`;
-          }
-        }
-
-        // Fix 4: Strong uptrend — bounce less likely after strong rally
-        if (!rejectBounce && momentum && (momentum.signal === "STRONG_UP") && q.close > 0) {
-          const dayMove = (q.lastPrice - q.close) / q.close;
-          if (dayMove > 0.02) {
-            rejectBounce = true;
-            rejectReason = `Strong uptrend +${(dayMove * 100).toFixed(1)}% — bounce unlikely`;
-          }
-        }
-
-        if (rejectBounce) {
-          filterRejects.bounceRejected++;
-          signal.action = "WAIT";
-          signal.confidence = "LOW";
-          signal.reasons = [rejectReason];
         }
       }
 

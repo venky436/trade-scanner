@@ -57,50 +57,65 @@ Output: { score: 8, breakdown: { pressure: 0.75, momentum: 1.0, sr: 1.0, ... } }
 
 ## Component Scoring
 
-### 1. Pressure Score (30% weight)
+### 1. Pressure Score (30% weight) — Direction-Aware
 
-Maps the pressure signal to a 0-1 value:
+Scoring is **inverted for SELL signals** — selling strength scores high, not low.
 
 ```
-STRONG_BUY  → 1.00  (buyers dominating)
-BUY         → 0.75  (buyers winning)
-NEUTRAL     → 0.50  (balanced)
-SELL        → 0.25  (sellers winning)
-STRONG_SELL → 0.00  (sellers dominating)
+For BUY signals:                For SELL signals:
+  STRONG_BUY  → 1.00             STRONG_SELL → 1.00
+  BUY         → 0.75             SELL        → 0.75
+  NEUTRAL     → 0.50             NEUTRAL     → 0.50
+  SELL        → 0.25             BUY         → 0.25
+  STRONG_SELL → 0.00             STRONG_BUY  → 0.00
 
 No pressure data → 0.00
 ```
 
-Example:
+Example (BUY signal):
 ```
-Pressure = STRONG_BUY
-pressureScore = 1.00
-Contribution to final: 1.00 × 0.30 = 0.30
+Pressure = STRONG_BUY → 1.00 × 0.30 = 0.30
+```
+
+Example (SELL signal):
+```
+Pressure = STRONG_SELL → 1.00 × 0.30 = 0.30  (was 0.00 before fix!)
+Pressure = SELL        → 0.75 × 0.30 = 0.225
 ```
 
 ---
 
-### 2. Momentum Score (25% weight)
+### 2. Momentum Score (25% weight) — Direction-Aware
 
-Maps the momentum signal to a 0-1 value + acceleration bonus:
+Same inversion — downward momentum scores high for SELL signals.
 
 ```
-STRONG_UP   → 1.00
-UP          → 0.75
-FLAT        → 0.50
-DOWN        → 0.25
-STRONG_DOWN → 0.00
+For BUY signals:                For SELL signals:
+  STRONG_UP   → 1.00             STRONG_DOWN → 1.00
+  UP          → 0.75             DOWN        → 0.75
+  FLAT        → 0.50             FLAT        → 0.50
+  DOWN        → 0.25             UP          → 0.25
+  STRONG_DOWN → 0.00             STRONG_UP   → 0.00
 
-Bonus: if acceleration = INCREASING → +0.10 (capped at 1.0)
+Acceleration bonus:
+  BUY signals:  INCREASING → +0.10
+  SELL signals: DECREASING → +0.10
 
 No momentum data → 0.00
 ```
 
-Example:
+Example (BUY signal):
 ```
 Momentum = UP, acceleration = INCREASING
 momentumScore = 0.75 + 0.10 = 0.85
-Contribution to final: 0.85 × 0.25 = 0.2125
+Contribution: 0.85 × 0.25 = 0.2125
+```
+
+Example (SELL signal):
+```
+Momentum = DOWN, acceleration = DECREASING
+momentumScore = 0.75 + 0.10 = 0.85  (was 0.25 before fix!)
+Contribution: 0.85 × 0.25 = 0.2125
 ```
 
 ---
@@ -143,6 +158,14 @@ Both support and resistance are checked — the CLOSER one wins:
 Support distance = 0.34% → score 1.00
 Resistance distance = 3.2% → score 0.30
 Best = max(1.00, 0.30) = 1.00
+```
+
+**Confirmed signal minimum:** When a signal has a type (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN), the S/R score is at least 0.8. This prevents confirmed signals from being penalized for crossing the level — crossing IS the confirmation.
+
+```
+Approaching resistance (no type): distance 0.3% → score 1.0
+After breakout (type=BREAKOUT):   distance 0.5% → score max(0.8, 1.0) = 1.0
+After breakout moved further:     distance 2.0% → score max(0.8, 0.6) = 0.8 (minimum)
 ```
 
 ---
@@ -256,7 +279,27 @@ score = round(0.370 × 10) = 4
 → 4/10 AVOID ❌
 ```
 
-### Example 4: Strong Momentum but No Pressure (Score 5)
+### Example 4: SELL Rejection Setup (Score 9)
+
+```
+RELIANCE rejected at resistance, strong selling
+
+Pressure  = SELL (→ 0.75 for SELL) × 0.30 = 0.225
+Momentum  = DOWN (→ 0.75 for SELL) × 0.25 = 0.188
+S/R confirmed                      × 0.25 = 0.200 (min 0.80)
+Volatility = 2.5% range → 0.80    × 0.10 = 0.080
+Signal    = SELL MEDIUM → 0.70    × 0.10 = 0.070
+                                            ─────
+                              raw = 0.763
+
+score = round(0.763 × 10) = 8
+→ 8/10 TRADE ✅
+
+With STRONG_SELL + STRONG_DOWN + HIGH confidence:
+  0.30 + 0.25 + 0.20 + 0.10 + 0.10 = 0.95 → 10/10 ✅
+```
+
+### Example 5: Strong Momentum but No Pressure (Score 5)
 
 ```
 Stock moving up fast but no volume confirmation

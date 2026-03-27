@@ -1,4 +1,4 @@
-import type { PressureResult, MomentumResult, PatternSignal, SignalResult, SignalConfidence } from "./types.js";
+import type { PressureResult, MomentumResult, PatternSignal, SignalResult, SignalConfidence, Candle } from "./types.js";
 
 interface SignalInput {
   price: number;
@@ -9,6 +9,7 @@ interface SignalInput {
   pressure: PressureResult | null;
   momentum: MomentumResult | null;
   pattern: PatternSignal | null;
+  recentCandles?: Candle[];
 }
 
 const NEAR_THRESHOLD = 1; // 1% distance
@@ -59,12 +60,12 @@ export function getSignal(input: SignalInput): SignalResult {
     // CONFIRMED BREAKOUT: price has crossed ABOVE resistance + buffer
     if (
       price > resistanceLevel + buffer &&
-      pressure.signal === "STRONG_BUY" &&
-      momentum?.signal === "STRONG_UP"
+      isBuyPressure &&
+      isUpMomentum
     ) {
       reasons.push(`Breakout confirmed — price ₹${price.toFixed(2)} above resistance ₹${resistanceLevel.toFixed(2)}`);
-      reasons.push("STRONG_BUY pressure");
-      reasons.push("STRONG_UP momentum");
+      reasons.push(`${pressure.signal} pressure`);
+      reasons.push(`${momentum!.signal} momentum`);
       if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
       return {
         action: "BUY",
@@ -126,22 +127,32 @@ export function getSignal(input: SignalInput): SignalResult {
       };
     }
 
-    // CONFIRMED BOUNCE: price moving UP from support + buy pressure
-    if (
-      price > supportLevel + buffer &&
-      isBuyPressure &&
-      isUpMomentum
-    ) {
-      reasons.push(`Bounce confirmed — price ₹${price.toFixed(2)} rising from support ₹${supportLevel.toFixed(2)}`);
-      reasons.push(`${pressure.signal} pressure`);
-      reasons.push(`${momentum!.signal} momentum`);
-      if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
-      return {
-        action: "BUY",
-        type: "BOUNCE",
-        confidence: patternConfidence("BUY", pattern),
-        reasons,
-      };
+    // CONFIRMED BOUNCE: rejection candle at support + hold + momentum
+    const recentCandles = input.recentCandles ?? [];
+    if (recentCandles.length >= 2) {
+      const prevCandle = recentCandles[recentCandles.length - 2]; // rejection candle
+      const lastCandle = recentCandles[recentCandles.length - 1]; // confirmation candle
+
+      const candleRange = prevCandle.high - prevCandle.low;
+      const rejectionAtSupport =
+        prevCandle.low <= supportLevel &&          // wick touched/pierced support
+        prevCandle.close > prevCandle.open &&       // bullish candle
+        candleRange > 0 &&
+        (prevCandle.close - prevCandle.low) / candleRange > 0.6; // close near high (strong rejection)
+
+      const holdConfirmed = lastCandle.low > supportLevel; // next candle holds above support
+
+      if (rejectionAtSupport && holdConfirmed && isUpMomentum) {
+        reasons.push(`Bounce confirmed — rejection candle at support ₹${supportLevel.toFixed(2)}, hold confirmed`);
+        reasons.push(`${momentum!.signal} momentum`);
+        if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
+        return {
+          action: "BUY",
+          type: "BOUNCE",
+          confidence: patternConfidence("BUY", pattern),
+          reasons,
+        };
+      }
     }
 
     // NOT CONFIRMED — WAIT at support
