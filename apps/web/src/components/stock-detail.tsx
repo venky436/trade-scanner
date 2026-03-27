@@ -640,8 +640,8 @@ export function StockDetail({ symbol }: { symbol: string }) {
             {signal?.scoreBreakdown ? (
               <div className="space-y-2.5">
                 {[
-                  { label: "Pressure", value: signal.scoreBreakdown.pressure, color: "bg-blue-500" },
-                  { label: "Momentum", value: signal.scoreBreakdown.momentum, color: "bg-purple-500" },
+                  { label: `Pressure${pressure ? ` (${pressureLabel(pressure.signal).text})` : ""}`, value: signal.scoreBreakdown.pressure, color: "bg-blue-500" },
+                  { label: `Momentum${momentum ? ` (${momentumLabel(momentum.signal).text})` : ""}`, value: signal.scoreBreakdown.momentum, color: "bg-purple-500" },
                   { label: "S/R", value: signal.scoreBreakdown.sr, color: "bg-yellow-500" },
                   { label: "Volatility", value: signal.scoreBreakdown.volatility, color: "bg-orange-500" },
                 ].map(({ label, value, color }) => (

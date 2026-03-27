@@ -11,8 +11,9 @@ COPY apps/server/package.json ./apps/server/
 # Install all dependencies (including devDeps for tsc)
 RUN npm ci --workspace=apps/server --include-workspace-root
 
-# Copy server source
+# Copy server source + docs
 COPY apps/server ./apps/server
+COPY docs ./docs
 
 # Build TypeScript
 RUN npm run build -w apps/server
@@ -30,8 +31,9 @@ COPY apps/server/package.json ./apps/server/
 # Install production dependencies only
 RUN npm ci --workspace=apps/server --include-workspace-root --omit=dev
 
-# Copy compiled output
+# Copy compiled output + docs
 COPY --from=builder /app/apps/server/dist ./apps/server/dist
+COPY --from=builder /app/docs ./docs
 
 # Dedicated directory for session file (persists kite token across restarts)
 RUN mkdir -p /app/apps/server/data
