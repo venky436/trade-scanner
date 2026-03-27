@@ -26,12 +26,13 @@ export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts)
     return metrics ?? { error: "No data" };
   });
 
-  // Recent signal records
-  fastify.get("/api/admin/accuracy/signals", { preHandler: [authMiddleware, adminGuard] }, async (_req, reply) => {
+  // Signal records for a specific date (defaults to today)
+  fastify.get("/api/admin/accuracy/signals", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
     const service = opts.getAccuracyService();
     if (!service) return reply.status(503).send({ error: "Accuracy service not initialized" });
 
-    const signals = await service.getRecentSignals(50);
+    const { date } = req.query as { date?: string };
+    const signals = await service.getRecentSignals(500, date ? new Date(date) : undefined);
     return { signals, count: signals.length };
   });
 }

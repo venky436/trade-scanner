@@ -299,11 +299,23 @@ export function createSignalAccuracyService() {
   }
 
   // ── Recent signals ──
-  async function getRecentSignals(limit = 50) {
+  async function getRecentSignals(limit = 500, date?: Date) {
     try {
+      const targetDate = date ?? new Date();
+      const dayStart = new Date(targetDate);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(targetDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
       return await db
         .select()
         .from(signalAccuracyLog)
+        .where(
+          and(
+            gte(signalAccuracyLog.entryTime, dayStart),
+            lte(signalAccuracyLog.entryTime, dayEnd),
+          )
+        )
         .orderBy(sql`${signalAccuracyLog.entryTime} DESC`)
         .limit(limit);
     } catch {

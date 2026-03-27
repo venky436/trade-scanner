@@ -160,12 +160,12 @@ Resistance distance = 3.2% → score 0.30
 Best = max(1.00, 0.30) = 1.00
 ```
 
-**Confirmed signal minimum:** When a signal has a type (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN), the S/R score is at least 0.8. This prevents confirmed signals from being penalized for crossing the level — crossing IS the confirmation.
+**Confirmed signal:** When a signal has a type (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN), the S/R score is set to 1.0 (full). The level proved itself by creating a tradeable event — distance no longer matters. Quality differentiation comes from pressure, momentum, volatility, and signal components.
 
 ```
 Approaching resistance (no type): distance 0.3% → score 1.0
-After breakout (type=BREAKOUT):   distance 0.5% → score max(0.8, 1.0) = 1.0
-After breakout moved further:     distance 2.0% → score max(0.8, 0.6) = 0.8 (minimum)
+After breakout (type=BREAKOUT):   distance 0.5% → score 1.0 (confirmed)
+After breakout moved further:     distance 2.0% → score 1.0 (confirmed)
 ```
 
 ---

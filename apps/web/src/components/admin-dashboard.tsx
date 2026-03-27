@@ -50,22 +50,35 @@ const RESULT_COLORS: Record<string, string> = {
   NEUTRAL: "text-zinc-400 bg-muted",
 };
 
+function getTodayIST(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
+}
+
 export function AdminDashboard() {
   const [metrics, setMetrics] = useState<AccuracyMetrics | null>(null);
   const [signals, setSignals] = useState<SignalRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(getTodayIST());
+
+  const isToday = selectedDate === getTodayIST();
 
   useEffect(() => {
     async function fetchData() {
       try {
+        const metricsUrl = isToday
+          ? "/api/admin/accuracy"
+          : `/api/admin/accuracy/${selectedDate}`;
+        const signalsUrl = `/api/admin/accuracy/signals?date=${selectedDate}`;
+
         const [metricsRes, signalsRes] = await Promise.all([
-          apiFetch("/api/admin/accuracy"),
-          apiFetch("/api/admin/accuracy/signals"),
+          apiFetch(metricsUrl),
+          apiFetch(signalsUrl),
         ]);
 
         if (metricsRes.ok) {
           const data = await metricsRes.json();
           if (data.total !== undefined) setMetrics(data);
+          else setMetrics(null);
         }
 
         if (signalsRes.ok) {
@@ -78,10 +91,12 @@ export function AdminDashboard() {
       setLoading(false);
     }
 
+    setLoading(true);
     fetchData();
-    const interval = setInterval(fetchData, 30_000); // refresh every 30s
-    return () => clearInterval(interval);
-  }, []);
+    // Only auto-refresh for today's data
+    const interval = isToday ? setInterval(fetchData, 30_000) : null;
+    return () => { if (interval) clearInterval(interval); };
+  }, [selectedDate, isToday]);
 
   return (
     <main className="min-h-screen bg-background p-4 max-w-[1200px] mx-auto">
@@ -94,8 +109,32 @@ export function AdminDashboard() {
           <ArrowLeft className="size-4" />
           Back to Scanner
         </Link>
-        <h1 className="text-2xl font-bold">Signal Accuracy Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Admin only — production signal performance tracking</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Signal Accuracy Dashboard</h1>
+            <p className="text-sm text-muted-foreground">Admin only — production signal performance tracking</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <input
+              type="date"
+              value={selectedDate}
+              max={getTodayIST()}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="px-3 py-1.5 rounded-md border border-border bg-background text-sm text-foreground"
+            />
+            {!isToday && (
+              <button
+                onClick={() => setSelectedDate(getTodayIST())}
+                className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                Today
+              </button>
+            )}
+            {isToday && (
+              <span className="text-xs text-muted-foreground">Live</span>
+            )}
+          </div>
+        </div>
       </div>
 
       {loading ? (
@@ -140,7 +179,7 @@ export function AdminDashboard() {
             {/* Results pie */}
             <Card className="border-border/50">
               <CardContent className="p-5 space-y-4">
-                <h3 className="text-sm font-semibold">Today&apos;s Results</h3>
+                <h3 className="text-sm font-semibold">{isToday ? "Today's" : new Date(selectedDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })} Results</h3>
                 <div className="grid grid-cols-3 gap-3 text-center">
                   <div className="space-y-1">
                     <span className="text-2xl font-bold text-green-500">{metrics.success}</span>
@@ -206,7 +245,7 @@ export function AdminDashboard() {
               {signals.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">No signals recorded yet</p>
               ) : (
-                <div className="overflow-auto max-h-[400px]">
+                <div className="overflow-auto">
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-card">
                       <tr className="border-b border-border/50 text-muted-foreground">
