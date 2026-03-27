@@ -424,7 +424,7 @@ export async function stocksRoute(
         supportZone: sr.supportZone ? { level: sr.supportZone.level, distancePercent: Math.abs(price - sr.supportZone.level) / price * 100 } : null,
         resistanceZone: sr.resistanceZone ? { level: sr.resistanceZone.level, distancePercent: Math.abs(price - sr.resistanceZone.level) / price * 100 } : null,
       };
-      signal = getSignal({ price, sr: freshSr, pressure, momentum, pattern: null });
+      signal = getSignal({ price, sr: freshSr, pressure, momentum, pattern: null, recentCandles: [] });
     }
 
     // Always compute score (even if signal came from cache — ensures scoreBreakdown)

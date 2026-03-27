@@ -240,9 +240,9 @@ Requires confirming pressure (BUY pressure for bullish patterns, SELL for bearis
 
 | Rule | Condition | Signal |
 |---|---|---|
-| BREAKOUT | Price ABOVE resistance + 0.2% buffer + STRONG_BUY + STRONG_UP | BUY (confirmed) |
+| BREAKOUT | Price ABOVE resistance + 0.2% buffer + BUY/STRONG_BUY pressure + UP/STRONG_UP momentum | BUY (confirmed) |
 | BREAKDOWN | Price BELOW support - 0.2% buffer + STRONG_SELL + STRONG_DOWN | SELL (confirmed) |
-| BOUNCE | Price ABOVE support + 0.2% buffer + BUY pressure + UP momentum | BUY (confirmed) |
+| BOUNCE | Rejection candle at support (wick touch + bullish close) + hold candle above support + UP momentum | BUY (confirmed) |
 | REJECTION | Price below resistance + SELL pressure + (DOWN or weakening momentum) | SELL (confirmed) |
 | At S/R level | Near S/R but no confirmation | WAIT |
 | Default | Not near any level | WAIT |
@@ -262,9 +262,9 @@ Converts all engine outputs into a single **Signal Score (1-10)** using weighted
 
 | Engine | Weight | Score Range | Mapping |
 |--------|--------|-------------|---------|
-| Pressure | 30% | 0-1 | STRONG_BUY=1, BUY=0.75, NEUTRAL=0.5, SELL=0.25, STRONG_SELL=0 |
-| Momentum | 25% | 0-1 | STRONG_UP=1, UP=0.75, FLAT=0.5, DOWN=0.25, STRONG_DOWN=0 (+0.1 acceleration bonus) |
-| S/R Proximity | 25% | 0-1 | <0.5%=1, <1%=0.8, <2%=0.6, <5%=0.3, else=0.1 (+0.1 touches bonus) |
+| Pressure | 30% | 0-1 | Direction-aware: BUY→STRONG_BUY=1, SELL→STRONG_SELL=1 |
+| Momentum | 25% | 0-1 | Direction-aware: BUY→STRONG_UP=1, SELL→STRONG_DOWN=1 (+0.1 accel bonus) |
+| S/R Proximity | 25% | 0-1 | <0.5%=1, <1%=0.8, <2%=0.6, <5%=0.3, else=0.1 (confirmed signals: min 0.8) |
 | Volatility | 10% | 0-1 | Range ≥3%=1, ≥2%=0.8, ≥1%=0.6, ≥0.5%=0.4, else=0.2 |
 | Signal Boost | 10% | 0-1 | BUY/SELL HIGH=1, MEDIUM=0.7, LOW=0.5, WAIT=0 |
 
