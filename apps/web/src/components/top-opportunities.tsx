@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Target } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import type { StockData, SupportResistanceResult } from "@/lib/types";
 import { INDEX_NAMES } from "@/lib/constants";
+
+let hasAnimatedOpportunities = false;
 
 interface TopOpportunitiesProps {
   stockMap: Map<string, StockData>;
@@ -93,6 +95,8 @@ function getDecision(
 
 export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, maxItems = 6 }: TopOpportunitiesProps) {
   const router = useRouter();
+  const shouldAnimate = useRef(!hasAnimatedOpportunities);
+  useEffect(() => { hasAnimatedOpportunities = true; }, []);
 
   const opportunities = useMemo(() => {
     return Array.from(stockMap.values())
@@ -137,7 +141,7 @@ export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, m
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {opportunities.map((stock) => {
+      {opportunities.map((stock, i) => {
         const signal = stock.signal!;
         const score = getScore(stock);
         const sr = srLevels[stock.symbol];
@@ -150,107 +154,133 @@ export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, m
         const resDist = sr?.resistanceZone?.distancePercent;
         const supDist = sr?.supportZone?.distancePercent;
 
-        // Score → decision text
         const scoreDecision = score >= 8 ? "Enter now"
           : isWait ? "Not safe to enter"
           : score >= 6 ? "Watch only"
           : "Skip";
 
+        const accentBorder = score >= 8 ? "border-l-green-500" :
+          score >= 6 ? "border-l-yellow-500" : "border-l-zinc-600";
+
         return (
-          <Card
+          <div
             key={stock.symbol}
-            className="cursor-pointer overflow-hidden transition-all duration-300 rounded-2xl border border-border/20 backdrop-blur-xl bg-white/[0.02] dark:bg-white/[0.02]"
+            className={`group relative cursor-pointer overflow-hidden rounded-2xl backdrop-blur-xl bg-white/[0.02] border border-border/20 border-l-[3px] ${accentBorder} transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg ${shouldAnimate.current ? "animate-fade-in-up" : ""}`}
+            style={shouldAnimate.current ? { animationDelay: `${i * 60}ms` } : undefined}
             onClick={() => router.push(`/stock/${encodeURIComponent(stock.symbol)}`)}
           >
-            {/* Glass shine */}
-            <div className="absolute inset-0 bg-gradient-to-b from-white/[0.03] to-transparent rounded-2xl pointer-events-none" />
-
-            <div className="relative p-4 space-y-2.5">
-              {/* Row 1: Signal label + Symbol + Score */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${signalLabel.color}`}>
-                    {signalLabel.label}
-                  </span>
-                  <span className="text-sm font-bold text-foreground">{stock.symbol}</span>
-                  {stock.pattern && (
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                      stock.pattern.direction === "BULLISH" ? "bg-green-500/15 text-green-500" : "bg-red-500/15 text-red-500"
-                    }`}>
-                      {stock.pattern.pattern.split("_").map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}
+            {/* Content */}
+            <div className="p-4 space-y-2.5">
+              {/* Header: Signal + Symbol + Change + Score Ring */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ring-1 ${
+                      signalLabel.color.includes("green") ? "ring-green-500/20" :
+                      signalLabel.color.includes("blue") ? "ring-blue-500/20" :
+                      signalLabel.color.includes("orange") ? "ring-orange-500/20" :
+                      "ring-red-500/20"
+                    } ${signalLabel.color}`}>
+                      {signalLabel.label}
                     </span>
-                  )}
-                  <span className={`text-xs font-mono tabular-nums ${
-                    positive ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
-                  }`}>
-                    {positive ? "+" : ""}{stock.change.toFixed(2)}%
-                  </span>
+                    {stock.pattern && (
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ring-1 ${
+                        stock.pattern.direction === "BULLISH"
+                          ? "bg-green-500/10 text-green-400 ring-green-500/15"
+                          : "bg-red-500/10 text-red-400 ring-red-500/15"
+                      }`}>
+                        {stock.pattern.pattern.split("_").map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-base font-extrabold text-foreground tracking-tight">{stock.symbol}</span>
+                    <span className={`text-xs font-mono font-bold tabular-nums ${
+                      positive ? "text-green-400" : "text-red-400"
+                    }`}>
+                      {positive ? "+" : ""}{stock.change.toFixed(2)}%
+                    </span>
+                  </div>
                 </div>
-                <div className={`flex items-center justify-center w-8 h-8 rounded-full border-2 text-xs font-black ${scoreColor(score)}`}>
-                  {score}
+
+                {/* Score Ring */}
+                <div className="relative w-10 h-10 flex-shrink-0">
+                  <svg className="w-full h-full -rotate-90" viewBox="0 0 40 40">
+                    <circle cx="20" cy="20" r="16" fill="none" stroke="currentColor" strokeWidth="3" className="text-white/[0.06]" />
+                    <circle
+                      cx="20" cy="20" r="16" fill="none"
+                      strokeWidth="3" strokeLinecap="round"
+                      strokeDasharray={`${score * 10.05} 100.5`}
+                      className={score >= 8 ? "stroke-green-400" : score >= 6 ? "stroke-yellow-400" : "stroke-zinc-500"}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className={`text-xs font-extrabold tabular-nums ${
+                      score >= 8 ? "text-green-400" : score >= 6 ? "text-yellow-400" : "text-zinc-400"
+                    }`}>{score}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Row 2: DOMINANT location + distance */}
+              {/* S/R Location */}
               {nearRes && (
-                <p className="text-sm font-black text-red-500">
-                  ⚠️ NEAR RESISTANCE
-                  {resDist != null && <span className="text-[10px] font-normal text-muted-foreground ml-1">{resDist.toFixed(1)}% away</span>}
-                </p>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500/8 ring-1 ring-red-500/10">
+                  <span className="text-sm">⚠️</span>
+                  <span className="text-xs font-bold text-red-400">NEAR RESISTANCE</span>
+                  {resDist != null && <span className="text-[10px] text-red-400/50">{resDist.toFixed(1)}% away</span>}
+                </div>
               )}
               {nearSup && !nearRes && (
-                <p className="text-sm font-black text-green-500">
-                  🟢 NEAR SUPPORT
-                  {supDist != null && <span className="text-[10px] font-normal text-muted-foreground ml-1">{supDist.toFixed(1)}% away</span>}
-                </p>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-500/8 ring-1 ring-green-500/10">
+                  <span className="text-sm">🟢</span>
+                  <span className="text-xs font-bold text-green-400">NEAR SUPPORT</span>
+                  {supDist != null && <span className="text-[10px] text-green-400/50">{supDist.toFixed(1)}% away</span>}
+                </div>
               )}
 
-              {/* Row 3: No-entry warning OR primary plan */}
+              {/* Context / Warning */}
               {isWait ? (
                 <div className="space-y-1">
-                  <p className="text-[11px] font-semibold text-yellow-600 dark:text-yellow-400">
-                    🚫 No entry — wait for confirmation
+                  <p className="text-[11px] font-semibold text-yellow-400/80 flex items-center gap-1">
+                    <span>🚫</span> No entry — wait for confirmation
                   </p>
                   {primaryPlan && (
-                    <p className="text-[11px] text-muted-foreground">
-                      ✔ {primaryPlan}
-                    </p>
+                    <p className="text-[11px] text-muted-foreground/70 pl-4">✔ {primaryPlan}</p>
                   )}
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground line-clamp-1">
+                <p className="text-xs text-muted-foreground/70 leading-relaxed">
                   {signal.reasons[0]
                     ? signal.reasons[0].startsWith("STRONG") ? "Strong momentum building" : signal.reasons[0]
                     : "Setup developing"}
                 </p>
               )}
 
-              {/* Row 3.5: Phase warning */}
+              {/* Phase warning */}
               {signal.warningMessage && (signal.marketPhase === "OPENING" || signal.marketPhase === "STABILIZING") && (
-                <p className={`text-[10px] font-medium ${
-                  signal.marketPhase === "OPENING" ? "text-yellow-600 dark:text-yellow-400" : "text-orange-600 dark:text-orange-400"
+                <p className={`text-[10px] font-medium flex items-center gap-1 ${
+                  signal.marketPhase === "OPENING" ? "text-yellow-400/70" : "text-orange-400/70"
                 }`}>
-                  ⏳ {signal.warningMessage}
+                  <span>⏳</span> {signal.warningMessage}
                 </p>
               )}
 
-              {/* Row 4: Score decision + timing */}
-              <div className="flex items-center justify-between text-[10px] border-t border-border/30 pt-2">
-                <span className="text-muted-foreground">
-                  <span className="font-bold text-foreground">{score}/10</span>
-                  {" → "}
-                  <span className={
-                    score >= 8 ? "text-green-500 font-semibold" :
-                    isWait ? "text-yellow-500 font-semibold" :
-                    "text-muted-foreground"
-                  }>
+              {/* Footer */}
+              <div className="flex items-center justify-between pt-2 border-t border-white/[0.04]">
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-sm font-bold tabular-nums ${
+                    score >= 8 ? "text-green-400" : score >= 6 ? "text-yellow-400" : "text-zinc-400"
+                  }`}>{score}/10</span>
+                  <span className={`text-[10px] font-medium ${
+                    score >= 8 ? "text-green-400/70" : isWait ? "text-yellow-400/70" : "text-muted-foreground/50"
+                  }`}>
                     {scoreDecision}
                   </span>
-                </span>
-                <span className="text-muted-foreground/60">⏱ 5–10 min</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground/30">5–10 min</span>
               </div>
             </div>
-          </Card>
+          </div>
         );
       })}
     </div>
