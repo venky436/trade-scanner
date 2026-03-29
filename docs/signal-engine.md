@@ -115,12 +115,14 @@ The signal engine **never decides at the level**. When price is near support or 
 Price approaching S/R → WAIT (always)
   │
   ├─ At Resistance:
-  │    ├─ Price crosses ABOVE resistance + 0.2% + BUY pressure + UP momentum → CONFIRMED BUY BREAKOUT
+  │    ├─ Price crosses ABOVE resistance + 0.2% + BUY pressure + UP momentum
+  │    │    + INCREASING acceleration + quality > 0.5 → CONFIRMED BUY BREAKOUT
   │    ├─ Price falls + SELL pressure + weakening momentum → CONFIRMED SELL REJECTION
   │    └─ Neither → WAIT ("waiting for breakout or rejection")
   │
   └─ At Support:
-       ├─ Price drops BELOW support - 0.2% → CONFIRMED SELL BREAKDOWN
+       ├─ Price drops BELOW support - 0.2% + STRONG_SELL pressure + STRONG_DOWN momentum
+       │    + DECREASING acceleration + |quality| > 0.5 → CONFIRMED SELL BREAKDOWN
        ├─ Rejection candle at support + hold candle + UP momentum → CONFIRMED BUY BOUNCE
        └─ Neither → WAIT ("waiting for bounce or breakdown")
 ```
@@ -131,8 +133,10 @@ All conditions must be true:
 - Price is **above** resistance + 0.2% buffer (confirmed break)
 - Pressure is `BUY` or `STRONG_BUY`
 - Momentum is `UP` or `STRONG_UP`
+- Momentum acceleration is `INCREASING` (move must be strengthening, not fading)
+- Momentum quality > 0.5 (filters out weak/uncertain moves)
 
-The 0.2% buffer prevents false triggers from minor wick touches. Price must decisively cross resistance.
+The 0.2% buffer prevents false triggers from minor wick touches. Price must decisively cross resistance. The acceleration and quality filters (added in the hybrid momentum upgrade) further reduce fake breakouts by ensuring the move has genuine strength behind it — a price crossing resistance while momentum is fading (DECREASING) or quality is low is likely a false break.
 
 #### Rule 2: REJECTION (SELL) — Confirmed
 
@@ -166,6 +170,10 @@ All conditions must be true:
 - Price is **below** support - 0.2% buffer (confirmed break)
 - Pressure is `STRONG_SELL`
 - Momentum is `STRONG_DOWN`
+- Momentum acceleration is `DECREASING` (selling must be strengthening — for downward moves, DECREASING acceleration means the negative velocity is growing)
+- Momentum quality magnitude > 0.5 (filters out weak/uncertain moves; uses `Math.abs(quality)` since quality is negative for sell signals)
+
+Like BREAKOUT, the acceleration and quality filters reduce false breakdowns by ensuring genuine selling strength behind the move.
 
 #### Default: WAIT
 
@@ -292,14 +300,14 @@ Confidence affects the badge appearance:
 | Type | What's Happening | Confidence Meaning |
 |------|-----------------|-------------------|
 | **BOUNCE** | Rejection candle at support (wick touched support, closed bullish near high) + next candle holds above support + UP momentum. Candle-confirmed support hold. | HIGH = confirming pattern (e.g., HAMMER), MEDIUM = no pattern, LOW = conflicting pattern |
-| **BREAKOUT** | Stock has crossed above resistance + 0.2% buffer with BUY/STRONG_BUY pressure and UP/STRONG_UP momentum. All engines aligned for a resistance break. | HIGH = pattern confirms, MEDIUM = no pattern |
+| **BREAKOUT** | Stock has crossed above resistance + 0.2% buffer with BUY/STRONG_BUY pressure, UP/STRONG_UP momentum, INCREASING acceleration, and quality > 0.5. All engines aligned for a strong resistance break. | HIGH = pattern confirms, MEDIUM = no pattern |
 
 ### SELL Signals
 
 | Type | What's Happening | Confidence Meaning |
 |------|-----------------|-------------------|
 | **REJECTION** | Stock is near resistance with sell-side pressure and downward momentum. Classic resistance rejection. | HIGH = confirming pattern (e.g., SHOOTING_STAR), MEDIUM = no pattern, LOW = conflicting pattern |
-| **BREAKDOWN** | Stock is near support with STRONG_SELL pressure, STRONG_DOWN momentum, and accelerating downward. All engines aligned for a support break. | HIGH = pattern confirms, MEDIUM = no pattern but all other conditions max-strength |
+| **BREAKDOWN** | Stock has crossed below support - 0.2% buffer with STRONG_SELL pressure, STRONG_DOWN momentum, DECREASING acceleration (selling strengthening), and |quality| > 0.5. All engines aligned for a strong support break. | HIGH = pattern confirms, MEDIUM = no pattern but all other conditions max-strength |
 
 ### WAIT (Not Displayed)
 
@@ -337,7 +345,9 @@ In practice, the earliest a signal can fire is after the pressure engine warms u
 | Pressure as mandatory gate | Without buyer/seller balance, directional signals are unreliable |
 | 1% near threshold | Matches existing reaction threshold; signals only matter near decision points |
 | Strict priority order | BREAKOUT/BREAKDOWN checked first because they require the strongest alignment |
-| DECREASING for BREAKDOWN | `acc = r1 - r2`; strengthening downtrend produces negative acc = DECREASING |
+| Breakout requires INCREASING acceleration + quality > 0.5 | Reduces fake breakouts — price crossing resistance while momentum fades is likely a false break |
+| Breakdown requires DECREASING acceleration + |quality| > 0.5 | Mirrors breakout filter for sell-side — strengthening downtrend produces DECREASING acceleration; filters weak breakdowns |
+| Acceleration/quality NOT applied to REJECTION/BOUNCE | These are reversal signals relying on weakening/rejection logic, not trend continuation — different mechanics |
 | WAIT signals filtered from payload | Most stocks are WAIT; sending them wastes bandwidth |
 | Pattern-based confidence | Candlestick patterns are independent confirmation; their presence/absence modulates conviction |
 | Reasons array | Makes the engine's logic transparent; useful for UI display and debugging |

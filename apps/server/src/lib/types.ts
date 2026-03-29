@@ -108,6 +108,8 @@ export interface MomentumResult {
   value: number;                    // -1 to +1
   signal: MomentumSignal;
   acceleration: MomentumAcceleration;
+  accelerationRaw: number;          // numeric acceleration value
+  quality: number;                  // value × quality multiplier
 }
 
 export type SignalAction = "BUY" | "SELL" | "WAIT";

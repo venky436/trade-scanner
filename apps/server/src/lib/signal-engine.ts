@@ -58,14 +58,18 @@ export function getSignal(input: SignalInput): SignalResult {
     const buffer = resistanceLevel * CONFIRMATION_BUFFER;
 
     // CONFIRMED BREAKOUT: price has crossed ABOVE resistance + buffer
+    const isAccelerating = momentum?.acceleration === "INCREASING";
+    const isHighQuality = momentum?.quality !== undefined ? momentum.quality > 0.5 : true;
     if (
       price > resistanceLevel + buffer &&
       isBuyPressure &&
-      isUpMomentum
+      isUpMomentum &&
+      isAccelerating &&
+      isHighQuality
     ) {
       reasons.push(`Breakout confirmed — price ₹${price.toFixed(2)} above resistance ₹${resistanceLevel.toFixed(2)}`);
       reasons.push(`${pressure.signal} pressure`);
-      reasons.push(`${momentum!.signal} momentum`);
+      reasons.push(`${momentum!.signal} momentum (${momentum!.acceleration}, quality: ${momentum!.quality.toFixed(2)})`);
       if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
       return {
         action: "BUY",
@@ -110,14 +114,18 @@ export function getSignal(input: SignalInput): SignalResult {
     const buffer = supportLevel * CONFIRMATION_BUFFER;
 
     // CONFIRMED BREAKDOWN: price has dropped BELOW support - buffer
+    const isBreakdownAccelerating = momentum?.acceleration === "DECREASING";
+    const isBreakdownHighQuality = momentum?.quality !== undefined ? Math.abs(momentum.quality) > 0.5 : true;
     if (
       price < supportLevel - buffer &&
       pressure.signal === "STRONG_SELL" &&
-      momentum?.signal === "STRONG_DOWN"
+      momentum?.signal === "STRONG_DOWN" &&
+      isBreakdownAccelerating &&
+      isBreakdownHighQuality
     ) {
       reasons.push(`Breakdown confirmed — price ₹${price.toFixed(2)} below support ₹${supportLevel.toFixed(2)}`);
       reasons.push("STRONG_SELL pressure");
-      reasons.push("STRONG_DOWN momentum");
+      reasons.push(`STRONG_DOWN momentum (${momentum!.acceleration}, quality: ${momentum!.quality.toFixed(2)})`);
       if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
       return {
         action: "SELL",
