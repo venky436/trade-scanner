@@ -295,11 +295,11 @@ const momentumStyles: Record<MomentumSignal, string> = {
 };
 
 const momentumLabels: Record<MomentumSignal, string> = {
-  STRONG_UP: "S.UP",
-  UP: "UP",
-  FLAT: "FLAT",
-  DOWN: "DOWN",
-  STRONG_DOWN: "S.DOWN",
+  STRONG_UP: "Strong Up",
+  UP: "Up",
+  FLAT: "Flat",
+  DOWN: "Down",
+  STRONG_DOWN: "Strong Down",
 };
 
 const accelArrow: Record<string, string> = {

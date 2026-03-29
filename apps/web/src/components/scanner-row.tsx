@@ -23,27 +23,27 @@ const MOMENTUM_DISPLAY: Record<
   { label: string; className: string; bg: string }
 > = {
   STRONG_UP: {
-    label: "↑↑",
+    label: "Strong Up",
     className: "text-green-600 dark:text-green-400 font-bold",
     bg: "bg-green-500/10",
   },
   UP: {
-    label: "↑",
+    label: "Up",
     className: "text-green-600 dark:text-green-400",
     bg: "bg-green-500/10",
   },
   FLAT: {
-    label: "→",
+    label: "Flat",
     className: "text-muted-foreground",
     bg: "bg-muted",
   },
   DOWN: {
-    label: "↓",
+    label: "Down",
     className: "text-red-600 dark:text-red-400",
     bg: "bg-red-500/10",
   },
   STRONG_DOWN: {
-    label: "↓↓",
+    label: "Strong Down",
     className: "text-red-600 dark:text-red-400 font-bold",
     bg: "bg-red-500/10",
   },
