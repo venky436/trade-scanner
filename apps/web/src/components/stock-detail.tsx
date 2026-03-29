@@ -188,19 +188,13 @@ function accelerationLabel(accel: string): { text: string; icon: string } {
 
 // ── Period Presets ────────────────────────────────────────────────────
 
-interface PeriodPreset {
-  label: string;
-  interval: string;
-  days: number;
-}
-
-const PERIOD_PRESETS: PeriodPreset[] = [
-  { label: "1D", interval: "5m", days: 1 },
-  { label: "5D", interval: "5m", days: 5 },
-  { label: "10D", interval: "5m", days: 10 },
-  { label: "1M", interval: "15m", days: 30 },
-  { label: "3M", interval: "1D", days: 90 },
-  { label: "1Y", interval: "1D", days: 365 },
+const DAY_OPTIONS = [
+  { label: "1D", days: 1 },
+  { label: "5D", days: 5 },
+  { label: "10D", days: 10 },
+  { label: "1M", days: 30 },
+  { label: "3M", days: 90 },
+  { label: "1Y", days: 365 },
 ];
 
 const INTERVAL_OPTIONS = ["5m", "15m", "30m", "1H"] as const;
@@ -210,8 +204,8 @@ const INTERVAL_OPTIONS = ["5m", "15m", "30m", "1H"] as const;
 export function StockDetail({ symbol }: { symbol: string }) {
   const { stockMap, isConnected } = useMarketData();
   const [interval, setIntervalState] = useState("5m");
-  const [days, setDays] = useState<number>(5);
-  const [activePreset, setActivePreset] = useState<string>("5D");
+  const [days, setDays] = useState<number>(10);
+  const [activeDayLabel, setActiveDayLabel] = useState<string>("10D");
   const [srLevels, setSrLevels] = useState<SupportResistanceResult | null>(
     srCache[symbol] ?? null
   );
@@ -347,14 +341,12 @@ export function StockDetail({ symbol }: { symbol: string }) {
   const pressure = stock?.pressure;
   const pattern = stock?.pattern;
 
-  function handlePreset(preset: PeriodPreset) {
-    setActivePreset(preset.label);
-    setIntervalState(preset.interval);
-    setDays(preset.days);
+  function handleDaySelect(opt: { label: string; days: number }) {
+    setActiveDayLabel(opt.label);
+    setDays(opt.days);
   }
 
   function handleInterval(iv: string) {
-    setActivePreset("");
     setIntervalState(iv);
   }
 
@@ -609,125 +601,176 @@ export function StockDetail({ symbol }: { symbol: string }) {
         </Card>
 
         {/* Score Breakdown Card */}
-        <Card className="border border-border/20 rounded-2xl backdrop-blur-xl bg-white/[0.02]">
-          <CardContent className="p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Score Breakdown</h3>
+        <Card className="rounded-2xl backdrop-blur-xl bg-white/[0.02] border border-border/20 overflow-hidden animate-slide-in-right">
+          <CardContent className="p-0">
+            {/* Score Header with Ring */}
+            <div className={`px-4 py-4 flex items-center justify-between ${
+              score >= 8 ? "bg-green-500/8" : score >= 6 ? "bg-yellow-500/8" : "bg-zinc-800/50"
+            }`}>
+              <div className="flex items-center gap-4">
+                {/* Circular Score Ring */}
+                <div className="relative w-16 h-16 flex-shrink-0">
+                  <svg className="w-full h-full -rotate-90" viewBox="0 0 64 64">
+                    <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" strokeWidth="4" className="text-white/[0.06]" />
+                    <circle
+                      cx="32" cy="32" r="28" fill="none"
+                      strokeWidth="4" strokeLinecap="round"
+                      strokeDasharray={`${score * 17.6} 176`}
+                      className={`animate-ring-fill ${score >= 8 ? "stroke-green-400" : score >= 6 ? "stroke-yellow-400" : "stroke-zinc-500"}`}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className={`text-xl font-extrabold tabular-nums animate-score-pop ${
+                      score >= 8 ? "text-green-400" : score >= 6 ? "text-yellow-400" : "text-zinc-400"
+                    }`}>{score}</span>
+                  </div>
+                </div>
+                <div>
+                  <p className={`text-sm font-bold uppercase tracking-wider ${
+                    score >= 8 ? "text-green-400" : score >= 6 ? "text-yellow-400" : "text-zinc-500"
+                  }`}>
+                    {scoreLabel(score)}
+                  </p>
+                  <div className="flex gap-2 text-[9px] text-muted-foreground/40 mt-1">
+                    <span>8-10 TRADE</span>
+                    <span>6-7 WATCH</span>
+                    <span>&lt;6 AVOID</span>
+                  </div>
+                </div>
+              </div>
               {score >= 8 && (
-                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400">
+                <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-green-500/15 text-green-400 ring-1 ring-green-500/20">
                   High Probability
                 </span>
               )}
             </div>
 
-            {/* Score display */}
-            <div className="space-y-2">
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold tabular-nums">{score}/10</span>
-                <span className="text-sm text-muted-foreground">{scoreLabel(score)}</span>
-              </div>
-              <div className="w-full h-2 rounded-full bg-muted">
-                <div className={`h-full rounded-full transition-all ${scoreBarColor(score)}`} style={{ width: `${score * 10}%` }} />
-              </div>
-              <div className="flex gap-3 text-[10px] text-muted-foreground/60">
-                <span>8-10 TRADE</span>
-                <span>6-7 WATCH</span>
-                <span>&lt;6 AVOID</span>
-              </div>
-            </div>
+            <div className="px-4 py-3 space-y-3">
+              {/* Engine Breakdown */}
+              {signal?.scoreBreakdown ? (
+                <div className="space-y-2.5">
+                  {[
+                    { label: "Pressure", detail: pressure ? pressureLabel(pressure.signal).text : null, value: signal.scoreBreakdown.pressure, gradient: "from-blue-500 to-blue-400", delay: "animate-bar-grow-d1" },
+                    { label: "Momentum", detail: momentum ? momentumLabel(momentum.signal).text : null, value: signal.scoreBreakdown.momentum, gradient: "from-purple-500 to-violet-400", delay: "animate-bar-grow-d2" },
+                    { label: "S/R", detail: null, value: signal.scoreBreakdown.sr, gradient: "from-yellow-500 to-amber-400", delay: "animate-bar-grow-d3" },
+                    { label: "Volatility", detail: null, value: signal.scoreBreakdown.volatility, gradient: "from-orange-500 to-orange-400", delay: "animate-bar-grow-d4" },
+                  ].map(({ label, detail, value, gradient, delay }) => (
+                    <div key={label}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-muted-foreground">
+                          {label}
+                          {detail && <span className="text-foreground/50 ml-1">({detail})</span>}
+                        </span>
+                        <span className="font-mono font-semibold tabular-nums flex items-center gap-1">
+                          <span className={value >= 8 ? "text-green-400" : value < 5 ? "text-yellow-400" : "text-foreground"}>
+                            {value}/10
+                          </span>
+                          {value >= 8 && <span className="text-green-400 text-[10px]">●</span>}
+                          {value < 5 && <span className="text-yellow-400 text-[10px]">●</span>}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-white/[0.04]">
+                        <div
+                          className={`h-full rounded-full bg-gradient-to-r ${gradient} animate-bar-grow ${delay}`}
+                          style={{ width: `${value * 10}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
 
-            {/* Engine breakdown bars */}
-            {signal?.scoreBreakdown ? (
-              <div className="space-y-2.5">
-                {[
-                  { label: `Pressure${pressure ? ` (${pressureLabel(pressure.signal).text})` : ""}`, value: signal.scoreBreakdown.pressure, color: "bg-blue-500" },
-                  { label: `Momentum${momentum ? ` (${momentumLabel(momentum.signal).text})` : ""}`, value: signal.scoreBreakdown.momentum, color: "bg-purple-500" },
-                  { label: "S/R", value: signal.scoreBreakdown.sr, color: "bg-yellow-500" },
-                  { label: "Volatility", value: signal.scoreBreakdown.volatility, color: "bg-orange-500" },
-                ].map(({ label, value, color }) => (
-                  <div key={label} className="space-y-1">
-                    <div className="flex justify-between text-xs">
+                  {/* Pattern */}
+                  {pattern && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Pattern</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ring-1 ${
+                        pattern.direction === "BULLISH"
+                          ? "bg-green-500/10 text-green-400 ring-green-500/20"
+                          : "bg-red-500/10 text-red-400 ring-red-500/20"
+                      }`}>
+                        {formatPatternName(pattern.pattern)} ({pattern.direction === "BULLISH" ? "Bullish" : "Bearish"})
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Weakness */}
+                  {(() => {
+                    const weak = [
+                      { label: "Pressure", value: signal.scoreBreakdown!.pressure },
+                      { label: "Momentum", value: signal.scoreBreakdown!.momentum },
+                      { label: "S/R", value: signal.scoreBreakdown!.sr },
+                    ].filter(e => e.value < 5);
+                    if (weak.length === 0) return null;
+                    return (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-yellow-500/8 ring-1 ring-yellow-500/10 mt-1">
+                        <span className="text-yellow-400 text-xs">⚡</span>
+                        <span className="text-[11px] text-yellow-400/80">
+                          Weak {weak.map(w => w.label).join(" + ")} reduces confidence
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {[
+                    { label: "Momentum", value: momentum ? momentumLabel(momentum.signal).text : "—", color: momentum ? momentumLabel(momentum.signal).color : "" },
+                    { label: "Pressure", value: pressure ? `${pressureLabel(pressure.signal).text} (${trendIcon(pressure.trend)})` : "—", color: "" },
+                    { label: "Pattern", value: pattern ? formatPatternName(pattern.pattern) : "—", color: "" },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} className="flex justify-between text-sm">
                       <span className="text-muted-foreground">{label}</span>
-                      <span className="font-mono font-semibold tabular-nums">
-                        {value}/10
-                        <span className="ml-1 font-normal">
-                          {value >= 8 ? "✅" : value < 5 ? "⚠️" : ""}
+                      <span className={color}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Risk Distances */}
+              {srData && (srData.supportZone || srData.resistanceZone) && (
+                <div className="pt-2 border-t border-white/[0.04] space-y-2">
+                  {srData.supportZone && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground/70 flex items-center gap-1.5">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500/60" />
+                        Support
+                      </span>
+                      <span className={`font-mono tabular-nums ${
+                        srData.supportZone.distancePercent < 1
+                          ? "text-yellow-400"
+                          : srData.supportZone.distancePercent > 3
+                            ? "text-green-400"
+                            : "text-muted-foreground"
+                      }`}>
+                        {srData.supportZone.distancePercent.toFixed(2)}%
+                        <span className="ml-1 text-[10px]">
+                          {srData.supportZone.distancePercent < 1 ? "⚠️" : srData.supportZone.distancePercent > 3 ? "✅" : ""}
                         </span>
                       </span>
                     </div>
-                    <div className="w-full h-1.5 rounded-full bg-muted">
-                      <div className={`h-full rounded-full ${color}`} style={{ width: `${value * 10}%` }} />
+                  )}
+                  {srData.resistanceZone && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground/70 flex items-center gap-1.5">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500/60" />
+                        Resistance
+                      </span>
+                      <span className={`font-mono tabular-nums ${
+                        srData.resistanceZone.distancePercent < 1
+                          ? "text-red-400"
+                          : srData.resistanceZone.distancePercent > 3
+                            ? "text-green-400"
+                            : "text-muted-foreground"
+                      }`}>
+                        {srData.resistanceZone.distancePercent.toFixed(2)}%
+                        <span className="ml-1 text-[10px]">
+                          {srData.resistanceZone.distancePercent < 1 ? "⚠️" : srData.resistanceZone.distancePercent > 3 ? "✅" : ""}
+                        </span>
+                      </span>
                     </div>
-                  </div>
-                ))}
-                {/* Pattern badge (not part of score — visual bonus) */}
-                {pattern && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <span className="text-xs text-muted-foreground">Pattern:</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                      pattern.direction === "BULLISH" ? "bg-green-500/15 text-green-500" : "bg-red-500/15 text-red-500"
-                    }`}>
-                      {formatPatternName(pattern.pattern)} ({pattern.direction === "BULLISH" ? "Bullish" : "Bearish"})
-                    </span>
-                  </div>
-                )}
-                {/* Weakness summary */}
-                {(() => {
-                  const weak = [
-                    { label: "Pressure", value: signal.scoreBreakdown!.pressure },
-                    { label: "Momentum", value: signal.scoreBreakdown!.momentum },
-                    { label: "S/R", value: signal.scoreBreakdown!.sr },
-                  ].filter(e => e.value < 5);
-                  if (weak.length === 0) return null;
-                  return (
-                    <p className="text-[11px] text-yellow-600 dark:text-yellow-400 mt-2">
-                      👉 Weak {weak.map(w => w.label).join(" + ")} reduces confidence
-                    </p>
-                  );
-                })()}
-              </div>
-            ) : (
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Momentum</span>
-                  <span className={momentum ? momentumLabel(momentum.signal).color : ""}>
-                    {momentum ? momentumLabel(momentum.signal).text : "—"}
-                  </span>
+                  )}
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Pressure</span>
-                  <span>{pressure ? `${pressureLabel(pressure.signal).text} (${trendIcon(pressure.trend)})` : "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Pattern</span>
-                  <span>{pattern ? formatPatternName(pattern.pattern) : "—"}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Risk visualization */}
-            {srData && (
-              <div className="border-t border-border/50 pt-3 space-y-1.5 text-xs">
-                {srData.supportZone && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">→ Support</span>
-                    <span className={srData.supportZone.distancePercent < 1 ? "text-yellow-500" : srData.supportZone.distancePercent > 3 ? "text-green-500" : "text-muted-foreground"}>
-                      {srData.supportZone.distancePercent.toFixed(2)}%
-                      {srData.supportZone.distancePercent < 1 ? " danger zone ⚠️" : srData.supportZone.distancePercent > 3 ? " safe ✅" : " moderate"}
-                    </span>
-                  </div>
-                )}
-                {srData.resistanceZone && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">→ Resistance</span>
-                    <span className={srData.resistanceZone.distancePercent < 1 ? "text-red-500" : srData.resistanceZone.distancePercent > 3 ? "text-green-500" : "text-muted-foreground"}>
-                      {srData.resistanceZone.distancePercent.toFixed(2)}%
-                      {srData.resistanceZone.distancePercent < 1 ? " danger zone ⚠️" : srData.resistanceZone.distancePercent > 3 ? " safe ✅" : " moderate"}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -758,29 +801,29 @@ export function StockDetail({ symbol }: { symbol: string }) {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Period presets */}
+              {/* Day range selector */}
               <div className="flex gap-1">
-                {PERIOD_PRESETS.map((p) => (
+                {DAY_OPTIONS.map((opt) => (
                   <Button
-                    key={p.label}
-                    variant={activePreset === p.label ? "default" : "outline"}
+                    key={opt.label}
+                    variant={activeDayLabel === opt.label ? "default" : "outline"}
                     size="sm"
                     className="h-7 px-2.5 text-xs"
-                    onClick={() => handlePreset(p)}
+                    onClick={() => handleDaySelect(opt)}
                   >
-                    {p.label}
+                    {opt.label}
                   </Button>
                 ))}
               </div>
 
               <span className="text-muted-foreground text-xs hidden sm:block">|</span>
 
-              {/* Interval overrides */}
+              {/* Interval selector (independent) */}
               <div className="flex gap-1">
                 {INTERVAL_OPTIONS.map((iv) => (
                   <Button
                     key={iv}
-                    variant={!activePreset && interval === iv ? "default" : "outline"}
+                    variant={interval === iv ? "default" : "outline"}
                     size="sm"
                     className="h-7 px-2.5 text-xs"
                     onClick={() => handleInterval(iv)}
@@ -811,171 +854,194 @@ export function StockDetail({ symbol }: { symbol: string }) {
       {/* ── Section 4: Details Row ── */}
       <div className="grid md:grid-cols-2 gap-4">
         {/* Key Levels Card */}
-        <Card className="border border-border/20 rounded-2xl backdrop-blur-xl bg-white/[0.02]">
-          <CardContent className="p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold">Key Levels</h3>
+        <Card className="rounded-2xl backdrop-blur-xl bg-white/[0.02] border border-border/20 overflow-hidden animate-slide-in-left" style={{ animationDelay: "0.2s" }}>
+          <CardContent className="p-0">
+            <div className="px-4 py-3 bg-white/[0.02] flex items-center justify-between">
+              <h3 className="text-sm font-bold tracking-wide">Key Levels</h3>
               {signal?.srType && (
-                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ring-1 ${
                   signal.srType === "INTRADAY"
-                    ? "bg-blue-500/15 text-blue-500"
-                    : "bg-zinc-500/15 text-zinc-400"
+                    ? "bg-blue-500/10 text-blue-400 ring-blue-500/20"
+                    : "bg-zinc-700/50 text-zinc-400 ring-zinc-600/30"
                 }`}>
                   {signal.srType === "INTRADAY" ? "INTRADAY" : "DAILY"}
                 </span>
               )}
             </div>
 
-            {srData ? (
-              <>
-                {/* Support */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-500" />
-                      <span className="text-sm font-medium">Support</span>
+            <div className="px-4 py-3 space-y-3">
+              {srData ? (
+                <>
+                  {/* Support & Resistance levels */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Support */}
+                    <div className="rounded-xl bg-green-500/5 ring-1 ring-green-500/10 p-3 space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-green-400/70">Support</span>
+                      </div>
+                      <p className="text-lg font-bold font-mono tabular-nums text-green-400">
+                        {srData.support !== null ? `₹${formatPrice(srData.support)}` : "—"}
+                      </p>
+                      {srData.supportZone && (
+                        <p className="text-[10px] text-muted-foreground/60">
+                          ₹{srData.supportZone.min.toFixed(2)} – ₹{srData.supportZone.max.toFixed(2)}
+                          <span className="ml-1 text-green-400/50">({srData.supportZone.touches} touches)</span>
+                        </p>
+                      )}
                     </div>
-                    <span className="text-sm font-mono font-semibold tabular-nums text-green-600 dark:text-green-400">
-                      {srData.support !== null ? `₹${formatPrice(srData.support)}` : "—"}
-                    </span>
+
+                    {/* Resistance */}
+                    <div className="rounded-xl bg-red-500/5 ring-1 ring-red-500/10 p-3 space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-red-400/70">Resistance</span>
+                      </div>
+                      <p className="text-lg font-bold font-mono tabular-nums text-red-400">
+                        {srData.resistance !== null ? `₹${formatPrice(srData.resistance)}` : "—"}
+                      </p>
+                      {srData.resistanceZone && (
+                        <p className="text-[10px] text-muted-foreground/60">
+                          ₹{srData.resistanceZone.min.toFixed(2)} – ₹{srData.resistanceZone.max.toFixed(2)}
+                          <span className="ml-1 text-red-400/50">({srData.resistanceZone.touches} touches)</span>
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  {srData.supportZone && (
-                    <p className="text-xs text-muted-foreground pl-[18px]">
-                      ₹{srData.supportZone.min.toFixed(2)} – ₹{srData.supportZone.max.toFixed(2)} ({srData.supportZone.touches} touches)
-                    </p>
+
+                  {/* Distance indicators */}
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground/70 flex items-center gap-1.5">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500/60" />
+                        Distance to Support
+                      </span>
+                      <span className={`font-mono tabular-nums text-sm font-semibold ${
+                        srData.supportZone && srData.supportZone.distancePercent < 1 ? "text-yellow-400" : "text-muted-foreground"
+                      }`}>
+                        {srData.supportZone ? `${srData.supportZone.distancePercent.toFixed(2)}%` : "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground/70 flex items-center gap-1.5">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500/60" />
+                        Distance to Resistance
+                      </span>
+                      <span className={`font-mono tabular-nums text-sm font-semibold ${
+                        srData.resistanceZone && srData.resistanceZone.distancePercent < 1 ? "text-red-400" : "text-muted-foreground"
+                      }`}>
+                        {srData.resistanceZone ? `${srData.resistanceZone.distancePercent.toFixed(2)}%` : "—"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Day Range */}
+                  {stock && (
+                    <div className="pt-2 border-t border-white/[0.04]">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground/60 mb-2">
+                        <span className="font-semibold text-muted-foreground/80">Day Range</span>
+                        <span className="font-mono tabular-nums">₹{formatPrice(stock.low)} — ₹{formatPrice(stock.high)}</span>
+                      </div>
+                      <div className="relative h-2 rounded-full bg-white/[0.04]">
+                        <div
+                          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-red-500/80 via-yellow-500/80 to-green-500/80 animate-bar-grow animate-bar-grow-d2"
+                          style={{ width: `${Math.min(Math.max(dayRangePercent, 0), 100)}%` }}
+                        />
+                        <div
+                          className="absolute top-1/2 w-3 h-3 rounded-full bg-white shadow-lg shadow-black/30 ring-2 ring-white/20"
+                          style={{
+                            left: `${Math.min(Math.max(dayRangePercent, 0), 100)}%`,
+                            transform: "translate(-50%, -50%)",
+                          }}
+                        />
+                      </div>
+                    </div>
                   )}
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <Skeleton className="h-20 w-full rounded-xl" />
+                  <Skeleton className="h-5 w-full" />
+                  <Skeleton className="h-2 w-full" />
                 </div>
-
-                {/* Resistance */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" />
-                      <span className="text-sm font-medium">Resistance</span>
-                    </div>
-                    <span className="text-sm font-mono font-semibold tabular-nums text-red-600 dark:text-red-400">
-                      {srData.resistance !== null ? `₹${formatPrice(srData.resistance)}` : "—"}
-                    </span>
-                  </div>
-                  {srData.resistanceZone && (
-                    <p className="text-xs text-muted-foreground pl-[18px]">
-                      ₹{srData.resistanceZone.min.toFixed(2)} – ₹{srData.resistanceZone.max.toFixed(2)} ({srData.resistanceZone.touches} touches)
-                    </p>
-                  )}
-                </div>
-
-                {/* Divider + Distance stats */}
-                <div className="border-t border-border/50 pt-3 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Distance to Support</span>
-                    <span className="font-mono tabular-nums">
-                      {srData.supportZone ? `${srData.supportZone.distancePercent.toFixed(2)}%` : "—"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Distance to Resistance</span>
-                    <span className="font-mono tabular-nums">
-                      {srData.resistanceZone ? `${srData.resistanceZone.distancePercent.toFixed(2)}%` : "—"}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Day Range bar */}
-                {stock && (
-                  <div className="border-t border-border/50 pt-3">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-                      <span>Day Range</span>
-                      <span>₹{formatPrice(stock.low)} — ₹{formatPrice(stock.high)}</span>
-                    </div>
-                    <div className="relative h-2 rounded-full bg-muted">
-                      <div
-                        className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-red-500 to-green-500"
-                        style={{ width: `${Math.min(Math.max(dayRangePercent, 0), 100)}%` }}
-                      />
-                      <div
-                        className="absolute top-1/2 w-3 h-3 rounded-full bg-foreground border-2 border-background"
-                        style={{
-                          left: `${Math.min(Math.max(dayRangePercent, 0), 100)}%`,
-                          transform: "translate(-50%, -50%)",
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="space-y-3">
-                <Skeleton className="h-5 w-full" />
-                <Skeleton className="h-5 w-3/4" />
-                <Skeleton className="h-5 w-full" />
-                <Skeleton className="h-5 w-3/4" />
-                <Skeleton className="h-2 w-full" />
-              </div>
-            )}
+              )}
+            </div>
           </CardContent>
         </Card>
 
         {/* Volume & Market Data Card */}
-        <Card className="border border-border/20 rounded-2xl backdrop-blur-xl bg-white/[0.02]">
-          <CardContent className="p-5 space-y-4">
-            <h3 className="text-sm font-semibold">Volume & Market Data</h3>
+        <Card className="rounded-2xl backdrop-blur-xl bg-white/[0.02] border border-border/20 overflow-hidden animate-slide-in-right" style={{ animationDelay: "0.3s" }}>
+          <CardContent className="p-0">
+            <div className="px-4 py-3 bg-white/[0.02]">
+              <h3 className="text-sm font-bold tracking-wide">Volume & Market Data</h3>
+            </div>
 
-            {stock ? (
-              <>
-                {/* OHLCV grid */}
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                  <KVRow label="Open" value={`₹${formatPrice(stock.open)}`} />
-                  <KVRow label="High" value={`₹${formatPrice(stock.high)}`} />
-                  <KVRow label="Low" value={`₹${formatPrice(stock.low)}`} />
-                  <KVRow label="Close" value={`₹${formatPrice(stock.close)}`} />
-                  <KVRow label="Volume" value={formatVolume(stock.volume)} />
-                  <KVRow
-                    label="Change"
-                    value={`${changeSign}${change.toFixed(2)}%`}
-                    valueColor={changeColor}
-                  />
-                </div>
+            <div className="px-4 py-3 space-y-3">
+              {stock ? (
+                <>
+                  {/* OHLCV Grid */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { label: "Open", value: `₹${formatPrice(stock.open)}` },
+                      { label: "High", value: `₹${formatPrice(stock.high)}` },
+                      { label: "Low", value: `₹${formatPrice(stock.low)}` },
+                      { label: "Close", value: `₹${formatPrice(stock.close)}` },
+                      { label: "Volume", value: formatVolume(stock.volume) },
+                      { label: "Change", value: `${changeSign}${change.toFixed(2)}%`, color: changeColor },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} className="flex items-center justify-between rounded-lg bg-white/[0.02] px-3 py-2 ring-1 ring-white/[0.04]">
+                        <span className="text-xs text-muted-foreground/60">{label}</span>
+                        <span className={`text-sm font-mono font-semibold tabular-nums ${color ?? "text-foreground"}`}>{value}</span>
+                      </div>
+                    ))}
+                  </div>
 
-                {/* Volume Analysis */}
-                {pressure && (
-                  <div className="border-t border-border/50 pt-3 space-y-3">
-                    <p className="text-xs font-semibold uppercase text-muted-foreground">Volume Analysis</p>
+                  {/* Volume Analysis */}
+                  {pressure && (
+                    <div className="pt-2 border-t border-white/[0.04] space-y-2.5">
+                      <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/50">Volume Analysis</p>
 
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Pressure</span>
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${pressureLabel(pressure.signal).color}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground/70">Pressure</span>
+                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ring-1 ${
+                          pressureLabel(pressure.signal).color.includes("green")
+                            ? "ring-green-500/20"
+                            : pressureLabel(pressure.signal).color.includes("red")
+                              ? "ring-red-500/20"
+                              : "ring-zinc-600/30"
+                        } ${pressureLabel(pressure.signal).color}`}>
                           {pressureLabel(pressure.signal).text}
                         </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Trend</span>
-                        <span>{trendIcon(pressure.trend)}</span>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground/70">Trend</span>
+                        <span className="text-sm">{trendIcon(pressure.trend)}</span>
                       </div>
-                      <div className="space-y-1">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Confidence</span>
-                          <span className="font-mono tabular-nums">{Math.round(pressure.confidence * 100)}%</span>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs text-muted-foreground/70">Confidence</span>
+                          <span className="text-sm font-mono font-semibold tabular-nums">{Math.round(pressure.confidence * 100)}%</span>
                         </div>
-                        <div className="w-full h-2 rounded-full bg-muted">
+                        <div className="w-full h-1.5 rounded-full bg-white/[0.04]">
                           <div
-                            className="h-full rounded-full bg-blue-500 transition-all"
+                            className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400 animate-bar-grow animate-bar-grow-d3"
                             style={{ width: `${pressure.confidence * 100}%` }}
                           />
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="space-y-3">
-                <Skeleton className="h-5 w-full" />
-                <Skeleton className="h-5 w-3/4" />
-                <Skeleton className="h-5 w-full" />
-                <Skeleton className="h-5 w-3/4" />
-              </div>
-            )}
+                  )}
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-full rounded-lg" />
+                  <Skeleton className="h-10 w-full rounded-lg" />
+                  <Skeleton className="h-10 w-full rounded-lg" />
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1232,143 +1298,175 @@ function TradeDecisionBox({
         ? "Conditions aligned — trade setup ready"
         : "Setup developing — monitor for entry";
 
+  const accentColor = decision === "TRADE" ? "border-l-green-500" :
+    decision === "WATCH" ? "border-l-yellow-500" :
+    decision === "WAIT" ? "border-l-orange-400" :
+    "border-l-zinc-600";
+
+  const decisionBg = decision === "TRADE" ? "bg-green-500/8" :
+    decision === "WATCH" ? "bg-yellow-500/8" :
+    decision === "WAIT" ? "bg-orange-500/8" :
+    "bg-zinc-800/50";
+
   return (
-    <Card className={`border ${decisionColor} rounded-2xl backdrop-blur-xl bg-white/[0.02]`}>
-      <CardContent className="p-4 space-y-2">
-        {/* 1. Header + Badge */}
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold uppercase tracking-wide">
-            {decisionIcon} {decision === "WAIT" ? "WAIT" : decision === "TRADE" ? "TRADE NOW" : decision}
-          </h3>
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-            decision === "TRADE" ? "bg-green-500/15 text-green-500" :
-            decision === "WATCH" || decision === "WAIT" ? "bg-yellow-500/15 text-yellow-500" :
-            "bg-muted text-muted-foreground"
+    <Card className={`rounded-2xl backdrop-blur-xl bg-white/[0.02] border border-border/20 border-l-[3px] ${accentColor} overflow-hidden animate-slide-in-left`}>
+      <CardContent className="p-0">
+        {/* Decision Header Strip */}
+        <div className={`px-4 py-3 ${decisionBg} flex items-center justify-between animate-stagger-1`}>
+          <div className="flex items-center gap-2">
+            <span className="text-lg">{decisionIcon}</span>
+            <div>
+              <h3 className={`text-sm font-extrabold uppercase tracking-wider ${
+                decision === "TRADE" ? "text-green-400" :
+                decision === "WATCH" ? "text-yellow-400" :
+                decision === "WAIT" ? "text-orange-400" :
+                "text-zinc-400"
+              }`}>
+                {decision === "WAIT" ? "WAIT" : decision === "TRADE" ? "TRADE NOW" : decision}
+              </h3>
+              <p className="text-[11px] text-muted-foreground leading-tight">{summary}</p>
+            </div>
+          </div>
+          <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${
+            decision === "TRADE" ? "bg-green-500/15 text-green-400 ring-1 ring-green-500/20" :
+            decision === "WATCH" || decision === "WAIT" ? "bg-yellow-500/15 text-yellow-400 ring-1 ring-yellow-500/20" :
+            "bg-zinc-700/50 text-zinc-400 ring-1 ring-zinc-600/30"
           }`}>
             {marketState}
           </span>
         </div>
 
-        {/* 2. One-line summary (SIGNATURE UX) */}
-        <p className="text-xs text-muted-foreground">{summary}</p>
+        <div className="px-4 py-3 space-y-3">
+          {/* Market Phase Warning */}
+          {phaseWarning && (marketPhase === "OPENING" || marketPhase === "STABILIZING") && (
+            <div className={`text-xs font-medium px-3 py-2 rounded-xl flex items-center gap-2 animate-stagger-2 ${
+              marketPhase === "OPENING"
+                ? "bg-yellow-500/10 text-yellow-400 ring-1 ring-yellow-500/15"
+                : "bg-orange-500/10 text-orange-400 ring-1 ring-orange-500/15"
+            }`}>
+              <span className="text-base">⏳</span> {phaseWarning}
+            </div>
+          )}
 
-        {/* 2.5. Market Phase Warning Banner */}
-        {phaseWarning && (marketPhase === "OPENING" || marketPhase === "STABILIZING") && (
-          <div className={`text-xs font-medium px-3 py-1.5 rounded-lg ${
-            marketPhase === "OPENING"
-              ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20"
-              : "bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/20"
-          }`}>
-            {marketPhase === "OPENING" ? "⏳" : "⏳"} {phaseWarning}
-          </div>
-        )}
+          {/* S/R Location Indicator */}
+          {nearResistance && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/8 ring-1 ring-red-500/15 animate-stagger-2">
+              <span className="text-base">⚠️</span>
+              <div>
+                <span className="text-sm font-bold text-red-400">NEAR RESISTANCE</span>
+                {srLevels?.resistanceZone && (
+                  <span className="text-xs text-red-400/60 ml-2">{srLevels.resistanceZone.distancePercent.toFixed(1)}% away</span>
+                )}
+              </div>
+            </div>
+          )}
+          {nearSupport && !nearResistance && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-500/8 ring-1 ring-green-500/15 animate-stagger-2">
+              <span className="text-base">🟢</span>
+              <div>
+                <span className="text-sm font-bold text-green-400">NEAR SUPPORT</span>
+                {srLevels?.supportZone && (
+                  <span className="text-xs text-green-400/60 ml-2">{srLevels.supportZone.distancePercent.toFixed(1)}% away</span>
+                )}
+              </div>
+            </div>
+          )}
 
-        {/* 3. Location (DOMINANT) — only the strongest signal */}
-        {nearResistance && (
-          <p className="text-base font-black text-red-500">
-            ⚠️ NEAR RESISTANCE
-            {srLevels?.resistanceZone && (
-              <span className="text-xs font-normal text-muted-foreground ml-2">{srLevels.resistanceZone.distancePercent.toFixed(1)}% away</span>
-            )}
-          </p>
-        )}
-        {nearSupport && !nearResistance && (
-          <p className="text-base font-black text-green-500">
-            🟢 NEAR SUPPORT
-            {srLevels?.supportZone && (
-              <span className="text-xs font-normal text-muted-foreground ml-2">{srLevels.supportZone.distancePercent.toFixed(1)}% away</span>
-            )}
-          </p>
-        )}
+          {/* No-entry Warning */}
+          {(decision === "WAIT" || decision === "AVOID") && (
+            <p className="text-xs font-semibold text-yellow-400/80 flex items-center gap-1.5">
+              <span>🚫</span> No safe entry at current price
+            </p>
+          )}
 
-        {/* 4. No-entry (only for WAIT — single clean line) */}
-        {(decision === "WAIT" || decision === "AVOID") && (
-          <p className="text-xs font-semibold text-yellow-600 dark:text-yellow-400">🚫 No safe entry at current price</p>
-        )}
+          {/* Trade Plan */}
+          {(breakoutLevel || rejectionLevel || bounceLevel || breakdownLevel) && (
+            <div className="space-y-2 bg-white/[0.02] rounded-xl p-3 ring-1 ring-white/[0.04] animate-stagger-3">
+              {nearResistance && (
+                <>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-500/70 mb-0.5">Primary</p>
+                    <p className="text-sm text-foreground font-medium">SELL below <span className="font-mono text-red-400">{rejectionLevel}</span> <span className="text-muted-foreground">→ rejection</span></p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-0.5">Alternative</p>
+                    <p className="text-sm text-muted-foreground">BUY above <span className="font-mono text-green-400/70">{breakoutLevel}</span> <span className="text-muted-foreground/60">→ breakout</span></p>
+                  </div>
+                </>
+              )}
+              {nearSupport && !nearResistance && (
+                <>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-500/70 mb-0.5">Primary</p>
+                    <p className="text-sm text-foreground font-medium">BUY near <span className="font-mono text-green-400">{bounceLevel}</span> <span className="text-muted-foreground">→ bounce reversal</span></p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-0.5">Alternative</p>
+                    <p className="text-sm text-muted-foreground">SELL below <span className="font-mono text-red-400/70">{breakdownLevel}</span> <span className="text-muted-foreground/60">→ breakdown</span></p>
+                  </div>
+                </>
+              )}
+              {!nearResistance && !nearSupport && (
+                <>
+                  {breakoutLevel && <p className="text-sm text-foreground">BUY above <span className="font-mono text-green-400">{breakoutLevel}</span></p>}
+                  {bounceLevel && <p className="text-sm text-foreground">SELL below <span className="font-mono text-red-400">{bounceLevel}</span></p>}
+                </>
+              )}
+            </div>
+          )}
 
-        {/* 5. Plan — PRIMARY + ALTERNATIVE (improved wording) */}
-        {(breakoutLevel || rejectionLevel || bounceLevel || breakdownLevel) && (
-          <div className="space-y-1 text-sm border-t border-border/30 pt-2">
-            {nearResistance && (
-              <>
-                <p className="text-[10px] font-bold uppercase text-muted-foreground">Primary</p>
-                <p className="text-foreground font-medium">✔ SELL below <span className="font-mono text-red-600 dark:text-red-400">{rejectionLevel}</span> → rejection breakdown</p>
-                <p className="text-[10px] font-bold uppercase text-muted-foreground mt-1">Alternative</p>
-                <p className="text-muted-foreground">✔ BUY above <span className="font-mono">{breakoutLevel}</span> → breakout move</p>
-              </>
-            )}
-            {nearSupport && !nearResistance && (
-              <>
-                <p className="text-[10px] font-bold uppercase text-muted-foreground">Primary</p>
-                <p className="text-foreground font-medium">✔ BUY near <span className="font-mono text-green-600 dark:text-green-400">{bounceLevel}</span> → bounce reversal</p>
-                <p className="text-[10px] font-bold uppercase text-muted-foreground mt-1">Alternative</p>
-                <p className="text-muted-foreground">✔ SELL below <span className="font-mono">{breakdownLevel}</span> → support breakdown</p>
-              </>
-            )}
-            {!nearResistance && !nearSupport && (
-              <>
-                {breakoutLevel && <p className="text-foreground">✔ BUY above <span className="font-mono text-green-600 dark:text-green-400">{breakoutLevel}</span></p>}
-                {bounceLevel && <p className="text-foreground">✔ SELL below <span className="font-mono text-red-600 dark:text-red-400">{bounceLevel}</span></p>}
-              </>
-            )}
-          </div>
-        )}
+          {/* Why This Matters */}
+          {signal && signal.reasons.length > 0 && (
+            <div className="space-y-1 animate-stagger-4">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/50">Why This Matters</p>
+              {signal.reasons.slice(0, 2).map((r, i) => (
+                <p key={i} className="text-xs text-muted-foreground leading-relaxed">{humanizeDetailReason(r)}</p>
+              ))}
+            </div>
+          )}
 
-        {/* 6. Why This Matters (from signal reasons) */}
-        {signal && signal.reasons.length > 0 && (
-          <div className="border-t border-border/30 pt-2">
-            <p className="text-[10px] font-bold uppercase text-muted-foreground mb-1">Why This Matters</p>
-            {signal.reasons.slice(0, 2).map((r, i) => (
-              <p key={i} className="text-xs text-muted-foreground">{humanizeDetailReason(r)}</p>
-            ))}
-          </div>
-        )}
+          {/* What to Watch */}
+          {srLevels && (srLevels.summary.hasNearbyResistance || srLevels.summary.hasNearbySupport) && (
+            <div className="space-y-0.5">
+              {srLevels.resistance != null && srLevels.summary.hasNearbyResistance && (
+                <p className="text-xs text-muted-foreground">• Break above <span className="font-mono text-foreground/80">₹{srLevels.resistance.toFixed(2)}</span> → Breakout</p>
+              )}
+              {srLevels.support != null && srLevels.summary.hasNearbySupport && (
+                <p className="text-xs text-muted-foreground">• Hold above <span className="font-mono text-foreground/80">₹{srLevels.support.toFixed(2)}</span> → Bounce</p>
+              )}
+            </div>
+          )}
 
-        {/* 6. What to Watch */}
-        {srLevels && (srLevels.summary.hasNearbyResistance || srLevels.summary.hasNearbySupport) && (
-          <div className="text-xs text-muted-foreground">
-            {srLevels.resistance != null && srLevels.summary.hasNearbyResistance && (
-              <p>• Break above ₹{srLevels.resistance.toFixed(2)} → Breakout</p>
-            )}
-            {srLevels.support != null && srLevels.summary.hasNearbySupport && (
-              <p>• Hold above ₹{srLevels.support.toFixed(2)} → Bounce</p>
-            )}
-          </div>
-        )}
+          {/* Zone Ranges */}
+          {(resistanceZone || supportZone) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              {resistanceZone && (
+                <span className="text-muted-foreground/70">Resistance: <span className="text-red-400/80 font-mono text-[11px]">{resistanceZone}</span></span>
+              )}
+              {supportZone && (
+                <span className="text-muted-foreground/70">Support: <span className="text-green-400/80 font-mono text-[11px]">{supportZone}</span></span>
+              )}
+            </div>
+          )}
 
-        {/* 7. Zones */}
-        {(resistanceZone || supportZone) && (
-          <div className="flex gap-4 text-xs border-t border-border/30 pt-2">
-            {resistanceZone && (
-              <span className="text-muted-foreground">📍 Resistance: <span className="text-red-500 font-mono">{resistanceZone}</span></span>
-            )}
-            {supportZone && (
-              <span className="text-muted-foreground">📍 Support: <span className="text-green-500 font-mono">{supportZone}</span></span>
-            )}
-          </div>
-        )}
-
-        {/* 6. Footer — Score with decision link + timing */}
-        <div className="space-y-1.5 border-t border-border/30 pt-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">
-              <span className="font-bold text-foreground">{score}/10</span>
-              {" → "}
-              <span className={
-                decision === "TRADE" ? "text-green-500 font-semibold" :
-                decision === "WAIT" || decision === "WATCH" ? "text-yellow-500 font-semibold" :
-                "text-zinc-400"
-              }>
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-2 border-t border-white/[0.04]">
+            <div className="flex items-center gap-2">
+              <span className={`text-lg font-bold tabular-nums ${
+                score >= 8 ? "text-green-400" : score >= 6 ? "text-yellow-400" : "text-zinc-400"
+              }`}>{score}/10</span>
+              <span className={`text-xs font-medium ${
+                decision === "TRADE" ? "text-green-400" :
+                decision === "WAIT" || decision === "WATCH" ? "text-yellow-400" :
+                "text-zinc-500"
+              }`}>
                 {decision === "TRADE" ? "Enter now"
-                  : decision === "WAIT" ? "Watch only (no entry)"
-                  : decision === "WATCH" ? "Watch only (no entry)"
-                  : "Skip (low confidence)"}
+                  : decision === "WAIT" || decision === "WATCH" ? "Watch only"
+                  : "Skip"}
               </span>
-            </span>
+            </div>
+            <span className="text-[10px] text-muted-foreground/40">Re-evaluate in 5–10 min</span>
           </div>
-          <p className="text-[10px] text-muted-foreground/60">
-            ⏱ Re-evaluate in 5–10 min
-          </p>
         </div>
       </CardContent>
     </Card>

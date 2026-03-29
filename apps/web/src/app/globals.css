@@ -159,6 +159,63 @@ tr:not([data-flash]) {
   animation: fade-in-up 0.3s ease-out both;
 }
 
+/* Card slide-in animations for stock detail */
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-left {
+  animation: slide-in-left 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+/* Score ring fill animation */
+@keyframes ring-fill {
+  from { stroke-dasharray: 0 176; }
+}
+.animate-ring-fill {
+  animation: ring-fill 1s cubic-bezier(0.16, 1, 0.3, 1) 0.4s both;
+}
+
+/* Score bar grow animation */
+@keyframes bar-grow {
+  from { width: 0%; }
+}
+.animate-bar-grow {
+  animation: bar-grow 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-bar-grow-d1 { animation-delay: 0.5s; }
+.animate-bar-grow-d2 { animation-delay: 0.6s; }
+.animate-bar-grow-d3 { animation-delay: 0.7s; }
+.animate-bar-grow-d4 { animation-delay: 0.8s; }
+
+/* Score number count-up fade */
+@keyframes score-pop {
+  0% { opacity: 0; transform: scale(0.5); }
+  60% { transform: scale(1.1); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.animate-score-pop {
+  animation: score-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both;
+}
+
+/* Stagger fade-in for decision card sections */
+@keyframes fade-up-stagger {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-stagger-1 { animation: fade-up-stagger 0.4s ease-out 0.2s both; }
+.animate-stagger-2 { animation: fade-up-stagger 0.4s ease-out 0.3s both; }
+.animate-stagger-3 { animation: fade-up-stagger 0.4s ease-out 0.4s both; }
+.animate-stagger-4 { animation: fade-up-stagger 0.4s ease-out 0.5s both; }
+.animate-stagger-5 { animation: fade-up-stagger 0.4s ease-out 0.6s both; }
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
