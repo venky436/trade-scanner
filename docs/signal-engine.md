@@ -117,13 +117,17 @@ Price approaching S/R → WAIT (always)
   ├─ At Resistance:
   │    ├─ Price crosses ABOVE resistance + 0.2% + BUY pressure + UP momentum
   │    │    + INCREASING acceleration + quality > 0.5 → CONFIRMED BUY BREAKOUT
-  │    ├─ Price falls + SELL pressure + weakening momentum → CONFIRMED SELL REJECTION
+  │    ├─ 6-gate confirmation: candle closed below resistance + rejection structure
+  │    │    + bearish candle flip + DECREASING accel + SELL pressure (conf≥50%)
+  │    │    + NOT sustained uptrend → CONFIRMED SELL REJECTION
   │    └─ Neither → WAIT ("waiting for breakout or rejection")
   │
   └─ At Support:
        ├─ Price drops BELOW support - 0.2% + STRONG_SELL pressure + STRONG_DOWN momentum
        │    + DECREASING acceleration + |quality| > 0.5 → CONFIRMED SELL BREAKDOWN
-       ├─ Rejection candle at support + hold candle + UP momentum → CONFIRMED BUY BOUNCE
+       ├─ 6-gate confirmation: candle closed above support + bounce structure
+       │    + bullish candle flip + INCREASING accel + BUY pressure (conf≥50%)
+       │    + NOT sustained downtrend → CONFIRMED BUY BOUNCE
        └─ Neither → WAIT ("waiting for bounce or breakdown")
 ```
 
@@ -140,29 +144,61 @@ The 0.2% buffer prevents false triggers from minor wick touches. Price must deci
 
 #### Rule 2: REJECTION (SELL) — Confirmed
 
-All conditions must be true:
-- Price is **below** resistance (falling back)
-- Pressure is `SELL` or `STRONG_SELL`
-- Momentum is `DOWN`/`STRONG_DOWN` **OR** momentum is `UP`/`STRONG_UP` with `DECREASING` acceleration (weakening)
+Requires **6 confirmation gates** (all must pass). This is a candle-confirmed reversal — not just "price near resistance with sell pressure."
 
-Catches both classic rejections (momentum already down) and early rejections (momentum fading at resistance).
+**Gate 1 — Candle closes below resistance:**
+- Last completed candle's close < resistance level
+
+**Gate 2 — Rejection candle structure:**
+- Upper wick > 70% of candle body (price probed resistance but was pushed down; slightly relaxed from 100% to capture more valid setups)
+- Close in lower 40% of candle range (sellers dominated)
+
+**Gate 3 — Momentum reversal (strict):**
+- Previous candle MUST be bullish (close > open)
+- Current candle MUST be bearish (close < open)
+- This requires an actual candle color flip — "slowing but still bullish" is NOT enough
+
+**Gate 4 — Acceleration filter:**
+- `accelerationRaw < -0.001` (momentum genuinely decelerating, not flat)
+
+**Gate 5 — Participation filter:**
+- Pressure is `SELL` or `STRONG_SELL`
+- `pressure.confidence >= 0.5` (enough volume participation to trust the signal)
+
+**Gate 6 — Micro trend filter:**
+- If last 3 candles are ALL bullish (sustained uptrend) → BLOCK the signal
+- Prevents selling into a strong uptrend that briefly touches resistance
+
+This replaced the old logic (price < resistance + sell pressure + down/weakening momentum) which had ~5% accuracy due to triggering on any brief weakness near resistance.
 
 #### Rule 3: BOUNCE (BUY) — Confirmed
 
-Uses candle-based rejection + hold pattern (requires `recentCandles` with at least 2 candles):
+Requires **6 confirmation gates** (all must pass). This is a candle-confirmed reversal — not just "price near support with buy pressure."
 
-**Step 1 — Rejection candle at support:**
-- Previous candle's low touched or pierced support (`low <= supportLevel`)
-- Previous candle is bullish (`close > open`)
-- Close is in the upper 60% of the candle range (strong rejection wick)
+**Gate 1 — Candle closes above support:**
+- Last completed candle's close > support level
 
-**Step 2 — Hold confirmation:**
-- Most recent candle's low stays above support (`low > supportLevel`)
+**Gate 2 — Bounce candle structure:**
+- Lower wick > 70% of candle body (price probed support but was pushed up; slightly relaxed from 100% to capture more valid setups)
+- Close in upper 40% of candle range (buyers dominated)
 
-**Step 3 — Momentum confirmation:**
-- Momentum is `UP` or `STRONG_UP`
+**Gate 3 — Momentum shift (strict):**
+- Previous candle MUST be bearish (close < open)
+- Current candle MUST be bullish (close > open)
+- This requires an actual candle color flip — "slowing but still bearish" is NOT enough
 
-This replaces the old logic (price above support + buy pressure + up momentum) which had 0% accuracy. The new approach requires actual candle evidence of a support rejection and hold, preventing falling knife entries.
+**Gate 4 — Acceleration filter:**
+- `accelerationRaw > 0.001` (momentum genuinely accelerating upward)
+
+**Gate 5 — Participation filter:**
+- Pressure is `BUY` or `STRONG_BUY`
+- `pressure.confidence >= 0.5` (enough volume participation to trust the signal)
+
+**Gate 6 — Micro trend filter:**
+- If last 3 candles are ALL bearish (sustained downtrend) → BLOCK the signal
+- Prevents buying into a falling knife that briefly touches support
+
+This replaced the old bounce logic (rejection candle + hold + UP momentum) which triggered too early without enough confirmation.
 
 #### Rule 4: BREAKDOWN (SELL) — Confirmed
 
@@ -299,14 +335,14 @@ Confidence affects the badge appearance:
 
 | Type | What's Happening | Confidence Meaning |
 |------|-----------------|-------------------|
-| **BOUNCE** | Rejection candle at support (wick touched support, closed bullish near high) + next candle holds above support + UP momentum. Candle-confirmed support hold. | HIGH = confirming pattern (e.g., HAMMER), MEDIUM = no pattern, LOW = conflicting pattern |
+| **BOUNCE** | 6-gate confirmed reversal at support: candle closed above support with bounce structure (lower wick > 70% body, close in upper 40%), previous candle bearish → current candle bullish (strict flip), acceleration increasing, BUY pressure with ≥50% confidence, NOT in sustained downtrend. | HIGH = confirming pattern (e.g., HAMMER), MEDIUM = no pattern, LOW = conflicting pattern |
 | **BREAKOUT** | Stock has crossed above resistance + 0.2% buffer with BUY/STRONG_BUY pressure, UP/STRONG_UP momentum, INCREASING acceleration, and quality > 0.5. All engines aligned for a strong resistance break. | HIGH = pattern confirms, MEDIUM = no pattern |
 
 ### SELL Signals
 
 | Type | What's Happening | Confidence Meaning |
 |------|-----------------|-------------------|
-| **REJECTION** | Stock is near resistance with sell-side pressure and downward momentum. Classic resistance rejection. | HIGH = confirming pattern (e.g., SHOOTING_STAR), MEDIUM = no pattern, LOW = conflicting pattern |
+| **REJECTION** | 6-gate confirmed reversal at resistance: candle closed below resistance with rejection structure (upper wick > 70% body, close in lower 40%), previous candle bullish → current candle bearish (strict flip), acceleration decreasing, SELL pressure with ≥50% confidence, NOT in sustained uptrend. | HIGH = confirming pattern (e.g., SHOOTING_STAR), MEDIUM = no pattern, LOW = conflicting pattern |
 | **BREAKDOWN** | Stock has crossed below support - 0.2% buffer with STRONG_SELL pressure, STRONG_DOWN momentum, DECREASING acceleration (selling strengthening), and |quality| > 0.5. All engines aligned for a strong support break. | HIGH = pattern confirms, MEDIUM = no pattern but all other conditions max-strength |
 
 ### WAIT (Not Displayed)
@@ -347,7 +383,11 @@ In practice, the earliest a signal can fire is after the pressure engine warms u
 | Strict priority order | BREAKOUT/BREAKDOWN checked first because they require the strongest alignment |
 | Breakout requires INCREASING acceleration + quality > 0.5 | Reduces fake breakouts — price crossing resistance while momentum fades is likely a false break |
 | Breakdown requires DECREASING acceleration + |quality| > 0.5 | Mirrors breakout filter for sell-side — strengthening downtrend produces DECREASING acceleration; filters weak breakdowns |
-| Acceleration/quality NOT applied to REJECTION/BOUNCE | These are reversal signals relying on weakening/rejection logic, not trend continuation — different mechanics |
+| REJECTION/BOUNCE use 6-gate candle confirmation | Replaced weak conditions (price + pressure + momentum direction) with strict candle-confirmed reversal: structure + color flip + acceleration + participation + trend filter. Reduced rejection signals from ~44 (5% accuracy) to only confirmed reversals |
+| Strict candle flip required for reversal signals | "Slowing but still bullish" is NOT a reversal — require actual bearish candle for REJECTION, actual bullish candle for BOUNCE. Prevents premature signals |
+| Wick threshold at 70% of body (not 100%) | Slightly relaxed to capture valid setups where wick is prominent but not extreme |
+| Micro trend filter blocks reversal into strong trends | 3 consecutive same-direction candles = sustained trend → block the reversal signal. Prevents selling into uptrends / buying into downtrends |
+| Pressure confidence ≥ 50% for reversals | Volume participation proxy — ensures enough market activity to trust the reversal signal |
 | WAIT signals filtered from payload | Most stocks are WAIT; sending them wastes bandwidth |
 | Pattern-based confidence | Candlestick patterns are independent confirmation; their presence/absence modulates conviction |
 | Reasons array | Makes the engine's logic transparent; useful for UI display and debugging |

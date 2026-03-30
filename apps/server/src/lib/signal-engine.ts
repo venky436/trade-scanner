@@ -79,26 +79,60 @@ export function getSignal(input: SignalInput): SignalResult {
       };
     }
 
-    // CONFIRMED REJECTION: price moving DOWN from resistance + sell pressure
-    if (
-      price < resistanceLevel &&
-      isSellPressure &&
-      (isDownMomentum || isMomentumWeakening)
-    ) {
-      reasons.push(`Rejection confirmed — price ₹${price.toFixed(2)} falling from resistance ₹${resistanceLevel.toFixed(2)}`);
-      reasons.push(`${pressure.signal} pressure`);
-      if (isDownMomentum) {
-        reasons.push(`${momentum!.signal} momentum`);
-      } else {
-        reasons.push(`Momentum weakening (${momentum!.signal} but decelerating)`);
+    // CONFIRMED REJECTION: candle-confirmed reversal at resistance
+    const rejCandles = input.recentCandles ?? [];
+    if (rejCandles.length >= 2 && momentum && pressure.confidence >= 0.5) {
+      const lastCandle = rejCandles[rejCandles.length - 1];
+      const prevCandle = rejCandles[rejCandles.length - 2];
+      const candleBody = Math.abs(lastCandle.close - lastCandle.open);
+      const candleRange = lastCandle.high - lastCandle.low;
+      const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
+
+      // 1. Candle must close below resistance
+      const closedBelow = lastCandle.close < resistanceLevel;
+
+      // 2. Rejection structure: upper wick present + close in lower 40% of range
+      const hasRejectionStructure = candleRange > 0
+        && upperWick > candleBody * 0.7
+        && (lastCandle.close - lastCandle.low) / candleRange < 0.4;
+
+      // 3. Momentum reversal: previous candle bullish, current candle MUST be bearish (strict)
+      const prevBullish = prevCandle.close > prevCandle.open;
+      const currBearish = lastCandle.close < lastCandle.open;
+      const momentumReversing = prevBullish && currBearish;
+
+      // 4. Acceleration filter: must be decelerating
+      const isDecelerating = momentum.accelerationRaw < -0.001;
+
+      // 5. Micro trend filter: block if last 3 candles show sustained uptrend
+      let sustainedUptrend = false;
+      if (rejCandles.length >= 3) {
+        const c3 = rejCandles[rejCandles.length - 3];
+        const c2 = rejCandles[rejCandles.length - 2];
+        const c1 = rejCandles[rejCandles.length - 1];
+        sustainedUptrend = c3.close > c3.open && c2.close > c2.open && c1.close > c1.open;
       }
-      if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
-      return {
-        action: "SELL",
-        type: "REJECTION",
-        confidence: patternConfidence("SELL", pattern),
-        reasons,
-      };
+
+      if (
+        closedBelow &&
+        hasRejectionStructure &&
+        momentumReversing &&
+        isDecelerating &&
+        isSellPressure &&
+        !sustainedUptrend
+      ) {
+        reasons.push(`Rejection confirmed — candle closed ₹${lastCandle.close.toFixed(2)} below resistance ₹${resistanceLevel.toFixed(2)}`);
+        reasons.push(`Rejection structure (upper wick > body, close in lower 40%)`);
+        reasons.push(`${pressure.signal} pressure (confidence: ${(pressure.confidence * 100).toFixed(0)}%)`);
+        reasons.push(`${momentum.signal} momentum (${momentum.acceleration}, accel: ${momentum.accelerationRaw.toFixed(4)})`);
+        if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
+        return {
+          action: "SELL",
+          type: "REJECTION",
+          confidence: patternConfidence("SELL", pattern),
+          reasons,
+        };
+      }
     }
 
     // NOT CONFIRMED — WAIT at resistance
@@ -135,24 +169,52 @@ export function getSignal(input: SignalInput): SignalResult {
       };
     }
 
-    // CONFIRMED BOUNCE: rejection candle at support + hold + momentum
-    const recentCandles = input.recentCandles ?? [];
-    if (recentCandles.length >= 2) {
-      const prevCandle = recentCandles[recentCandles.length - 2]; // rejection candle
-      const lastCandle = recentCandles[recentCandles.length - 1]; // confirmation candle
+    // CONFIRMED BOUNCE: candle-confirmed reversal at support
+    const bounceCandles = input.recentCandles ?? [];
+    if (bounceCandles.length >= 2 && momentum && pressure.confidence >= 0.5) {
+      const lastCandle = bounceCandles[bounceCandles.length - 1];
+      const prevCandle = bounceCandles[bounceCandles.length - 2];
+      const candleBody = Math.abs(lastCandle.close - lastCandle.open);
+      const candleRange = lastCandle.high - lastCandle.low;
+      const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
 
-      const candleRange = prevCandle.high - prevCandle.low;
-      const rejectionAtSupport =
-        prevCandle.low <= supportLevel &&          // wick touched/pierced support
-        prevCandle.close > prevCandle.open &&       // bullish candle
-        candleRange > 0 &&
-        (prevCandle.close - prevCandle.low) / candleRange > 0.6; // close near high (strong rejection)
+      // 1. Candle must close above support
+      const closedAbove = lastCandle.close > supportLevel;
 
-      const holdConfirmed = lastCandle.low > supportLevel; // next candle holds above support
+      // 2. Bounce structure: lower wick present + close in upper 40% of range
+      const hasBounceStructure = candleRange > 0
+        && lowerWick > candleBody * 0.7
+        && (lastCandle.high - lastCandle.close) / candleRange < 0.4;
 
-      if (rejectionAtSupport && holdConfirmed && isUpMomentum) {
-        reasons.push(`Bounce confirmed — rejection candle at support ₹${supportLevel.toFixed(2)}, hold confirmed`);
-        reasons.push(`${momentum!.signal} momentum`);
+      // 3. Momentum shift: previous candle bearish, current candle MUST be bullish (strict)
+      const prevBearish = prevCandle.close < prevCandle.open;
+      const currBullish = lastCandle.close > lastCandle.open;
+      const momentumShifting = prevBearish && currBullish;
+
+      // 4. Acceleration filter: must be accelerating upward
+      const isAcceleratingUp = momentum.accelerationRaw > 0.001;
+
+      // 5. Micro trend filter: block if last 3 candles show sustained downtrend
+      let sustainedDowntrend = false;
+      if (bounceCandles.length >= 3) {
+        const c3 = bounceCandles[bounceCandles.length - 3];
+        const c2 = bounceCandles[bounceCandles.length - 2];
+        const c1 = bounceCandles[bounceCandles.length - 1];
+        sustainedDowntrend = c3.close < c3.open && c2.close < c2.open && c1.close < c1.open;
+      }
+
+      if (
+        closedAbove &&
+        hasBounceStructure &&
+        momentumShifting &&
+        isAcceleratingUp &&
+        isBuyPressure &&
+        !sustainedDowntrend
+      ) {
+        reasons.push(`Bounce confirmed — candle closed ₹${lastCandle.close.toFixed(2)} above support ₹${supportLevel.toFixed(2)}`);
+        reasons.push(`Bounce structure (lower wick > body, close in upper 40%)`);
+        reasons.push(`${pressure.signal} pressure (confidence: ${(pressure.confidence * 100).toFixed(0)}%)`);
+        reasons.push(`${momentum.signal} momentum (${momentum.acceleration}, accel: ${momentum.accelerationRaw.toFixed(4)})`);
         if (pattern) reasons.push(`${pattern.pattern} pattern detected`);
         return {
           action: "BUY",
