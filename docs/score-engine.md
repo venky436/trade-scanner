@@ -333,8 +333,8 @@ Score:  1   2   3   4   5   6   7   8   9   10
 
 | Score | Label | Meaning | UI Section |
 |-------|-------|---------|------------|
-| 9-10 | TRADE | Strong setup — act now | Best Setups |
-| 7-8 | WATCH | Setup developing — monitor | Watchlist |
+| 9-10 | TRADE | Strong setup — act now | Best Setups (requires signal action !== WAIT) |
+| 7-8 | WATCH | Setup developing — monitor | Watchlist (includes WAIT signals near S/R — "monitor only") |
 | 5-6 | WATCH | Weak setup — low confidence | Not shown |
 | 1-4 | AVOID | No setup — skip | Not shown |
 
@@ -409,8 +409,8 @@ finalScore stored on signal → sent to frontend
   │
   ▼
 Frontend displays:
-  Best Setups: finalScore >= 9
-  Watchlist: finalScore 7-8
+  Best Setups: finalScore >= 9 + signal action !== WAIT
+  Watchlist: finalScore 7-8 (includes WAIT signals — stocks near S/R worth monitoring)
   Trade Setups: finalScore >= 8 + has signal type
   │
   ▼

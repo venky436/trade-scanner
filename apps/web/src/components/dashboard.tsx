@@ -128,7 +128,7 @@ export function Dashboard() {
                   Monitor only — not yet actionable
                 </span>
               </div>
-              <TopOpportunities stockMap={stockMap} srLevels={srLevels} minScore={7} maxScore={9} maxItems={5} />
+              <TopOpportunities stockMap={stockMap} srLevels={srLevels} minScore={7} maxScore={9} maxItems={5} includeWait={true} />
             </div>
 
             {/* Trade Setups (Breakout/Bounce/Rejection/Breakdown) */}

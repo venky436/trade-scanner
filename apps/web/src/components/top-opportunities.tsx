@@ -15,6 +15,7 @@ interface TopOpportunitiesProps {
   minScore?: number;
   maxScore?: number;
   maxItems?: number;
+  includeWait?: boolean;
 }
 
 function getScore(stock: StockData): number {
@@ -93,7 +94,7 @@ function getDecision(
   return { isWait: false, primaryPlan: null };
 }
 
-export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, maxItems = 6 }: TopOpportunitiesProps) {
+export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, maxItems = 6, includeWait = false }: TopOpportunitiesProps) {
   const router = useRouter();
   const shouldAnimate = useRef(!hasAnimatedOpportunities);
   useEffect(() => { hasAnimatedOpportunities = true; }, []);
@@ -103,7 +104,7 @@ export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, m
       .filter(
         (s) =>
           s.signal &&
-          s.signal.action !== "WAIT" &&
+          (includeWait || s.signal.action !== "WAIT") &&
           !INDEX_NAMES.has(s.symbol) &&
           getScore(s) >= minScore &&
           (maxScore == null || getScore(s) < maxScore)
