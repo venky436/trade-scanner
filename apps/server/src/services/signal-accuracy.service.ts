@@ -83,6 +83,14 @@ export function createSignalAccuracyService() {
     const { phase } = getMarketPhase();
     if (phase === "OPENING" || phase === "STABILIZING") return;
 
+    // Skip after 2:45 PM IST — late session position squaring creates fake signals
+    const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const istTotalMin = istNow.getHours() * 60 + istNow.getMinutes();
+    if (istTotalMin >= 14 * 60 + 45) return; // 14:45 = 2:45 PM
+
+    // Skip low-price stocks — unreliable signals below ₹50
+    if (price < 50) return;
+
     // No duplicates: if already tracking this stock → skip
     if (activeMap.has(symbol)) return;
 
@@ -246,18 +254,19 @@ export function createSignalAccuracyService() {
       const neutral = evaluated.filter((r) => r.result === "NEUTRAL").length;
       const pending = records.filter((r) => r.result === null).length;
 
-      const accuracy = evaluated.length > 0 ? Math.round((success / evaluated.length) * 100) : 0;
+      const decided = success + failed; // exclude NEUTRAL from accuracy
+      const accuracy = decided > 0 ? Math.round((success / decided) * 100) : 0;
 
-      // Win rate by type
+      // Win rate by type (exclude NEUTRAL)
       const types = ["BREAKOUT", "BREAKDOWN", "BOUNCE", "REJECTION"];
       const winRateByType: Record<string, { total: number; wins: number; rate: number }> = {};
       for (const type of types) {
-        const typeRecords = evaluated.filter((r) => r.signalType === type);
-        const typeWins = typeRecords.filter((r) => r.result === "SUCCESS").length;
+        const typeDecided = evaluated.filter((r) => r.signalType === type && (r.result === "SUCCESS" || r.result === "FAILED"));
+        const typeWins = typeDecided.filter((r) => r.result === "SUCCESS").length;
         winRateByType[type] = {
-          total: typeRecords.length,
+          total: typeDecided.length,
           wins: typeWins,
-          rate: typeRecords.length > 0 ? Math.round((typeWins / typeRecords.length) * 100) : 0,
+          rate: typeDecided.length > 0 ? Math.round((typeWins / typeDecided.length) * 100) : 0,
         };
       }
 
