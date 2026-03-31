@@ -159,6 +159,7 @@ function signalTypeLabel(type: SignalType): string {
     case "REJECTION": return "Resistance Rejection";
     case "BREAKOUT": return "Breakout";
     case "BREAKDOWN": return "Breakdown";
+    case "CONTINUATION": return "Trend Continuation";
   }
 }
 

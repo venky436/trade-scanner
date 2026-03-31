@@ -293,6 +293,93 @@ export function createSignalWorker(config: SignalWorkerConfig) {
       }
 
       const reaction = computeReaction(q.lastPrice, symbolSr, pressure);
+
+      // ── CONTINUATION: indices only, when S/R signal returns WAIT ──
+      const CONTINUATION_INDICES = new Set(["NIFTY 50", "NIFTY BANK", "SENSEX"]);
+      if (signal.action === "WAIT" && CONTINUATION_INDICES.has(symbol) && momentum && pressure) {
+        const sessionCandles2 = config.getSessionCandles?.(symbol) ?? [];
+
+        // Gate 1: Distance safety — must be > 0.5% from BOTH S/R levels
+        const supDist = symbolSr.supportZone ? (Math.abs(q.lastPrice - symbolSr.supportZone.level) / q.lastPrice * 100) : 999;
+        const resDist = symbolSr.resistanceZone ? (Math.abs(q.lastPrice - symbolSr.resistanceZone.level) / q.lastPrice * 100) : 999;
+        const safeDistance = supDist > 0.5 && resDist > 0.5;
+
+        // Gate 2: Trend mode filter — 3 of last 5 candles aligned + last 2 same direction
+        let trendConfirmed = false;
+        if (sessionCandles2.length >= 5) {
+          const last5 = sessionCandles2.slice(-5);
+          const last2 = sessionCandles2.slice(-2);
+          const bullishCount = last5.filter(c => c.close > c.open).length;
+          const bearishCount = last5.filter(c => c.close < c.open).length;
+          const last2Bullish = last2.every(c => c.close > c.open);
+          const last2Bearish = last2.every(c => c.close < c.open);
+
+          if ((bullishCount >= 3 && last2Bullish) || (bearishCount >= 3 && last2Bearish)) {
+            trendConfirmed = true;
+          }
+        }
+
+        // Gate 3-8: Momentum + Acceleration + Pressure + Quality
+        const isBullishCont = momentum.signal === "UP" || momentum.signal === "STRONG_UP";
+        const isBearishCont = momentum.signal === "DOWN" || momentum.signal === "STRONG_DOWN";
+        const accConfirming = isBullishCont
+          ? momentum.acceleration === "INCREASING"
+          : momentum.acceleration === "DECREASING";
+        const pressureAligned = isBullishCont
+          ? (pressure.signal === "BUY" || pressure.signal === "STRONG_BUY")
+          : (pressure.signal === "SELL" || pressure.signal === "STRONG_SELL");
+        const confidenceOk = pressure.confidence >= 0.5;
+        const qualityOk = isBullishCont
+          ? momentum.quality > 0.6
+          : Math.abs(momentum.quality) > 0.6;
+
+        // Gate 9: Room to move — enough distance to next level in signal direction
+        const roomToMove = isBullishCont
+          ? resDist > 0.8  // BUY: resistance must be > 0.8% away
+          : supDist > 0.8; // SELL: support must be > 0.8% away
+
+        if (
+          safeDistance &&
+          trendConfirmed &&
+          (isBullishCont || isBearishCont) &&
+          accConfirming &&
+          pressureAligned &&
+          confidenceOk &&
+          qualityOk &&
+          roomToMove
+        ) {
+          const contAction = isBullishCont ? "BUY" : "SELL";
+          const contReasons: string[] = [
+            `${contAction === "BUY" ? "Bullish" : "Bearish"} trend continuation on ${symbol}`,
+            `${momentum.signal} momentum (${momentum.acceleration}, quality: ${momentum.quality.toFixed(2)})`,
+            `${pressure.signal} pressure (confidence: ${(pressure.confidence * 100).toFixed(0)}%)`,
+            `Safe distance — support ${supDist.toFixed(1)}%, resistance ${resDist.toFixed(1)}% away`,
+          ];
+
+          // Dynamic boost
+          const isVeryStrong =
+            (momentum.signal === "STRONG_UP" || momentum.signal === "STRONG_DOWN") &&
+            (pressure.signal === "STRONG_BUY" || pressure.signal === "STRONG_SELL") &&
+            Math.abs(momentum.quality) > 0.8;
+          const isStrong = qualityOk; // already checked > 0.6
+
+          const contSignal: SignalResult = {
+            action: contAction,
+            type: "CONTINUATION",
+            confidence: isVeryStrong ? "HIGH" : "MEDIUM",
+            reasons: contReasons,
+          };
+
+          const { score: rawScore, breakdown: contBreakdown } = getScore(contSignal, pressure, momentum, pattern, symbolSr, q);
+          const boost = isVeryStrong ? 1.5 : isStrong ? 1.0 : 0;
+          const boostedScore = Math.min(isVeryStrong ? 9.5 : 8.5, rawScore + boost);
+          const finalContScore = Math.round(boostedScore);
+
+          setCacheEntry(symbol, contSignal, "CONFIRMED", reaction, finalContScore, contBreakdown);
+          return;
+        }
+      }
+
       const { score, breakdown } = getScore(signal, pressure, momentum, pattern, symbolSr, q);
       setCacheEntry(symbol, signal, "CONFIRMED", reaction, score, breakdown);
       return;

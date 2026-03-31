@@ -211,6 +211,31 @@ All conditions must be true:
 
 Like BREAKOUT, the acceleration and quality filters reduce false breakdowns by ensuring genuine selling strength behind the move.
 
+#### Rule 5: CONTINUATION (BUY/SELL) — Indices Only
+
+Applies ONLY to NIFTY 50, NIFTY BANK, SENSEX. Fires when S/R signal returns WAIT (price not near levels) but strong trend is detected.
+
+**9 gates must ALL pass:**
+
+1. **Index check** — symbol is NIFTY 50, NIFTY BANK, or SENSEX
+2. **Distance safety** — price > 0.5% from both support AND resistance (blocks continuation near S/R)
+3. **Trend mode** — at least 3 of last 5 candles aligned with direction AND last 2 candles in same direction
+4. **Momentum direction** — UP/STRONG_UP (buy) or DOWN/STRONG_DOWN (sell)
+5. **Acceleration confirming** — INCREASING (buy) or DECREASING (sell)
+6. **Pressure aligned** — BUY/STRONG_BUY (buy) or SELL/STRONG_SELL (sell)
+7. **Pressure confidence** — ≥ 0.5
+8. **Momentum quality** — > 0.6 (buy) or |quality| > 0.6 (sell)
+9. **Room to move** — BUY: distance to resistance > 0.8%; SELL: distance to support > 0.8% (ensures enough profit potential in signal direction)
+
+**Dynamic score boost:**
+- VERY STRONG (STRONG_UP/DOWN + STRONG_BUY/SELL + quality > 0.8) → raw + 1.5, capped at 9.5
+- STRONG (all gates pass, quality > 0.6) → raw + 1.0, capped at 8.5
+- Otherwise → no boost
+
+**Accuracy:** Tracked separately — shows as its own row in admin dashboard (does not pollute S/R signal accuracy).
+
+**Stocks:** Never receive CONTINUATION signals. Zero changes to stock flow.
+
 #### Default: WAIT
 
 At any S/R level without confirmation → WAIT with the reason "waiting for breakout or rejection" / "waiting for bounce or breakdown".

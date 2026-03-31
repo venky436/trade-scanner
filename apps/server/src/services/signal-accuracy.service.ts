@@ -258,7 +258,7 @@ export function createSignalAccuracyService() {
       const accuracy = decided > 0 ? Math.round((success / decided) * 100) : 0;
 
       // Win rate by type (exclude NEUTRAL)
-      const types = ["BREAKOUT", "BREAKDOWN", "BOUNCE", "REJECTION"];
+      const types = ["BREAKOUT", "BREAKDOWN", "BOUNCE", "REJECTION", "CONTINUATION"];
       const winRateByType: Record<string, { total: number; wins: number; rate: number }> = {};
       for (const type of types) {
         const typeDecided = evaluated.filter((r) => r.signalType === type && (r.result === "SUCCESS" || r.result === "FAILED"));
