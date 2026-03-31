@@ -188,6 +188,7 @@ const signalLabels: Record<SignalType, string> = {
   REJECTION: "REJECTION",
   BREAKOUT: "BREAKOUT",
   BREAKDOWN: "BREAKDOWN",
+  CONTINUATION: "CONTINUATION",
 };
 
 function SignalBadge({ signal }: { signal: SignalResult }) {

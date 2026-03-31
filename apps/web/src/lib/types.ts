@@ -97,7 +97,7 @@ export interface MomentumResult {
 }
 
 export type SignalAction = "BUY" | "SELL" | "WAIT";
-export type SignalType = "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN";
+export type SignalType = "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN" | "CONTINUATION";
 export type SignalConfidence = "LOW" | "MEDIUM" | "HIGH";
 
 export type SignalStage = "ACTIVITY" | "MOMENTUM" | "PRESSURE" | "CONFIRMED";
