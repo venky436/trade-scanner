@@ -26,6 +26,8 @@ import type {
   SignalType,
 } from "@/lib/types";
 import { apiFetch } from "@/lib/api";
+import { AddToWatchZoneButton } from "./watch-zone";
+import { useAuth } from "@/context/auth-context";
 
 // Module-level cache for SR levels (survives remounts)
 let srCache: Record<string, SupportResistanceResult> = {};
@@ -204,6 +206,7 @@ const INTERVAL_OPTIONS = ["5m", "15m", "30m", "1H"] as const;
 
 export function StockDetail({ symbol }: { symbol: string }) {
   const { stockMap, isConnected } = useMarketData();
+  const { isAuthenticated } = useAuth();
   const [interval, setIntervalState] = useState("5m");
   const [days, setDays] = useState<number>(10);
   const [activeDayLabel, setActiveDayLabel] = useState<string>("10D");
@@ -382,6 +385,13 @@ export function StockDetail({ symbol }: { symbol: string }) {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-3xl font-bold">{symbol}</h1>
+            <AddToWatchZoneButton
+              symbol={symbol}
+              price={stock?.price ?? 0}
+              signalAction={signal?.action ?? "WAIT"}
+              signalType={signal?.type}
+              isLoggedIn={isAuthenticated}
+            />
             <Badge variant="outline">NSE</Badge>
             {dataSource === "on-demand" && (
               <Badge variant="outline" className="text-[10px] border-yellow-500/30 text-yellow-500">

@@ -6,6 +6,8 @@ import { Target } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import type { StockData, SupportResistanceResult } from "@/lib/types";
 import { INDEX_NAMES } from "@/lib/constants";
+import { AddToWatchZoneButton } from "./watch-zone";
+import { useAuth } from "@/context/auth-context";
 
 let hasAnimatedOpportunities = false;
 
@@ -96,6 +98,7 @@ function getDecision(
 
 export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, maxItems = 6, includeWait = false }: TopOpportunitiesProps) {
   const router = useRouter();
+  const { isAuthenticated } = useAuth();
   const shouldAnimate = useRef(!hasAnimatedOpportunities);
   useEffect(() => { hasAnimatedOpportunities = true; }, []);
 
@@ -204,22 +207,31 @@ export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, m
                   </div>
                 </div>
 
-                {/* Score Ring */}
-                <div className="relative w-10 h-10 flex-shrink-0">
-                  <svg className="w-full h-full -rotate-90" viewBox="0 0 40 40">
-                    <circle cx="20" cy="20" r="16" fill="none" stroke="currentColor" strokeWidth="3" className="text-white/[0.06]" />
-                    <circle
-                      cx="20" cy="20" r="16" fill="none"
-                      strokeWidth="3" strokeLinecap="round"
-                      strokeDasharray={`${score * 10.05} 100.5`}
-                      className={score >= 8 ? "stroke-green-400" : score >= 6 ? "stroke-yellow-400" : "stroke-zinc-500"}
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className={`text-xs font-extrabold tabular-nums ${
-                      score >= 8 ? "text-green-400" : score >= 6 ? "text-yellow-400" : "text-zinc-400"
-                    }`}>{score}</span>
+                {/* Score Ring + Add Button */}
+                <div className="flex items-center gap-2.5 flex-shrink-0">
+                  <div className="relative w-10 h-10">
+                    <svg className="w-full h-full -rotate-90" viewBox="0 0 40 40">
+                      <circle cx="20" cy="20" r="16" fill="none" stroke="currentColor" strokeWidth="3" className="text-white/[0.06]" />
+                      <circle
+                        cx="20" cy="20" r="16" fill="none"
+                        strokeWidth="3" strokeLinecap="round"
+                        strokeDasharray={`${score * 10.05} 100.5`}
+                        className={score >= 8 ? "stroke-green-400" : score >= 6 ? "stroke-yellow-400" : "stroke-zinc-500"}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className={`text-xs font-extrabold tabular-nums ${
+                        score >= 8 ? "text-green-400" : score >= 6 ? "text-yellow-400" : "text-zinc-400"
+                      }`}>{score}</span>
+                    </div>
                   </div>
+                  <AddToWatchZoneButton
+                    symbol={stock.symbol}
+                    price={stock.price}
+                    signalAction={signal.action}
+                    signalType={signal.type}
+                    isLoggedIn={isAuthenticated}
+                  />
                 </div>
               </div>
 

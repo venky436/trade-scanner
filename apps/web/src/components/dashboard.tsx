@@ -14,6 +14,7 @@ import { TopOpportunities } from "./top-opportunities";
 import { ScannerDashboard } from "./scanner-dashboard";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { useMarketData } from "@/hooks/use-market-data";
+import { useAuth } from "@/context/auth-context";
 import type { SupportResistanceResult } from "@/lib/types";
 import { apiFetch } from "@/lib/api";
 
@@ -22,6 +23,7 @@ let srLevelsCache: Record<string, SupportResistanceResult> = {};
 
 export function Dashboard() {
   const { stockMap } = useMarketData();
+  const { isAuthenticated } = useAuth();
   const [kiteConnected, setKiteConnected] = useState(false);
   const [srLevels, setSrLevels] = useState<Record<string, SupportResistanceResult>>(srLevelsCache);
 

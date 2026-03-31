@@ -5,6 +5,7 @@ import { stocksRoute } from "./routes/stocks.route.js";
 import { authRoute } from "./routes/auth.route.js";
 import { adminRoute } from "./routes/admin.route.js";
 import { docsRoute } from "./routes/docs.route.js";
+import { watchZoneRoute } from "./routes/watch-zone.route.js";
 import { userAuthRoute } from "./modules/auth/auth.routes.js";
 import type { WsManager } from "./ws/ws-server.js";
 import type { InstrumentMaps, SupportResistanceResult } from "./lib/types.js";
@@ -31,7 +32,7 @@ interface ServerDeps {
 export async function buildServer(deps: ServerDeps) {
   const server = Fastify({ logger: true });
 
-  await server.register(cors, { origin: true, credentials: true });
+  await server.register(cors, { origin: true, credentials: true, methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] });
   await server.register(cookie);
 
   server.get("/health", async () => ({ status: "ok" }));
@@ -63,6 +64,7 @@ export async function buildServer(deps: ServerDeps) {
   });
 
   await server.register(docsRoute);
+  await server.register(watchZoneRoute);
 
   return server;
 }
