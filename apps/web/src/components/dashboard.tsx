@@ -11,7 +11,6 @@ import {
 import { MarketOverview } from "./market-overview";
 import { WatchlistCards } from "./watchlist-cards";
 import { TopOpportunities } from "./top-opportunities";
-import { WatchZone } from "./watch-zone";
 import { ScannerDashboard } from "./scanner-dashboard";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { useMarketData } from "@/hooks/use-market-data";
@@ -105,9 +104,6 @@ export function Dashboard() {
               </div>
               <MarketOverview stockMap={stockMap} />
             </div>
-
-            {/* Watch Zone (user's bookmarked symbols) */}
-            <WatchZone stockMap={stockMap} isLoggedIn={isAuthenticated} />
 
             {/* Best Setups (score ≥ 8) */}
             <div>

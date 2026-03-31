@@ -32,7 +32,7 @@ interface ServerDeps {
 export async function buildServer(deps: ServerDeps) {
   const server = Fastify({ logger: true });
 
-  await server.register(cors, { origin: true, credentials: true });
+  await server.register(cors, { origin: true, credentials: true, methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] });
   await server.register(cookie);
 
   server.get("/health", async () => ({ status: "ok" }));

@@ -208,7 +208,7 @@ export function TopOpportunities({ stockMap, srLevels, minScore = 3, maxScore, m
                 </div>
 
                 {/* Score Ring + Add Button */}
-                <div className="flex items-center gap-1.5 flex-shrink-0">
+                <div className="flex items-center gap-2.5 flex-shrink-0">
                   <div className="relative w-10 h-10">
                     <svg className="w-full h-full -rotate-90" viewBox="0 0 40 40">
                       <circle cx="20" cy="20" r="16" fill="none" stroke="currentColor" strokeWidth="3" className="text-white/[0.06]" />
