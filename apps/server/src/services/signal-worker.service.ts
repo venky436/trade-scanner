@@ -292,6 +292,92 @@ export function createSignalWorker(config: SignalWorkerConfig) {
         }
       }
 
+      // ── Market Awareness Filter (sector-based) ──
+      if (signal.action !== "WAIT" && signal.type) {
+        // Sector → Index mapping
+        const SECTOR_MAP: Record<string, string> = {
+          // Banking & Finance
+          HDFCBANK: "NIFTY BANK", ICICIBANK: "NIFTY BANK", SBIN: "NIFTY BANK",
+          KOTAKBANK: "NIFTY BANK", AXISBANK: "NIFTY BANK", PNB: "NIFTY BANK",
+          BANKBARODA: "NIFTY BANK", INDUSINDBK: "NIFTY BANK", BANDHANBNK: "NIFTY BANK",
+          FEDERALBNK: "NIFTY BANK", IDFCFIRSTB: "NIFTY BANK", RBLBANK: "NIFTY BANK",
+          AUBANK: "NIFTY BANK", CANBK: "NIFTY BANK", UNIONBANK: "NIFTY BANK",
+          BAJFINANCE: "NIFTY BANK", BAJAJFINSV: "NIFTY BANK", CHOLAFIN: "NIFTY BANK",
+          MANAPPURAM: "NIFTY BANK", MUTHOOTFIN: "NIFTY BANK",
+          // IT
+          INFY: "NIFTY IT", TCS: "NIFTY IT", WIPRO: "NIFTY IT", HCLTECH: "NIFTY IT",
+          TECHM: "NIFTY IT", LTIM: "NIFTY IT", MPHASIS: "NIFTY IT", COFORGE: "NIFTY IT",
+          PERSISTENT: "NIFTY IT", TATAELXSI: "NIFTY IT",
+        };
+
+        const sectorIndex = SECTOR_MAP[symbol] ?? "NIFTY 50";
+        const idxMom = config.getMomentum(sectorIndex);
+        const idxPres = config.getPressure(sectorIndex);
+        const idxCandles = config.getSessionCandles?.(sectorIndex) ?? [];
+
+        // Only apply filter if we have reliable index data
+        if (idxMom && idxPres && idxCandles.length >= 3) {
+          const last3 = idxCandles.slice(-3);
+          const bullishCount = last3.filter(c => c.close > c.open).length;
+          const bearishCount = last3.filter(c => c.close < c.open).length;
+
+          // Detect market mode
+          const isStrongUp = idxMom.signal === "STRONG_UP";
+          const isUp = idxMom.signal === "UP";
+          const isStrongDown = idxMom.signal === "STRONG_DOWN";
+          const isDown = idxMom.signal === "DOWN";
+          const isBuyPres = idxPres.signal === "BUY" || idxPres.signal === "STRONG_BUY";
+          const isSellPres = idxPres.signal === "SELL" || idxPres.signal === "STRONG_SELL";
+          const isStrongBuyPres = idxPres.signal === "STRONG_BUY";
+          const isStrongSellPres = idxPres.signal === "STRONG_SELL";
+
+          let marketMode: "TREND_UP" | "TREND_DOWN" | "RANGE" = "RANGE";
+          if ((isStrongUp || (isUp && isStrongBuyPres)) && isBuyPres && bullishCount >= 2) {
+            marketMode = "TREND_UP";
+          } else if ((isStrongDown || (isDown && isStrongSellPres)) && isSellPres && bearishCount >= 2) {
+            marketMode = "TREND_DOWN";
+          }
+
+          // BREAKOUT: only in matching TREND_UP
+          if (signal.type === "BREAKOUT" && signal.action === "BUY" && marketMode !== "TREND_UP") {
+            signal.action = "WAIT";
+            signal.confidence = "LOW";
+            signal.reasons = [`Market ${marketMode} (${sectorIndex}) — BUY breakout needs TREND_UP`];
+          }
+
+          // BREAKDOWN: only in matching TREND_DOWN
+          if (signal.type === "BREAKDOWN" && signal.action === "SELL" && marketMode !== "TREND_DOWN") {
+            signal.action = "WAIT";
+            signal.confidence = "LOW";
+            signal.reasons = [`Market ${marketMode} (${sectorIndex}) — SELL breakdown needs TREND_DOWN`];
+          }
+
+          // REJECTION in TREND_UP: stricter quality (counter-trend)
+          if (signal.type === "REJECTION" && signal.action === "SELL" && marketMode === "TREND_UP" && momentum) {
+            if (Math.abs(momentum.quality) <= 0.7) {
+              signal.action = "WAIT";
+              signal.confidence = "LOW";
+              signal.reasons = [`Counter-trend REJECTION in TREND_UP (${sectorIndex}) — quality ${Math.abs(momentum.quality).toFixed(2)} < 0.7`];
+            }
+          }
+
+          // BOUNCE in TREND_DOWN: stricter quality (counter-trend)
+          if (signal.type === "BOUNCE" && signal.action === "BUY" && marketMode === "TREND_DOWN" && momentum) {
+            if (momentum.quality <= 0.7) {
+              signal.action = "WAIT";
+              signal.confidence = "LOW";
+              signal.reasons = [`Counter-trend BOUNCE in TREND_DOWN (${sectorIndex}) — quality ${momentum.quality.toFixed(2)} < 0.7`];
+            }
+          }
+
+          // Log market mode in reasons for debugging
+          if (signal.action !== "WAIT") {
+            signal.reasons.push(`Market: ${marketMode} (${sectorIndex})`);
+          }
+        }
+        // If index data missing → skip filter entirely (don't assume RANGE)
+      }
+
       const reaction = computeReaction(q.lastPrice, symbolSr, pressure);
 
       // ── CONTINUATION: indices only, when S/R signal returns WAIT ──

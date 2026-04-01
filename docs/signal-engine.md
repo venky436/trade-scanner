@@ -240,6 +240,37 @@ Applies ONLY to NIFTY 50, NIFTY BANK, SENSEX. Fires when S/R signal returns WAIT
 
 At any S/R level without confirmation → WAIT with the reason "waiting for breakout or rejection" / "waiting for bounce or breakdown".
 
+#### Post-Signal: Market Awareness Filter (Sector-Based)
+
+After the signal engine returns a confirmed signal, a **market awareness layer** checks whether the signal aligns with the broader market trend. This uses sector-specific indices for better accuracy.
+
+**Sector → Index Mapping:**
+- Banking stocks (HDFCBANK, ICICIBANK, SBIN, etc.) → **NIFTY BANK**
+- IT stocks (INFY, TCS, WIPRO, etc.) → **NIFTY IT**
+- All others → **NIFTY 50** (fallback)
+
+**Market Mode Detection (using sector index):**
+
+| Mode | Conditions |
+|------|-----------|
+| **TREND_UP** | Index momentum STRONG_UP (or UP + STRONG_BUY pressure) + 2/3 candles bullish |
+| **TREND_DOWN** | Index momentum STRONG_DOWN (or DOWN + STRONG_SELL pressure) + 2/3 candles bearish |
+| **RANGE** | Everything else (FLAT/NEUTRAL/mixed candles) |
+
+**Signal Filtering by Mode:**
+
+| Signal | TREND_UP | TREND_DOWN | RANGE |
+|--------|----------|------------|-------|
+| BREAKOUT (BUY) | ALLOW | BLOCK | BLOCK |
+| BREAKDOWN (SELL) | BLOCK | ALLOW | BLOCK |
+| BOUNCE (BUY) | ALLOW | Quality > 0.7 | ALLOW |
+| REJECTION (SELL) | Quality > 0.7 | ALLOW | ALLOW |
+
+**Safety rules:**
+- If sector index data is missing → skip filter entirely (don't assume RANGE)
+- Market mode logged in signal reasons for debugging: `"Market: TREND_UP (NIFTY BANK)"`
+- Does NOT modify existing signal engine — only controls output
+
 ### 5. Confidence Assignment
 
 Confidence is determined by whether a candlestick pattern **confirms** the signal direction:
