@@ -332,10 +332,25 @@ export function createSignalWorker(config: SignalWorkerConfig) {
           const isStrongSellPres = idxPres.signal === "STRONG_SELL";
 
           let marketMode: "TREND_UP" | "TREND_DOWN" | "RANGE" = "RANGE";
+
+          // Path A: Micro trend (existing — 3-candle view)
           if ((isStrongUp || (isUp && isStrongBuyPres)) && isBuyPres && bullishCount >= 2) {
             marketMode = "TREND_UP";
           } else if ((isStrongDown || (isDown && isStrongSellPres)) && isSellPres && bearishCount >= 2) {
             marketMode = "TREND_DOWN";
+          }
+
+          // Path B: Macro bias (NEW — daily direction, only if micro didn't match)
+          if (marketMode === "RANGE") {
+            const idxQuote = marketDataService.getQuote(sectorIndex);
+            if (idxQuote && idxQuote.close > 0) {
+              const dayChange = ((idxQuote.lastPrice - idxQuote.close) / idxQuote.close) * 100;
+              if (dayChange > 1 && isBuyPres && !isStrongDown) {
+                marketMode = "TREND_UP";
+              } else if (dayChange < -1 && isSellPres && !isStrongUp) {
+                marketMode = "TREND_DOWN";
+              }
+            }
           }
 
           // BREAKOUT: only in matching TREND_UP

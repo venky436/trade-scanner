@@ -86,7 +86,7 @@ export function createSignalAccuracyService() {
     // Skip after 2:45 PM IST — late session position squaring creates fake signals
     const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const istTotalMin = istNow.getHours() * 60 + istNow.getMinutes();
-    if (istTotalMin >= 14 * 60 + 45) return; // 14:45 = 2:45 PM
+    if (istTotalMin >= 15 * 60 + 30) return; // 15:30 = 3:30 PM
 
     // Skip low-price stocks — unreliable signals below ₹50
     if (price < 50) return;

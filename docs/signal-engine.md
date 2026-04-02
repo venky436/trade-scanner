@@ -249,13 +249,24 @@ After the signal engine returns a confirmed signal, a **market awareness layer**
 - IT stocks (INFY, TCS, WIPRO, etc.) → **NIFTY IT**
 - All others → **NIFTY 50** (fallback)
 
-**Market Mode Detection (using sector index):**
+**Market Mode Detection (using sector index — two paths):**
+
+**Path A — Micro Trend (3-candle view):**
 
 | Mode | Conditions |
 |------|-----------|
 | **TREND_UP** | Index momentum STRONG_UP (or UP + STRONG_BUY pressure) + 2/3 candles bullish |
 | **TREND_DOWN** | Index momentum STRONG_DOWN (or DOWN + STRONG_SELL pressure) + 2/3 candles bearish |
-| **RANGE** | Everything else (FLAT/NEUTRAL/mixed candles) |
+
+**Path B — Macro Bias (daily direction, only if micro didn't match):**
+
+| Mode | Conditions |
+|------|-----------|
+| **TREND_UP** | Day change > +1% AND pressure BUY/STRONG_BUY AND momentum != STRONG_DOWN |
+| **TREND_DOWN** | Day change < -1% AND pressure SELL/STRONG_SELL AND momentum != STRONG_UP |
+| **RANGE** | Neither path matches |
+
+Path B catches strong trending days where a brief bounce masks the larger move. The `momentum != STRONG_opposite` guard prevents late entries during reversals.
 
 **Signal Filtering by Mode:**
 
