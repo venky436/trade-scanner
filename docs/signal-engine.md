@@ -167,6 +167,9 @@ Requires **6 confirmation gates** (all must pass). This is a candle-confirmed re
 
 **Gate 6 — Micro trend filter:**
 - If last 3 candles are ALL bullish (sustained uptrend) → BLOCK the signal
+
+**Gate 7 — Quality filter:**
+- `|momentum.quality| > 0.6` (filters weak/uncertain rejection moves)
 - Prevents selling into a strong uptrend that briefly touches resistance
 
 This replaced the old logic (price < resistance + sell pressure + down/weakening momentum) which had ~5% accuracy due to triggering on any brief weakness near resistance.
@@ -249,33 +252,26 @@ After the signal engine returns a confirmed signal, a **market awareness layer**
 - IT stocks (INFY, TCS, WIPRO, etc.) → **NIFTY IT**
 - All others → **NIFTY 50** (fallback)
 
-**Market Mode Detection (using sector index — two paths):**
+**Market Mode Detection (using sector index — relaxed, tagging only):**
 
-**Path A — Micro Trend (3-candle view):**
+**Path A — Micro Trend:**
 
 | Mode | Conditions |
 |------|-----------|
-| **TREND_UP** | Index momentum STRONG_UP (or UP + STRONG_BUY pressure) + 2/3 candles bullish |
-| **TREND_DOWN** | Index momentum STRONG_DOWN (or DOWN + STRONG_SELL pressure) + 2/3 candles bearish |
+| **TREND_UP** | STRONG_UP momentum, OR UP + BUY pressure (safety: not STRONG_DOWN) |
+| **TREND_DOWN** | STRONG_DOWN momentum, OR DOWN + SELL pressure (safety: not STRONG_UP) |
 
 **Path B — Macro Bias (daily direction, only if micro didn't match):**
 
 | Mode | Conditions |
 |------|-----------|
-| **TREND_UP** | Day change > +1% AND pressure BUY/STRONG_BUY AND momentum != STRONG_DOWN |
-| **TREND_DOWN** | Day change < -1% AND pressure SELL/STRONG_SELL AND momentum != STRONG_UP |
+| **TREND_UP** | Day change > +0.8% AND pressure BUY/STRONG_BUY AND momentum != STRONG_DOWN |
+| **TREND_DOWN** | Day change < -0.8% AND pressure SELL/STRONG_SELL AND momentum != STRONG_UP |
 | **RANGE** | Neither path matches |
 
-Path B catches strong trending days where a brief bounce masks the larger move. The `momentum != STRONG_opposite` guard prevents late entries during reversals.
+**Data-driven approach — NO signal blocking:**
 
-**Signal Filtering by Mode:**
-
-| Signal | TREND_UP | TREND_DOWN | RANGE |
-|--------|----------|------------|-------|
-| BREAKOUT (BUY) | ALLOW | BLOCK | BLOCK |
-| BREAKDOWN (SELL) | BLOCK | ALLOW | BLOCK |
-| BOUNCE (BUY) | ALLOW | Quality > 0.7 | ALLOW |
-| REJECTION (SELL) | Quality > 0.7 | ALLOW | ALLOW |
+Market mode is **tagged in signal reasons** for data collection but does **NOT block** any signal type. All signals (BREAKOUT, BREAKDOWN, BOUNCE, REJECTION) flow through regardless of market mode. After collecting sufficient data, gating decisions will be made based on real performance by market mode.
 
 **Safety rules:**
 - If sector index data is missing → skip filter entirely (don't assume RANGE)

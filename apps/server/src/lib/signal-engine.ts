@@ -113,13 +113,17 @@ export function getSignal(input: SignalInput): SignalResult {
         sustainedUptrend = c3.close > c3.open && c2.close > c2.open && c1.close > c1.open;
       }
 
+      // 6. Quality filter: momentum quality must be significant
+      const hasQuality = Math.abs(momentum.quality) > 0.6;
+
       if (
         closedBelow &&
         hasRejectionStructure &&
         momentumReversing &&
         isDecelerating &&
         isSellPressure &&
-        !sustainedUptrend
+        !sustainedUptrend &&
+        hasQuality
       ) {
         reasons.push(`Rejection confirmed — candle closed ₹${lastCandle.close.toFixed(2)} below resistance ₹${resistanceLevel.toFixed(2)}`);
         reasons.push(`Rejection structure (upper wick > body, close in lower 40%)`);

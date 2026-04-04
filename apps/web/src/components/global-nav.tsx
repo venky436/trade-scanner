@@ -235,12 +235,12 @@ export function GlobalNav() {
               );
             }
 
-            // STABILIZING phase: 5-45 min (until 10:00 AM)
-            if (elapsed < 45) {
+            // STABILIZING phase: 5-30 min (until 9:45 AM)
+            if (elapsed < 30) {
               return (
                 <Badge variant="outline" className="gap-1.5 border-orange-500/50 text-orange-600 dark:text-orange-400">
                   <span className="inline-block h-2 w-2 rounded-full bg-orange-500 animate-pulse" />
-                  Stabilizing ({45 - elapsed}m)
+                  Stabilizing ({30 - elapsed}m)
                 </Badge>
               );
             }
