@@ -86,7 +86,7 @@ export function createSignalAccuracyService() {
     // Skip after 2:45 PM IST — late session position squaring creates fake signals
     const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const istTotalMin = istNow.getHours() * 60 + istNow.getMinutes();
-    if (istTotalMin >= 15 * 60 + 30) return; // 15:30 = 3:30 PM
+    if (istTotalMin >= 14 * 60 + 45) return; // 14:45 = 2:45 PM
 
     // Skip low-price stocks — unreliable signals below ₹50
     if (price < 50) return;
@@ -100,8 +100,8 @@ export function createSignalAccuracyService() {
 
     const score = signal.score ?? 0;
     const isBuy = signal.action === "BUY";
-    const targetPrice = isBuy ? price * 1.010 : price * 0.990;  // +1.0% / -1.0%
-    const stopLoss = isBuy ? price * 0.993 : price * 1.007;     // -0.7% / +0.7%
+    const targetPrice = isBuy ? price * 1.010 : price * 0.995;  // BUY: +1.0% / SELL: -0.5%
+    const stopLoss = isBuy ? price * 0.993 : price * 1.005;     // BUY: -0.7% / SELL: +0.5%
 
     // Risk-reward filter: reward must be >= risk
     const risk = Math.abs(price - stopLoss);

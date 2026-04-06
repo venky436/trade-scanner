@@ -290,9 +290,10 @@ Log: "[Accuracy] Loaded 12 pending signals from DB [12 active]"
 | Min price | ₹50 | Skip low-price stocks — unreliable signals |
 | Target (BUY) | entry × 1.010 (+1.0%) | Profit target |
 | Stoploss (BUY) | entry × 0.993 (-0.7%) | Risk limit |
-| Target (SELL) | entry × 0.990 (-1.0%) | Profit target |
-| Stoploss (SELL) | entry × 1.007 (+0.7%) | Risk limit |
-| RR ratio | 1.0 / 0.7 = 1.43x | Risk always less than profit |
+| RR ratio (BUY) | 1.0 / 0.7 = 1.43x | Risk less than profit |
+| Target (SELL) | entry × 0.995 (-0.5%) | Profit target (reduced — rejections don't drop as far) |
+| Stoploss (SELL) | entry × 1.005 (+0.5%) | Risk limit |
+| RR ratio (SELL) | 0.5 / 0.5 = 1:1 | Equal risk/reward — needs 51%+ accuracy to profit |
 
 ---
 
