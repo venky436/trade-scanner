@@ -139,8 +139,8 @@ export function computeSignalScore(input: ScoreInput): { score: number; breakdow
   const breakdown: ScoreBreakdown = {
     pressure: pressureScore(input.pressure, action),
     momentum: momentumScore(input.momentum, action),
-    // Confirmed signals: S/R level validated by interaction — always full score
-    sr: isConfirmed ? 1.0 : srScore(input.sr, input.price),
+    // Confirmed signals: use actual distance but floor at 0.7 (level was validated by interaction)
+    sr: isConfirmed ? Math.max(0.7, srScore(input.sr, input.price)) : srScore(input.sr, input.price),
     pattern: patternScore(input.pattern),
     volatility: volatilityScore(input.price, input.open, input.high, input.low),
     signal: signalScore(input.signal),

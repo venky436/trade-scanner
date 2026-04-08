@@ -100,8 +100,34 @@ export function createSignalAccuracyService() {
 
     const score = signal.score ?? 0;
     const isBuy = signal.action === "BUY";
-    const targetPrice = isBuy ? price * 1.010 : price * 0.995;  // BUY: +1.0% / SELL: -0.5%
-    const stopLoss = isBuy ? price * 0.993 : price * 1.005;     // BUY: -0.7% / SELL: +0.5%
+
+    // Type-specific targets: momentum plays need wider targets, reversals need tighter SL
+    let targetPct: number;
+    let slPct: number;
+    switch (signal.type) {
+      case "BREAKOUT":
+        targetPct = isBuy ? 0.012 : 0.008;  // +1.2% / -0.8% (momentum continuation)
+        slPct = isBuy ? 0.006 : 0.005;      // -0.6% / +0.5% (tight SL below breakout level)
+        break;
+      case "BREAKDOWN":
+        targetPct = isBuy ? 0.008 : 0.012;  // mirror of breakout
+        slPct = isBuy ? 0.005 : 0.006;
+        break;
+      case "BOUNCE":
+        targetPct = isBuy ? 0.008 : 0.005;  // +0.8% / -0.5% (reversal, smaller target)
+        slPct = isBuy ? 0.005 : 0.004;      // -0.5% / +0.4% (tight SL, reversals are fragile)
+        break;
+      case "REJECTION":
+        targetPct = isBuy ? 0.005 : 0.008;  // mirror of bounce
+        slPct = isBuy ? 0.004 : 0.005;
+        break;
+      default:
+        targetPct = isBuy ? 0.010 : 0.005;  // original defaults
+        slPct = isBuy ? 0.007 : 0.005;
+        break;
+    }
+    const targetPrice = isBuy ? price * (1 + targetPct) : price * (1 - targetPct);
+    const stopLoss = isBuy ? price * (1 - slPct) : price * (1 + slPct);
 
     // Risk-reward filter: reward must be >= risk
     const risk = Math.abs(price - stopLoss);

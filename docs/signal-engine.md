@@ -115,18 +115,19 @@ The signal engine **never decides at the level**. When price is near support or 
 Price approaching S/R → WAIT (always)
   │
   ├─ At Resistance:
-  │    ├─ Price crosses ABOVE resistance + 0.2% + BUY pressure + UP momentum
-  │    │    + INCREASING acceleration + quality > 0.5 → CONFIRMED BUY BREAKOUT
+  │    ├─ Price crosses ABOVE resistance + 0.2% + STRONG_BUY (or BUY with conf≥60%)
+  │    │    + UP momentum + INCREASING acceleration + quality > 0.6
+  │    │    + pressure confidence ≥ 50% → CONFIRMED BUY BREAKOUT
   │    ├─ 6-gate confirmation: candle closed below resistance + rejection structure
-  │    │    + bearish candle flip + DECREASING accel + SELL pressure (conf≥50%)
+  │    │    + bearish candle flip + accelRaw < -0.002 + SELL pressure (conf≥50%)
   │    │    + NOT sustained uptrend → CONFIRMED SELL REJECTION
   │    └─ Neither → WAIT ("waiting for breakout or rejection")
   │
   └─ At Support:
        ├─ Price drops BELOW support - 0.2% + STRONG_SELL pressure + STRONG_DOWN momentum
-       │    + DECREASING acceleration + |quality| > 0.5 → CONFIRMED SELL BREAKDOWN
+       │    + DECREASING acceleration + |quality| > 0.6 → CONFIRMED SELL BREAKDOWN
        ├─ 6-gate confirmation: candle closed above support + bounce structure
-       │    + bullish candle flip + INCREASING accel + BUY pressure (conf≥50%)
+       │    + bullish candle flip + accelRaw > 0.002 + BUY pressure (conf≥50%)
        │    + NOT sustained downtrend → CONFIRMED BUY BOUNCE
        └─ Neither → WAIT ("waiting for bounce or breakdown")
 ```
@@ -135,12 +136,15 @@ Price approaching S/R → WAIT (always)
 
 All conditions must be true:
 - Price is **above** resistance + 0.2% buffer (confirmed break)
-- Pressure is `BUY` or `STRONG_BUY`
+- Pressure is `STRONG_BUY`, or `BUY` with `confidence >= 0.6` (weak BUY pressure alone is insufficient)
 - Momentum is `UP` or `STRONG_UP`
 - Momentum acceleration is `INCREASING` (move must be strengthening, not fading)
-- Momentum quality > 0.5 (filters out weak/uncertain moves)
+- Momentum quality > 0.6 (filters out weak/uncertain moves; raised from 0.5 to match REJECTION)
+- Pressure confidence >= 0.5 (matches BOUNCE/REJECTION requirement — ensures enough volume participation)
 
-The 0.2% buffer prevents false triggers from minor wick touches. Price must decisively cross resistance. The acceleration and quality filters (added in the hybrid momentum upgrade) further reduce fake breakouts by ensuring the move has genuine strength behind it — a price crossing resistance while momentum is fading (DECREASING) or quality is low is likely a false break.
+If momentum quality is undefined, the breakout is **rejected** (no fallback to true). This prevents signals firing when momentum data is missing.
+
+The 0.2% buffer prevents false triggers from minor wick touches. Price must decisively cross resistance. The pressure confidence and quality filters reduce fake breakouts by ensuring the move has genuine strength behind it — a price crossing resistance with weak pressure confidence or low quality is likely a false break.
 
 #### Rule 2: REJECTION (SELL) — Confirmed
 
@@ -159,7 +163,7 @@ Requires **6 confirmation gates** (all must pass). This is a candle-confirmed re
 - This requires an actual candle color flip — "slowing but still bullish" is NOT enough
 
 **Gate 4 — Acceleration filter:**
-- `accelerationRaw < -0.001` (momentum genuinely decelerating, not flat)
+- `accelerationRaw < -0.002` (momentum genuinely decelerating, not flat; raised from -0.001 to filter noise)
 
 **Gate 5 — Participation filter:**
 - Pressure is `SELL` or `STRONG_SELL`
@@ -191,7 +195,7 @@ Requires **6 confirmation gates** (all must pass). This is a candle-confirmed re
 - This requires an actual candle color flip — "slowing but still bearish" is NOT enough
 
 **Gate 4 — Acceleration filter:**
-- `accelerationRaw > 0.001` (momentum genuinely accelerating upward)
+- `accelerationRaw > 0.002` (momentum genuinely accelerating upward; raised from 0.001 to filter noise)
 
 **Gate 5 — Participation filter:**
 - Pressure is `BUY` or `STRONG_BUY`
@@ -210,7 +214,7 @@ All conditions must be true:
 - Pressure is `STRONG_SELL`
 - Momentum is `STRONG_DOWN`
 - Momentum acceleration is `DECREASING` (selling must be strengthening — for downward moves, DECREASING acceleration means the negative velocity is growing)
-- Momentum quality magnitude > 0.5 (filters out weak/uncertain moves; uses `Math.abs(quality)` since quality is negative for sell signals)
+- Momentum quality magnitude > 0.6 (filters out weak/uncertain moves; raised from 0.5 to match BREAKOUT; uses `Math.abs(quality)` since quality is negative for sell signals). If quality is undefined, the breakdown is **rejected** (no fallback to true).
 
 Like BREAKOUT, the acceleration and quality filters reduce false breakdowns by ensuring genuine selling strength behind the move.
 
@@ -399,14 +403,14 @@ Confidence affects the badge appearance:
 | Type | What's Happening | Confidence Meaning |
 |------|-----------------|-------------------|
 | **BOUNCE** | 6-gate confirmed reversal at support: candle closed above support with bounce structure (lower wick > 70% body, close in upper 40%), previous candle bearish → current candle bullish (strict flip), acceleration increasing, BUY pressure with ≥50% confidence, NOT in sustained downtrend. | HIGH = confirming pattern (e.g., HAMMER), MEDIUM = no pattern, LOW = conflicting pattern |
-| **BREAKOUT** | Stock has crossed above resistance + 0.2% buffer with BUY/STRONG_BUY pressure, UP/STRONG_UP momentum, INCREASING acceleration, and quality > 0.5. All engines aligned for a strong resistance break. | HIGH = pattern confirms, MEDIUM = no pattern |
+| **BREAKOUT** | Stock has crossed above resistance + 0.2% buffer with STRONG_BUY pressure (or BUY with confidence >= 0.6), UP/STRONG_UP momentum, INCREASING acceleration, quality > 0.6, and pressure confidence >= 0.5. All engines aligned for a strong resistance break. | HIGH = pattern confirms, MEDIUM = no pattern |
 
 ### SELL Signals
 
 | Type | What's Happening | Confidence Meaning |
 |------|-----------------|-------------------|
 | **REJECTION** | 6-gate confirmed reversal at resistance: candle closed below resistance with rejection structure (upper wick > 70% body, close in lower 40%), previous candle bullish → current candle bearish (strict flip), acceleration decreasing, SELL pressure with ≥50% confidence, NOT in sustained uptrend. | HIGH = confirming pattern (e.g., SHOOTING_STAR), MEDIUM = no pattern, LOW = conflicting pattern |
-| **BREAKDOWN** | Stock has crossed below support - 0.2% buffer with STRONG_SELL pressure, STRONG_DOWN momentum, DECREASING acceleration (selling strengthening), and |quality| > 0.5. All engines aligned for a strong support break. | HIGH = pattern confirms, MEDIUM = no pattern but all other conditions max-strength |
+| **BREAKDOWN** | Stock has crossed below support - 0.2% buffer with STRONG_SELL pressure, STRONG_DOWN momentum, DECREASING acceleration (selling strengthening), and |quality| > 0.6. All engines aligned for a strong support break. | HIGH = pattern confirms, MEDIUM = no pattern but all other conditions max-strength |
 
 ### WAIT (Not Displayed)
 
@@ -444,13 +448,13 @@ In practice, the earliest a signal can fire is after the pressure engine warms u
 | Pressure as mandatory gate | Without buyer/seller balance, directional signals are unreliable |
 | 1% near threshold | Matches existing reaction threshold; signals only matter near decision points |
 | Strict priority order | BREAKOUT/BREAKDOWN checked first because they require the strongest alignment |
-| Breakout requires INCREASING acceleration + quality > 0.5 | Reduces fake breakouts — price crossing resistance while momentum fades is likely a false break |
-| Breakdown requires DECREASING acceleration + |quality| > 0.5 | Mirrors breakout filter for sell-side — strengthening downtrend produces DECREASING acceleration; filters weak breakdowns |
+| Breakout requires STRONG_BUY (or BUY+conf>=0.6) + INCREASING acceleration + quality > 0.6 + confidence >= 0.5 | Reduces fake breakouts — weak pressure with low confidence is the #1 source of false breakouts; quality raised to 0.6 to match REJECTION; undefined quality now rejects (was: defaulted to true) |
+| Breakdown requires DECREASING acceleration + |quality| > 0.6 | Mirrors breakout quality filter for sell-side — strengthening downtrend produces DECREASING acceleration; quality raised to 0.6; undefined quality now rejects |
 | REJECTION/BOUNCE use 6-gate candle confirmation | Replaced weak conditions (price + pressure + momentum direction) with strict candle-confirmed reversal: structure + color flip + acceleration + participation + trend filter. Reduced rejection signals from ~44 (5% accuracy) to only confirmed reversals |
 | Strict candle flip required for reversal signals | "Slowing but still bullish" is NOT a reversal — require actual bearish candle for REJECTION, actual bullish candle for BOUNCE. Prevents premature signals |
 | Wick threshold at 70% of body (not 100%) | Slightly relaxed to capture valid setups where wick is prominent but not extreme |
 | Micro trend filter blocks reversal into strong trends | 3 consecutive same-direction candles = sustained trend → block the reversal signal. Prevents selling into uptrends / buying into downtrends |
-| Pressure confidence ≥ 50% for reversals | Volume participation proxy — ensures enough market activity to trust the reversal signal |
+| Pressure confidence ≥ 50% for all confirmed signals | Volume participation proxy — ensures enough market activity to trust any signal (BREAKOUT now requires this too, matching BOUNCE/REJECTION) |
 | WAIT signals filtered from payload | Most stocks are WAIT; sending them wastes bandwidth |
 | Pattern-based confidence | Candlestick patterns are independent confirmation; their presence/absence modulates conviction |
 | Reasons array | Makes the engine's logic transparent; useful for UI display and debugging |
