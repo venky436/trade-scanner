@@ -240,8 +240,8 @@ Requires confirming pressure (BUY pressure for bullish patterns, SELL for bearis
 
 | Rule | Condition | Signal |
 |---|---|---|
-| BREAKOUT | Price ABOVE resistance + 0.2% buffer + BUY/STRONG_BUY pressure + UP/STRONG_UP momentum | BUY (confirmed) |
-| BREAKDOWN | Price BELOW support - 0.2% buffer + STRONG_SELL + STRONG_DOWN | SELL (confirmed) |
+| BREAKOUT | Price ABOVE resistance + 0.2% buffer + STRONG_BUY (or BUY with conf>=0.6) + UP/STRONG_UP momentum + quality > 0.6 + conf >= 0.5 | BUY (confirmed) |
+| BREAKDOWN | Price BELOW support - 0.2% buffer + STRONG_SELL + STRONG_DOWN + \|quality\| > 0.6 | SELL (confirmed) |
 | BOUNCE | Rejection candle at support (wick touch + bullish close) + hold candle above support + UP momentum | BUY (confirmed) |
 | REJECTION | Price below resistance + SELL pressure + (DOWN or weakening momentum) | SELL (confirmed) |
 | At S/R level | Near S/R but no confirmation | WAIT |

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Signal Accuracy Engine tracks the real-world performance of high-confidence trading signals. When a signal reaches score >= 9 during NORMAL market phase, it's recorded with entry price, target, and stoploss. The system evaluates **in real-time** (every 1 second) — if target or stoploss is hit, the signal is closed immediately. If neither is hit within 20 minutes, it's marked NEUTRAL.
+The Signal Accuracy Engine tracks the real-world performance of high-confidence trading signals. When a signal reaches score >= 9 during NORMAL market phase, it's recorded with entry price, type-specific target, and stoploss. The system evaluates **in real-time** (every 1 second) — if target or stoploss is hit, the signal is closed immediately. If neither is hit by market close (3:30 PM IST), it's marked NEUTRAL.
 
 Results are stored permanently in PostgreSQL and displayed on the admin dashboard (`/admin`).
 
@@ -95,9 +95,9 @@ MARKET OPENS (9:15 AM IST)
 │    action     = "BUY"                            │
 │    score      = 9                                │
 │    entry      = ₹145.50                          │
-│    target     = ₹147.83  (+1.6%)                 │
-│    stoploss   = ₹143.90  (-1.1%)                 │
-│    eval_time  = now + 20 minutes                 │
+│    target     = ₹146.66  (+0.8%, BOUNCE BUY)    │
+│    stoploss   = ₹144.77  (-0.5%, BOUNCE BUY)    │
+│    eval_time  = now + 24h (far future fallback)  │
 │    result     = NULL (pending)                   │
 │                                                  │
 └──────────────────────┬──────────────────────────┘
@@ -125,21 +125,19 @@ MARKET OPENS (9:15 AM IST)
 │                                                  │
 └──────────────────────┬──────────────────────────┘
                        │
-                       │  ... if 20 min passes without hit ...
+                       │  ... if market closes without hit ...
                        │
                        ▼
 ┌─────────────────────────────────────────────────┐
-│     TIMEOUT CHECK (every 5 minutes)              │
+│     MARKET CLOSE CLEANUP (every 5 minutes)       │
 │                                                  │
-│  For each active signal:                         │
-│    recordedAt + 20 min < now?                    │
+│  If market phase == CLOSED (after 3:30 PM IST):  │
+│    For each remaining active signal:             │
 │         │                                        │
-│        YES → ⚪ NEUTRAL                          │
+│        → ⚪ NEUTRAL                              │
 │         │    (neither target nor SL hit)          │
 │         │    UPDATE DB: result = NEUTRAL          │
 │         │    Remove from active map               │
-│         │                                        │
-│        NO → continue watching                    │
 │                                                  │
 └──────────────────────┬──────────────────────────┘
                        │
@@ -194,27 +192,27 @@ NEW SYSTEM (unbiased):
 ## Evaluation Results Explained
 
 ```
-Signal recorded at 10:00 AM
-  entry = ₹100, target = ₹101.60, SL = ₹98.90
+BREAKOUT BUY signal recorded at 10:00 AM
+  entry = ₹100, target = ₹101.20 (+1.2%), SL = ₹99.40 (-0.6%)
 
 REAL-TIME CHECK (every 1 second):
 
   10:00:01 — price = ₹100.20 → neither hit → continue
   10:00:02 — price = ₹100.50 → neither hit → continue
   ...
-  10:03:15 — price = ₹101.65 → TARGET HIT → ✅ SUCCESS
+  10:03:15 — price = ₹101.25 → TARGET HIT → ✅ SUCCESS
              Close immediately, update DB, free slot
 
 OR:
 
   10:00:01 — price = ₹100.20 → continue
-  10:01:30 — price = ₹98.85 → SL HIT → ❌ FAILED
+  10:01:30 — price = ₹99.35 → SL HIT → ❌ FAILED
              Close immediately, update DB, free slot
 
 OR:
 
-  ... 20 minutes pass, price stays between SL and target ...
-  10:20:00 — TIMEOUT → ⚪ NEUTRAL
+  ... market closes without hitting target or SL ...
+  15:30:00 — MARKET CLOSE → ⚪ NEUTRAL
              Close, update DB, free slot
 ```
 
@@ -248,7 +246,7 @@ Time 9:37 — Active: 99/100
 | Real-time eval | Every 1 second | Check live price vs target/SL for all active signals |
 | Market close cleanup | Every 5 minutes | Close remaining signals as NEUTRAL after 3:30 PM IST |
 
-The real-time timer is the primary evaluation method — most signals close within seconds or minutes of recording. Market close cleanup is a safety net for signals that never hit target or SL during the day.
+Signals have **no time limit** — they stay active until target or SL is hit, or market closes. The real-time timer is the primary evaluation method — most signals close within seconds or minutes of recording. Market close cleanup is a safety net for signals that never hit target or SL during the day.
 
 ---
 
@@ -288,12 +286,17 @@ Log: "[Accuracy] Loaded 12 pending signals from DB [12 active]"
 | Market phase | NORMAL only (10:00 AM+) | Skip OPENING/STABILIZING (first 45 min) |
 | Late session cutoff | Before 2:45 PM IST | Stop tracking after 14:45 — position squaring noise |
 | Min price | ₹50 | Skip low-price stocks — unreliable signals |
-| Target (BUY) | entry × 1.010 (+1.0%) | Profit target |
-| Stoploss (BUY) | entry × 0.993 (-0.7%) | Risk limit |
-| RR ratio (BUY) | 1.0 / 0.7 = 1.43x | Risk less than profit |
-| Target (SELL) | entry × 0.995 (-0.5%) | Profit target (reduced — rejections don't drop as far) |
-| Stoploss (SELL) | entry × 1.005 (+0.5%) | Risk limit |
-| RR ratio (SELL) | 0.5 / 0.5 = 1:1 | Equal risk/reward — needs 51%+ accuracy to profit |
+| Targets/SL | Type-specific (see table below) | Different signal types have different risk profiles |
+
+**Type-Specific Targets and Stop Losses:**
+
+| Signal Type | BUY Target | BUY SL | BUY R:R | SELL Target | SELL SL | SELL R:R | Rationale |
+|-------------|-----------|--------|---------|------------|--------|---------|-----------|
+| **BREAKOUT** | +1.2% | -0.6% | 2.0x | -0.8% | +0.5% | 1.6x | Momentum plays run further; tight SL below breakout level |
+| **BREAKDOWN** | +0.8% | -0.5% | 1.6x | -1.2% | +0.6% | 2.0x | Mirror of breakout for sell side |
+| **BOUNCE** | +0.8% | -0.5% | 1.6x | -0.5% | +0.4% | 1.25x | Reversal plays need smaller targets; tight SL because failure = breakdown |
+| **REJECTION** | +0.5% | -0.4% | 1.25x | -0.8% | +0.5% | 1.6x | Mirror of bounce for sell side |
+| **Default** | +1.0% | -0.7% | 1.43x | -0.5% | +0.5% | 1.0x | Fallback (original values) |
 
 ---
 
@@ -396,12 +399,12 @@ Plus the accuracy service adds:
 ## Example Log Output
 
 ```
-[Accuracy] Started — real-time eval (1s) + timeout eval (5 min)
-[Accuracy] Recorded: TATASTEEL BUY BOUNCE score=9 entry=₹145.50 target=₹147.83 SL=₹143.90 [1/100]
-[Accuracy] Recorded: RELIANCE BUY BREAKOUT score=9 entry=₹2850.00 target=₹2895.60 SL=₹2818.65 [2/100]
-[Accuracy] SUCCESS: TATASTEEL BUY at ₹147.90 (+1.65%) [1/100]
-[Accuracy] FAILED: RELIANCE BUY at ₹2818.00 (-1.12%) [0/100]
-[Accuracy] NEUTRAL (timeout): INFY BUY at ₹1520.00 (+0.30%) [5/100]
+[Accuracy] Started — real-time eval (1s), no time limit, market close cleanup
+[Accuracy] Recorded: TATASTEEL BUY BOUNCE score=9 entry=₹145.50 target=₹146.66 SL=₹144.77 [1/100 today, 1 active]
+[Accuracy] Recorded: RELIANCE BUY BREAKOUT score=9 entry=₹2850.00 target=₹2884.20 SL=₹2832.90 [2/100 today, 2 active]
+[Accuracy] SUCCESS: TATASTEEL BUY at ₹146.70 (+0.82%) [1 active]
+[Accuracy] FAILED: RELIANCE BUY at ₹2832.50 (-0.61%) [0 active]
+[Accuracy] NEUTRAL (market close): INFY BUY at ₹1520.00 (+0.30%)
 ```
 
 ---

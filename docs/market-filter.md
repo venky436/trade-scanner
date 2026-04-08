@@ -176,7 +176,7 @@ Bounce rejections are logged in the `bounce` counter in the batch cycle stats.
 - Signal engine logic (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN rules)
 - Score computation (Pressure 30%, Momentum 25%, S/R 25%, Volatility 10%, Signal 10%)
 - Market phase control (OPENING/STABILIZING/NORMAL)
-- Accuracy tracking (daily cap 100, target +1.0%, SL -0.7%)
+- Accuracy tracking (daily cap 100, type-specific targets/SL per signal type)
 - Broadcast/WebSocket pipeline
 - Frontend display
 

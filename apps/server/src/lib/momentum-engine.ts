@@ -13,8 +13,8 @@ function getSignal(value: number): MomentumSignal {
 }
 
 function getAcceleration(raw: number): MomentumAcceleration {
-  if (raw > 0.001) return "INCREASING";
-  if (raw < -0.001) return "DECREASING";
+  if (raw > 0.003) return "INCREASING";
+  if (raw < -0.003) return "DECREASING";
   return "STABLE";
 }
 

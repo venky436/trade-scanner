@@ -160,12 +160,13 @@ Resistance distance = 3.2% → score 0.30
 Best = max(1.00, 0.30) = 1.00
 ```
 
-**Confirmed signal:** When a signal has a type (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN), the S/R score is set to 1.0 (full). The level proved itself by creating a tradeable event — distance no longer matters. Quality differentiation comes from pressure, momentum, volatility, and signal components.
+**Confirmed signal:** When a signal has a type (BREAKOUT/BOUNCE/REJECTION/BREAKDOWN), the S/R score uses the actual distance-based score but with a **floor of 0.7**. The level proved itself by creating a tradeable event, so it deserves a high S/R score — but signals far from the level should not get the same score as signals right at the level. This prevents marginal breakouts at 0.9% distance from scoring identically to breakouts at 0.2% distance.
 
 ```
 Approaching resistance (no type): distance 0.3% → score 1.0
-After breakout (type=BREAKOUT):   distance 0.5% → score 1.0 (confirmed)
-After breakout moved further:     distance 2.0% → score 1.0 (confirmed)
+After breakout (type=BREAKOUT):   distance 0.3% → score 1.0 (confirmed, computed=1.0)
+After breakout (type=BREAKOUT):   distance 0.8% → score 0.8 (confirmed, floor=0.7, computed=0.8)
+After breakout moved further:     distance 2.0% → score 0.7 (confirmed, floor=0.7, computed=0.6)
 ```
 
 ---
@@ -286,7 +287,7 @@ RELIANCE rejected at resistance, strong selling
 
 Pressure  = SELL (→ 0.75 for SELL) × 0.30 = 0.225
 Momentum  = DOWN (→ 0.75 for SELL) × 0.25 = 0.188
-S/R confirmed                      × 0.25 = 0.200 (min 0.80)
+S/R confirmed (0.5% dist → 1.0, floor 0.7) × 0.25 = 0.250
 Volatility = 2.5% range → 0.80    × 0.10 = 0.080
 Signal    = SELL MEDIUM → 0.70    × 0.10 = 0.070
                                             ─────

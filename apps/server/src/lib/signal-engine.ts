@@ -59,13 +59,17 @@ export function getSignal(input: SignalInput): SignalResult {
 
     // CONFIRMED BREAKOUT: price has crossed ABOVE resistance + buffer
     const isAccelerating = momentum?.acceleration === "INCREASING";
-    const isHighQuality = momentum?.quality !== undefined ? momentum.quality > 0.5 : true;
+    const isHighQuality = momentum?.quality !== undefined ? momentum.quality > 0.6 : false;
+    const hasBreakoutConfidence = pressure.confidence >= 0.5;
+    const isStrongBuyPressure = pressure.signal === "STRONG_BUY" ||
+      (pressure.signal === "BUY" && pressure.confidence >= 0.6);
     if (
       price > resistanceLevel + buffer &&
-      isBuyPressure &&
+      isStrongBuyPressure &&
       isUpMomentum &&
       isAccelerating &&
-      isHighQuality
+      isHighQuality &&
+      hasBreakoutConfidence
     ) {
       reasons.push(`Breakout confirmed — price ₹${price.toFixed(2)} above resistance ₹${resistanceLevel.toFixed(2)}`);
       reasons.push(`${pressure.signal} pressure`);
@@ -102,7 +106,7 @@ export function getSignal(input: SignalInput): SignalResult {
       const momentumReversing = prevBullish && currBearish;
 
       // 4. Acceleration filter: must be decelerating
-      const isDecelerating = momentum.accelerationRaw < -0.001;
+      const isDecelerating = momentum.accelerationRaw < -0.002;
 
       // 5. Micro trend filter: block if last 3 candles show sustained uptrend
       let sustainedUptrend = false;
@@ -153,7 +157,7 @@ export function getSignal(input: SignalInput): SignalResult {
 
     // CONFIRMED BREAKDOWN: price has dropped BELOW support - buffer
     const isBreakdownAccelerating = momentum?.acceleration === "DECREASING";
-    const isBreakdownHighQuality = momentum?.quality !== undefined ? Math.abs(momentum.quality) > 0.5 : true;
+    const isBreakdownHighQuality = momentum?.quality !== undefined ? Math.abs(momentum.quality) > 0.6 : false;
     if (
       price < supportLevel - buffer &&
       pressure.signal === "STRONG_SELL" &&
@@ -196,7 +200,7 @@ export function getSignal(input: SignalInput): SignalResult {
       const momentumShifting = prevBearish && currBullish;
 
       // 4. Acceleration filter: must be accelerating upward
-      const isAcceleratingUp = momentum.accelerationRaw > 0.001;
+      const isAcceleratingUp = momentum.accelerationRaw > 0.002;
 
       // 5. Micro trend filter: block if last 3 candles show sustained downtrend
       let sustainedDowntrend = false;

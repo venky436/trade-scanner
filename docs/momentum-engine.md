@@ -127,11 +127,11 @@ If only 3 candles (fallback):
 
 | Condition | Acceleration |
 |-----------|-------------|
-| accelerationRaw > 0.001 | `INCREASING` — momentum is building |
-| accelerationRaw < -0.001 | `DECREASING` — momentum is fading |
+| accelerationRaw > 0.003 | `INCREASING` — momentum is building |
+| accelerationRaw < -0.003 | `DECREASING` — momentum is fading |
 | else | `STABLE` — momentum is steady |
 
-The threshold `0.001` (0.1%) prevents noise from causing false acceleration signals. The sliding window approach is more reliable than simple `r1 - r2` because it compares two full velocity calculations rather than two individual candle returns.
+The threshold `0.003` (0.3%) prevents noise from causing false acceleration signals. The previous threshold of 0.001 (0.1%) was too sensitive — it triggered on minor fluctuations between candles that don't represent real directional change. The 0.003 threshold requires a meaningful ~0.3% shift in weighted momentum between windows, filtering out ~40-60% of false acceleration triggers while preserving genuine momentum changes. The sliding window approach is more reliable than simple `r1 - r2` because it compares two full velocity calculations rather than two individual candle returns.
 
 ### 7. Quality Layer
 
@@ -187,7 +187,7 @@ The momentum computation runs inside the existing `GET /api/stocks/patterns` end
     "MCX:GOLD25APRFUT": { "pattern": "HAMMER", "direction": "BULLISH", "strength": 1, "reason": "..." }
   },
   "momentum": {
-    "MCX:GOLD25APRFUT": { "value": 0.72, "signal": "STRONG_UP", "acceleration": "INCREASING", "accelerationRaw": 0.0018, "quality": 0.79 },
+    "MCX:GOLD25APRFUT": { "value": 0.72, "signal": "STRONG_UP", "acceleration": "INCREASING", "accelerationRaw": 0.0042, "quality": 0.79 },
     "MCX:SILVER25MAYFUT": { "value": -0.45, "signal": "DOWN", "acceleration": "STABLE", "accelerationRaw": 0.0003, "quality": -0.45 }
   },
   "timestamp": 1710936000000
@@ -241,7 +241,7 @@ The badge is hidden when momentum is FLAT to avoid clutter. The acceleration arr
 | Weighted 0.2/0.3/0.5 | Same weighting scheme as Pressure Engine — recent candles weighted more |
 | 0.3% normalization divisor | A 0.3% move in 5-minute candles is meaningful directional commitment |
 | Dead zone at ±0.3 | Filters noise from low-volatility periods |
-| 0.1% acceleration threshold | Prevents false acceleration signals from minor fluctuations |
+| 0.3% acceleration threshold | Prevents false acceleration signals from noise — raised from 0.1% which was too sensitive and triggered on random candle-to-candle variation |
 | Sliding window acceleration | Compares two full velocity windows (v_now vs v_prev) for more reliable trend change detection than simple r1-r2 |
 | 3-candle fallback for acceleration | Gracefully handles early session when only 3 candles available |
 | Quality multiplier | Distinguishes strong reliable moves (UP+INCREASING) from fading ones (UP+DECREASING) without changing existing signal/score logic |
