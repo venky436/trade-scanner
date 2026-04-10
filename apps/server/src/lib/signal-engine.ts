@@ -59,7 +59,7 @@ export function getSignal(input: SignalInput): SignalResult {
 
     // CONFIRMED BREAKOUT: price has crossed ABOVE resistance + buffer
     const isAccelerating = momentum?.acceleration === "INCREASING";
-    const isHighQuality = momentum?.quality !== undefined ? momentum.quality > 0.6 : false;
+    const isHighQuality = momentum?.quality !== undefined ? momentum.quality > 0.5 : false;
     const hasBreakoutConfidence = pressure.confidence >= 0.5;
     const isStrongBuyPressure = pressure.signal === "STRONG_BUY" ||
       (pressure.signal === "BUY" && pressure.confidence >= 0.6);
@@ -157,7 +157,7 @@ export function getSignal(input: SignalInput): SignalResult {
 
     // CONFIRMED BREAKDOWN: price has dropped BELOW support - buffer
     const isBreakdownAccelerating = momentum?.acceleration === "DECREASING";
-    const isBreakdownHighQuality = momentum?.quality !== undefined ? Math.abs(momentum.quality) > 0.6 : false;
+    const isBreakdownHighQuality = momentum?.quality !== undefined ? Math.abs(momentum.quality) > 0.5 : false;
     if (
       price < supportLevel - buffer &&
       pressure.signal === "STRONG_SELL" &&
