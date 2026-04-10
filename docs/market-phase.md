@@ -42,7 +42,7 @@ Market Timeline (IST)
 | **CLOSED** | Before 9:15 / After 15:30 / Weekends | ×1.0 (no change) | None | N/A |
 | **OPENING** | 9:15 – 9:20 (0-5 min) | ×0.6 | Force ALL to WAIT | Disabled |
 | **STABILIZING** | 9:20 – 10:00 (5-45 min) | ×0.8 | Only confirmed types pass | Disabled |
-| **NORMAL** | 10:00 – 15:30 (45+ min) | ×1.0 (no change) | None | Enabled (until 2:45 PM) |
+| **NORMAL** | 10:00 – 15:30 (45+ min) | ×1.0 (no change) | None | Enabled (until 3:30 PM) |
 
 ### CLOSED (Before 9:15 / After 15:30 / Weekends)
 

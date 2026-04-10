@@ -189,7 +189,7 @@ CONTINUATION signals are tracked **separately** in the accuracy database:
 - Stored with `signalType = "CONTINUATION"`
 - Admin dashboard shows CONTINUATION as its own row in "Win Rate by Type"
 - Does NOT pollute BREAKOUT/BOUNCE/REJECTION/BREAKDOWN accuracy
-- Subject to same gates: score ≥ 9, NORMAL phase, 10:00 AM – 2:45 PM IST, price ≥ ₹50
+- Subject to same gates: score ≥ 9, NORMAL phase, 10:00 AM – 3:30 PM IST, price ≥ ₹50
 
 ---
 
