@@ -22,12 +22,8 @@ MARKET OPENS (9:15 AM IST)
    ❌ Still blocked — signals unreliable (45 min warmup)
         │
         ▼
-   NORMAL PHASE (10:00 - 14:45)
-   ✅ Accuracy tracking ENABLED
-        │
-        ▼
-   LATE SESSION (14:45 - 15:30)
-   ❌ Accuracy tracking DISABLED — position squaring noise
+   NORMAL PHASE (10:00 - 15:30)
+   ✅ Accuracy tracking ENABLED until market close
         │
         ▼
 ┌─────────────────────────────────────────────────┐
@@ -284,7 +280,7 @@ Log: "[Accuracy] Loaded 12 pending signals from DB [12 active]"
 | Min risk-reward | 1.0 | Reward must be >= risk |
 | Min score | 9 | Only highest-confidence signals |
 | Market phase | NORMAL only (10:00 AM+) | Skip OPENING/STABILIZING (first 45 min) |
-| Late session cutoff | Before 2:45 PM IST | Stop tracking after 14:45 — position squaring noise |
+| Late session cutoff | Before 3:30 PM IST | Stop tracking after 15:30 — market close |
 | Min price | ₹50 | Skip low-price stocks — unreliable signals |
 | Targets/SL | Type-specific (see table below) | Different signal types have different risk profiles |
 
@@ -360,7 +356,7 @@ Signal arrives at setCacheEntry()
   Gate 3: signal.type exists?            → skip if no BREAKOUT/BOUNCE/REJECTION/BREAKDOWN
   Gate 4: stage == CONFIRMED?            → skip if MOMENTUM/PRESSURE stage
   Gate 5: marketPhase == NORMAL?         → skip if OPENING/STABILIZING (before 10:00 AM)
-  Gate 6: time < 2:45 PM IST?           → skip if late session
+  Gate 6: time < 3:30 PM IST?           → skip if market closed
   Gate 7: price >= ₹50?                 → skip if low-price stock
   │
   ALL PASS → record for accuracy
@@ -373,7 +369,7 @@ Signal arrives at setCacheEntry()
 | signal.type exists | Has BREAKOUT/BOUNCE/REJECTION/BREAKDOWN | MOMENTUM/PRESSURE stage signals (no S/R validation) |
 | stage == CONFIRMED | Passed through signal engine with S/R checks | Early-stage signals that bypass S/R confirmation |
 | phase == NORMAL | Market is past opening volatility | First 45 minutes of trading (until 10:00 AM) |
-| time < 2:45 PM | Before late session cutoff | Position squaring noise in last 45 min |
+| time < 3:30 PM | Before market close | Stop recording after market closes |
 | price >= ₹50 | Minimum stock price | Low-price penny stocks with unreliable signals |
 
 Plus the accuracy service adds:
