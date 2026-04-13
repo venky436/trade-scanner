@@ -25,7 +25,6 @@ interface ServerDeps {
   getCachedLevels?: () => Record<string, SupportResistanceResult>;
   getEodJob?: () => EodJob | null;
   getAccuracyService?: () => SignalAccuracyService | null;
-  getSignalSnapshot?: (symbol: string) => any;
   getMomentum?: (symbol: string) => any;
 }
 
@@ -53,7 +52,6 @@ export async function buildServer(deps: ServerDeps) {
     onLevelsComputed: deps.onLevelsComputed,
     getCachedLevels: deps.getCachedLevels,
     getEodJob: deps.getEodJob,
-    getSignalSnapshot: deps.getSignalSnapshot,
     getMomentum: deps.getMomentum,
   });
 

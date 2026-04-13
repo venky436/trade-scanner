@@ -17,7 +17,15 @@ import {
   type Time,
   type IPriceLine,
 } from "lightweight-charts";
-import type { CandleData, StockData } from "@/lib/types";
+import type { CandleData } from "@/lib/types";
+
+// Minimal tick shape for live chart updates — kept narrow so the chart doesn't
+// depend on the full IntelligenceSnapshot (volume isn't part of the public payload).
+export interface ChartTick {
+  price: number;
+  timestamp: number;
+  volume?: number;
+}
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
 
@@ -47,7 +55,7 @@ function computeMA(candles: CandleData[], period: number): LineData<Time>[] {
 interface CandlestickChartProps {
   symbol: string;
   interval: string;
-  tick: StockData | null;
+  tick: ChartTick | null;
   days?: number;
   supportLevel?: number | null;
   resistanceLevel?: number | null;
@@ -297,7 +305,7 @@ export function CandlestickChart({
         high: Math.max(last.high, tick.price),
         low: Math.min(last.low, tick.price),
         close: tick.price,
-        volume: tick.volume,
+        volume: tick.volume ?? last.volume,
       };
       lastCandleRef.current = updated;
 
@@ -323,7 +331,7 @@ export function CandlestickChart({
         high: tick.price,
         low: tick.price,
         close: tick.price,
-        volume: tick.volume,
+        volume: tick.volume ?? 0,
       };
       lastCandleRef.current = newCandle;
 

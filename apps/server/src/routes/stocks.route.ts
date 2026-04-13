@@ -1,16 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { KiteConnect } from "kiteconnect";
 import type { WsManager } from "../ws/ws-server.js";
-import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal, MomentumResult, SignalSnapshot } from "../lib/types.js";
-import { getSignal } from "../lib/signal-engine.js";
-import { computeSignalScore } from "../lib/score-engine.js";
-import { applyMarketPhase } from "../lib/market-phase.js";
+import type { InstrumentMaps, Candle, SupportResistanceResult, PatternSignal, MomentumResult, PressureResult } from "../lib/types.js";
 import { getSupportResistance } from "../services/levels.service.js";
 import { marketDataService } from "../services/market-data.service.js";
 import type { PressureEngine } from "../services/pressure.service.js";
 import type { EodJob } from "../services/eod-job.service.js";
 import { detectPattern } from "../lib/pattern-engine.js";
 import { getMomentum } from "../lib/momentum-engine.js";
+import { pressureFromCandles } from "../lib/pressure-from-candles.js";
+import { toIntelligence } from "../lib/intelligence-transformer.js";
 
 const VALID_INTERVALS = [
   "minute",
@@ -32,7 +31,6 @@ interface StocksRouteOpts {
   onLevelsComputed?: (levels: Record<string, SupportResistanceResult>) => void;
   getCachedLevels?: () => Record<string, SupportResistanceResult>;
   getEodJob?: () => EodJob | null;
-  getSignalSnapshot?: (symbol: string) => SignalSnapshot | null;
   getMomentum?: (symbol: string) => MomentumResult | null;
 }
 
@@ -56,10 +54,11 @@ export async function stocksRoute(
   fastify.get("/api/stocks", async () => {
     const wsManager = opts.getWsManager();
     if (!wsManager) {
-      return { count: 0, data: [], timestamp: Date.now(), status: "not_connected" };
+      return { count: 0, data: [], market: null, timestamp: Date.now(), status: "not_connected" };
     }
     const data = wsManager.buildSnapshot();
-    return { count: data.length, data, timestamp: Date.now() };
+    const market = wsManager.buildMarketContextSnapshot();
+    return { count: data.length, data, market, timestamp: Date.now() };
   });
 
   // --- S/R Levels for all stocks (served from background worker cache) ---
@@ -358,6 +357,7 @@ export async function stocksRoute(
     const levels = opts.getCachedLevels?.() ?? {};
     let sr = levels[symbol] ?? null;
     let onDemandMomentum: MomentumResult | null = null;
+    let onDemandPressure: PressureResult | null = null;
 
     // Price from live quote
     let price = quote?.lastPrice ?? 0;
@@ -367,7 +367,11 @@ export async function stocksRoute(
     let close = quote?.close ?? 0;
     let volume = quote?.volume ?? 0;
 
-    // For untracked stocks (or missing data): fetch candles from Kite API
+    // For untracked stocks (or missing data): fetch candles from Kite API.
+    // We fetch TWO series in parallel:
+    //   - 25 × daily candles → S/R computation + fallback price data
+    //   - intraday 5-min candles (today's session) → momentum + pressure approximation
+    //     at the same scale the live engines use for tracked stocks.
     const needsCandles = !isTracked || (!sr && price === 0);
     if (needsCandles) {
       const token = instrumentMaps.symbolToToken.get(symbol)
@@ -377,91 +381,95 @@ export async function stocksRoute(
         try {
           const kc = new KiteConnect({ api_key: opts.apiKey });
           kc.setAccessToken(accessToken);
+
           const to = new Date();
-          const from = new Date();
-          from.setDate(from.getDate() - 25);
-          const data = await kc.getHistoricalData(token, "day" as any, formatDate(from), formatDate(to));
-          const candles: Candle[] = data.map((d: any) => ({
-            time: Math.floor(new Date(d.date).getTime() / 1000),
-            open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume,
-          }));
+          const dailyFrom = new Date();
+          dailyFrom.setDate(dailyFrom.getDate() - 25);
+          const intradayFrom = new Date();
+          intradayFrom.setDate(intradayFrom.getDate() - 1); // cover yesterday's tail + today
+          intradayFrom.setHours(0, 0, 0, 0);
 
-          if (candles.length >= 2) {
-            // Set price from latest candle if no live quote
-            const last = candles[candles.length - 1];
-            if (!quote) {
-              price = last.close;
-              open = last.open; high = last.high; low = last.low; close = last.close; volume = last.volume;
+          const [dailyResult, intradayResult] = await Promise.allSettled([
+            kc.getHistoricalData(token, "day" as any, formatDate(dailyFrom), formatDate(to)),
+            kc.getHistoricalData(token, "5minute" as any, formatDate(intradayFrom), formatDate(to)),
+          ]);
+
+          // ── Daily candles → S/R + fallback price ──
+          if (dailyResult.status === "fulfilled") {
+            const dailyCandles: Candle[] = dailyResult.value.map((d: any) => ({
+              time: Math.floor(new Date(d.date).getTime() / 1000),
+              open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume,
+            }));
+
+            if (dailyCandles.length >= 2) {
+              // Set price from latest daily candle if no live quote
+              const last = dailyCandles[dailyCandles.length - 1];
+              if (!quote) {
+                price = last.close;
+                open = last.open; high = last.high; low = last.low; close = last.close; volume = last.volume;
+              }
+
+              // Compute S/R if not cached
+              if (!sr && price > 0) {
+                sr = getSupportResistance(dailyCandles, price);
+              }
             }
+          }
 
-            // Compute S/R if not cached
-            if (!sr && price > 0) {
-              sr = getSupportResistance(candles, price);
-            }
+          // ── Intraday 5-min candles → momentum + pressure at the live engine's scale ──
+          if (intradayResult.status === "fulfilled") {
+            const intradayCandles: Candle[] = intradayResult.value.map((d: any) => ({
+              time: Math.floor(new Date(d.date).getTime() / 1000),
+              open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume,
+            }));
 
-            // Compute momentum from daily candles
-            if (candles.length >= 3) {
-              onDemandMomentum = getMomentum(candles.slice(-3));
+            if (intradayCandles.length >= 3) {
+              // Momentum: last 3 × 5-min candles — matches the live candle-tracker feed
+              onDemandMomentum = getMomentum(intradayCandles.slice(-3));
+
+              // Pressure: approximate from the same 5-min window
+              onDemandPressure = pressureFromCandles(intradayCandles.slice(-3));
             }
           }
         } catch {
-          // ignore API errors
+          // ignore API errors — we fall back to whatever we have
         }
       }
     }
 
-    // Get existing engine data if tracked, or use on-demand computed values
-    const signalSnap = opts.getSignalSnapshot?.(symbol);
+    // Live engine data if tracked, or on-demand computed values
     const momentum = opts.getMomentum?.(symbol) ?? onDemandMomentum;
-    const pressure = opts.getPressureEngine()?.getPressure(symbol) ?? null;
+    const pressure =
+      opts.getPressureEngine()?.getPressure(symbol) ?? onDemandPressure ?? null;
 
-    // Compute signal
-    const change = close !== 0 ? Math.round(((price - close) / close) * 10000) / 100 : 0;
-    let signal = signalSnap?.signal ?? null;
+    // Build the public intelligence shape
+    const intelligence = toIntelligence({
+      symbol,
+      price,
+      open,
+      high,
+      low,
+      close,
+      timestamp: quote?.timestamp ?? Date.now(),
+      pressure,
+      momentum,
+      sr,
+    });
 
-    if (!signal && sr && price > 0) {
-      const freshSr = {
-        supportZone: sr.supportZone ? { level: sr.supportZone.level, distancePercent: Math.abs(price - sr.supportZone.level) / price * 100 } : null,
-        resistanceZone: sr.resistanceZone ? { level: sr.resistanceZone.level, distancePercent: Math.abs(price - sr.resistanceZone.level) / price * 100 } : null,
-      };
-      signal = getSignal({ price, sr: freshSr, pressure, momentum, pattern: null, recentCandles: [] });
-    }
-
-    // Always compute score (even if signal came from cache — ensures scoreBreakdown)
-    if (signal && price > 0) {
-      const { score, breakdown } = computeSignalScore({ pressure, momentum, pattern: null, sr, signal, price, open, high, low });
-      signal.score = score;
-      signal.scoreBreakdown = {
-        pressure: Math.round(breakdown.pressure * 10),
-        momentum: Math.round(breakdown.momentum * 10),
-        sr: Math.round(breakdown.sr * 10),
-        pattern: Math.round(breakdown.pattern * 10),
-        volatility: Math.round(breakdown.volatility * 10),
-      };
-
-      // Apply market phase adjustment (same as signal-worker)
-      if (!signal.marketPhase) {
-        const phaseResult = applyMarketPhase(signal, score);
-        signal.finalScore = phaseResult.finalScore;
-        signal.marketPhase = phaseResult.marketPhase;
-        signal.warningMessage = phaseResult.warningMessage;
-        if (phaseResult.marketPhase === "OPENING") {
-          signal.action = "WAIT";
-          signal.confidence = "LOW";
-        } else if (phaseResult.marketPhase === "STABILIZING") {
-          signal.action = phaseResult.decision;
-          signal.confidence = phaseResult.confidence;
-        }
-      }
-    }
+    // Chart-helper levels (kept outside intelligence so the frontend chart can draw both lines).
+    // This is NOT scoring — it is raw context for chart rendering.
+    const chartLevels = sr
+      ? { support: sr.support, resistance: sr.resistance }
+      : { support: null, resistance: null };
 
     const result = {
-      symbol,
-      price, open, high, low, close, volume, change,
-      signal,
-      momentum,
-      pressure: pressure ? pressure : { status: "UNAVAILABLE", reason: "Not tracked in real-time" },
-      srLevels: sr,
+      ...intelligence,
+      volume,
+      open,
+      high,
+      low,
+      close,
+      levels: chartLevels,
       dataSource: isTracked ? "live" : "on-demand",
       computedAt: Date.now(),
     };

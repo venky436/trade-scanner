@@ -1,23 +1,26 @@
 "use client";
 
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
-import type { StockData, MarketMessage } from "@/lib/types";
+import type { IntelligenceSnapshot, MarketContext, MarketMessage } from "@/lib/types";
 import { WS_URL } from "@/lib/constants";
 
 interface MarketDataState {
-  stockMap: Map<string, StockData>;
+  stockMap: Map<string, IntelligenceSnapshot>;
+  marketContext: MarketContext | null;
   isConnected: boolean;
   error: string | null;
 }
 
 export const MarketDataContext = createContext<MarketDataState>({
   stockMap: new Map(),
+  marketContext: null,
   isConnected: false,
   error: null,
 });
 
 export function MarketDataProvider({ children }: { children: React.ReactNode }) {
-  const [stockMap, setStockMap] = useState<Map<string, StockData>>(new Map());
+  const [stockMap, setStockMap] = useState<Map<string, IntelligenceSnapshot>>(new Map());
+  const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,8 +49,10 @@ export function MarketDataProvider({ children }: { children: React.ReactNode }) 
         try {
           const msg: MarketMessage = JSON.parse(event.data);
 
+          if (msg.market) setMarketContext(msg.market);
+
           if (msg.type === "snapshot") {
-            const newMap = new Map<string, StockData>();
+            const newMap = new Map<string, IntelligenceSnapshot>();
             for (const stock of msg.data) {
               newMap.set(stock.symbol, stock);
             }
@@ -101,7 +106,7 @@ export function MarketDataProvider({ children }: { children: React.ReactNode }) 
   }, [connect]);
 
   return (
-    <MarketDataContext.Provider value={{ stockMap, isConnected, error }}>
+    <MarketDataContext.Provider value={{ stockMap, marketContext, isConnected, error }}>
       {children}
     </MarketDataContext.Provider>
   );

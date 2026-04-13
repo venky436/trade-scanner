@@ -179,8 +179,7 @@ async function main() {
       symbols: instrumentMaps.symbols,
       getPressure: (s) => pressureEngine.getPressure(s),
       getMomentum: (s) => momentumMap.get(s) ?? null,
-      getPattern: (s) => patternMap.get(s) ?? null,
-      getSignalSnapshot: (s) => signalWorker.getSignal(s),
+      getLevels: (s) => cachedLevels[s] ?? null,
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
     });
     wsManager.attach(server.server);
@@ -246,9 +245,8 @@ async function main() {
       maxPerBroadcast: 150,
       getPressure: (s) => pressureEngine.getPressure(s),
       getMomentum: (s) => momentumMap.get(s) ?? null,
-      getPattern: (s) => patternMap.get(s) ?? null,
+      getLevels: (s) => cachedLevels[s] ?? null,
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
-      getSignalSnapshot: (s) => signalWorker.getSignal(s),
     });
     broadcast.start();
     broadcastStop = broadcast.stop;
@@ -285,7 +283,12 @@ async function main() {
     for (const delay of [8000, 15000]) {
       setTimeout(() => {
         if (wsManager && wsManager.clientCount() > 0) {
-          const snapshot = { type: "snapshot" as const, data: wsManager.buildSnapshot(), timestamp: Date.now() };
+          const snapshot = {
+            type: "snapshot" as const,
+            data: wsManager.buildSnapshot(),
+            market: wsManager.buildMarketContextSnapshot(),
+            timestamp: Date.now(),
+          };
           wsManager.broadcast(snapshot);
           console.log(`[Startup] Pushed snapshot (${snapshot.data.length} stocks) to ${wsManager.clientCount()} clients at +${delay / 1000}s`);
         }
@@ -318,7 +321,6 @@ async function main() {
     onLevelsComputed: (levels) => { cachedLevels = levels; },
     getCachedLevels: () => cachedLevels,
     getEodJob: () => eodJobInstance,
-    getSignalSnapshot: (s: string) => signalWorkerInstance?.getSignal(s) ?? null,
     getMomentum: (s: string) => currentMomentumMap?.get(s) ?? null,
     getAccuracyService: () => accuracyServiceInstance,
   });

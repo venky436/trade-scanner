@@ -160,3 +160,70 @@ export interface SignalSnapshot {
   momentumVersion: number;
   patternVersion: number;
 }
+
+// ── Market Intelligence (public, user-facing shape) ──
+
+export type Zone = "NEAR_RESISTANCE" | "NEAR_SUPPORT" | "MID_RANGE";
+export type IntelligenceMomentumLabel = "STRONG_UP" | "WEAK_UP" | "NEUTRAL" | "WEAK_DOWN" | "STRONG_DOWN";
+export type IntelligencePressureLabel = "BUY" | "NEUTRAL" | "SELL";
+export type VolatilityLabel = "HIGH" | "MEDIUM" | "LOW";
+export type Outlook =
+  | "BREAKOUT_LIKELY"
+  | "BREAKDOWN_RISK"
+  | "BOUNCE_EXPECTED"
+  | "REJECTION_POSSIBLE"
+  | "NO_CLEAR_EDGE";
+export type Bias = "BULLISH" | "BEARISH" | "NEUTRAL";
+export type ConfidenceLabel = "HIGH" | "MEDIUM" | "LOW";
+
+export interface IntelligenceContext {
+  zone: Zone;
+  distanceToLevel: number | null; // percent, e.g. 0.35
+  level: number | null;           // the nearby S or R price
+}
+
+export interface IntelligenceMomentum {
+  label: IntelligenceMomentumLabel;
+  score: number; // 0..1 magnitude
+}
+
+export interface IntelligencePressure {
+  label: IntelligencePressureLabel;
+  score: number; // 0..1 magnitude
+}
+
+export interface IntelligenceVolatility {
+  label: VolatilityLabel;
+  score: number; // 0..1
+}
+
+export interface IntelligenceSnapshot {
+  symbol: string;
+  price: number;
+  change: number; // % change vs prev close (so the card can render price delta)
+  timestamp: number;
+  context: IntelligenceContext;
+  momentum: IntelligenceMomentum;
+  pressure: IntelligencePressure;
+  volatility: IntelligenceVolatility;
+  outlook: Outlook;
+  bias: Bias;
+  confidence: number; // 0..1
+  confidenceLabel: ConfidenceLabel;
+}
+
+export type MarketCondition = "TRENDING" | "SIDEWAYS";
+export type IndexDirection = "UP" | "DOWN" | "FLAT";
+
+export interface MarketContext {
+  condition: MarketCondition;
+  nifty: { direction: IndexDirection; changePercent: number };
+  bankNifty: { direction: IndexDirection; changePercent: number };
+}
+
+export interface IntelligenceWsMessage {
+  type: "snapshot" | "market_update";
+  data: IntelligenceSnapshot[];
+  market: MarketContext | null;
+  timestamp: number;
+}
