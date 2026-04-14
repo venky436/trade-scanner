@@ -11,6 +11,7 @@ import { createLevelsWorker, type LevelsWorker } from "./services/levels-worker.
 import { createStockFilter, type StockFilter } from "./services/stock-filter.service.js";
 import { createEodJob, type EodJob } from "./services/eod-job.service.js";
 import { createSignalAccuracyService, type SignalAccuracyService } from "./services/signal-accuracy.service.js";
+import { createSignalTrackingService, type SignalTrackingService } from "./services/signal-tracking.service.js";
 import { redisService } from "./services/redis.service.js";
 import { getIntradaySR } from "./services/intraday-levels.service.js";
 import { getMomentum } from "./lib/momentum-engine.js";
@@ -40,6 +41,7 @@ async function main() {
   let stockFilterInstance: StockFilter | null = null;
   let eodJobInstance: EodJob | null = null;
   let accuracyServiceInstance: SignalAccuracyService | null = null;
+  let trackingServiceInstance: SignalTrackingService | null = null;
 
   // Exposed so routes can use them
   let currentAccessToken: string | null = null;
@@ -152,9 +154,13 @@ async function main() {
     signalWorker.setSymbols(instrumentMaps.symbols);
     signalWorkerInstance = signalWorker;
 
-    // Create signal accuracy service
+    // Create signal accuracy service (old: score-based, target/SL evaluation)
     const accuracyService = createSignalAccuracyService();
     accuracyServiceInstance = accuracyService;
+
+    // Create signal tracking service (new: confidence-bucketed, 15-min evaluation)
+    const trackingService = createSignalTrackingService();
+    trackingServiceInstance = trackingService;
 
     // Hook: record high-confidence signals for accuracy tracking
     signalWorker.setOnHighConfidenceSignal((symbol, signal, price) => {
@@ -247,6 +253,9 @@ async function main() {
       getMomentum: (s) => momentumMap.get(s) ?? null,
       getLevels: (s) => cachedLevels[s] ?? null,
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
+      onIntelligenceComputed: (symbol, intel, price) => {
+        trackingService.recordSignal(symbol, intel, price);
+      },
     });
     broadcast.start();
     broadcastStop = broadcast.stop;
@@ -256,6 +265,7 @@ async function main() {
     signalWorker.start();
     levelsWorker.start();
     accuracyService.start();
+    trackingService.start();
 
     // Connect to Kite ticker
     if (tickerDisconnect) tickerDisconnect();
@@ -323,6 +333,7 @@ async function main() {
     getEodJob: () => eodJobInstance,
     getMomentum: (s: string) => currentMomentumMap?.get(s) ?? null,
     getAccuracyService: () => accuracyServiceInstance,
+    getTrackingService: () => trackingServiceInstance,
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });
@@ -347,6 +358,7 @@ async function main() {
     if (signalWorkerInstance) signalWorkerInstance.stop();
     if (levelsWorkerInstance) levelsWorkerInstance.stop();
     if (accuracyServiceInstance) accuracyServiceInstance.stop();
+    if (trackingServiceInstance) trackingServiceInstance.stop();
     if (broadcastStop) broadcastStop();
     if (tickerDisconnect) tickerDisconnect();
     if (wsManager) wsManager.close();

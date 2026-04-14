@@ -18,6 +18,7 @@ interface BroadcastConfig {
   getMomentum?: (symbol: string) => MomentumResult | null;
   getLevels?: (symbol: string) => SupportResistanceResult | null;
   getEligibleSymbols?: () => string[];
+  onIntelligenceComputed?: (symbol: string, intel: IntelligenceSnapshot, price: number) => void;
 }
 
 const NIFTY_SYMBOL = "NIFTY 50";
@@ -68,6 +69,8 @@ export function createBroadcastEngine(config: BroadcastConfig) {
         sr: config.getLevels?.(symbol) ?? null,
       });
       candidates.push(intel);
+
+      config.onIntelligenceComputed?.(symbol, intel, q.lastPrice);
     }
 
     // Highest confidence first, then stocks with clearest outlook
