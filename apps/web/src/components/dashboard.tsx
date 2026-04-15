@@ -248,9 +248,9 @@ export function Dashboard() {
                   Icon={Landmark}
                 />
                 <IndexCard
-                  name="SENSEX"
-                  symbol="SENSEX"
-                  data={stockMap.get("SENSEX")}
+                  name="NIFTY FIN"
+                  symbol="NIFTY FIN SERVICE"
+                  data={stockMap.get("NIFTY FIN SERVICE")}
                   accent="amber"
                   Icon={BarChart3}
                 />
