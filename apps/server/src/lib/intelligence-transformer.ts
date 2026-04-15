@@ -46,6 +46,26 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+// Derive implied signal direction from zone + raw momentum value.
+// This avoids circular dependency: zone → direction → confidence → outlook.
+type ImpliedDirection = "BUY" | "SELL" | "NEUTRAL";
+
+function getImpliedDirection(zone: Zone, momentumValue: number): ImpliedDirection {
+  if (zone === "MID_RANGE") return "NEUTRAL";
+  // At resistance: positive momentum → breakout (BUY), negative → rejection (SELL)
+  // At support: positive momentum → bounce (BUY), negative → breakdown (SELL)
+  if (momentumValue > 0) return "BUY";
+  if (momentumValue < 0) return "SELL";
+  return "NEUTRAL";
+}
+
+// Only count the component if it aligns with the expected direction.
+function getDirectionalScore(value: number, direction: ImpliedDirection): number {
+  if (direction === "BUY") return Math.max(value, 0);
+  if (direction === "SELL") return Math.max(-value, 0);
+  return 0;
+}
+
 function computeZone(
   price: number,
   sr: SupportResistanceResult | null,
@@ -107,15 +127,25 @@ function buildVolatility(price: number, high: number, low: number): Intelligence
   return { label, score };
 }
 
-// Confidence — multiplier formula:
-// (momentum*0.5 + pressure*0.5) * (0.7 + volatility*0.3)
-// Volatility amplifies real moves, can't manufacture confidence on its own.
+// Direction-aware confidence:
+// Only count momentum/pressure that ALIGNS with the implied direction.
+// Wrong-direction strength contributes 0, not inflated confidence.
+// Minimum alignment check: both < 0.2 → cap at 0.1 to filter fake weak signals.
 function buildConfidence(
-  momentumScore: number,
-  pressureScore: number,
+  momentumValue: number,
+  pressureValue: number,
   volatilityScore: number,
+  direction: ImpliedDirection,
 ): { confidence: number; confidenceLabel: ConfidenceLabel } {
-  const base = momentumScore * 0.5 + pressureScore * 0.5;
+  const alignedMomentum = getDirectionalScore(momentumValue, direction);
+  const alignedPressure = getDirectionalScore(pressureValue, direction);
+
+  // Minimum alignment check: if both components are too weak, cap confidence
+  if (alignedMomentum < 0.2 && alignedPressure < 0.2) {
+    return { confidence: round2(clamp01(alignedMomentum + alignedPressure)), confidenceLabel: "LOW" };
+  }
+
+  const base = alignedMomentum * 0.5 + alignedPressure * 0.5;
   const amplifier = 0.7 + volatilityScore * 0.3;
   const confidence = clamp01(base * amplifier);
   const confidenceLabel: ConfidenceLabel =
@@ -156,7 +186,15 @@ export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
   const momentum = buildMomentum(input.momentum);
   const pressure = buildPressure(input.pressure);
   const volatility = buildVolatility(input.price, input.high, input.low);
-  const { confidence, confidenceLabel } = buildConfidence(momentum.score, pressure.score, volatility.score);
+
+  // Direction-aware pipeline: zone → direction → confidence → outlook
+  const direction = getImpliedDirection(zone, input.momentum?.value ?? 0);
+  const { confidence, confidenceLabel } = buildConfidence(
+    input.momentum?.value ?? 0,
+    input.pressure?.value ?? 0,
+    volatility.score,
+    direction,
+  );
   const outlook = buildOutlook(zone, momentum.label, confidenceLabel);
   const bias = buildBias(momentum.label, pressure.label);
 

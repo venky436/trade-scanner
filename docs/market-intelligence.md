@@ -137,11 +137,16 @@ candles.low  = 2420                        label: "MEDIUM",
 range = 2.2% / price                       score: 0.6
                                           }
 
-                                    →   confidence formula:
-                                          (0.78*0.5 + 0.71*0.5)
-                                          * (0.7 + 0.6*0.3)
-                                        = 0.745 * 0.88
-                                        = 0.655
+                                    →   direction (from zone + momentum):
+                                          NEAR_RESISTANCE + momentum > 0
+                                          → BUY (breakout implied)
+
+                                    →   confidence formula (direction-aware):
+                                          alignedMomentum = max(0.78, 0) = 0.78
+                                          alignedPressure = max(0.71, 0) = 0.71
+                                          base = (0.78*0.5 + 0.71*0.5) = 0.745
+                                          × (0.7 + 0.6*0.3) = × 0.88
+                                        = 0.656
                                     →   confidenceLabel: "MEDIUM"
 
                                     →   outlook lookup:
@@ -211,20 +216,51 @@ range ≥ 0.5%  → score 0.4   label MEDIUM
 range <  0.5% → score 0.2   label LOW
 ```
 
-### 5. Confidence (multiplier formula)
+### 5. Confidence (direction-aware formula)
 
-```ts
-confidence = (momentum.score * 0.5 + pressure.score * 0.5)
-           * (0.7 + volatility.score * 0.3)
+Confidence measures how strongly the market supports the **implied direction**, not raw magnitude. The pipeline is: `zone → direction → confidence → outlook` (no circular dependency).
+
+**Step 1 — Implied direction** (from zone + raw momentum value):
+
+```
+NEAR_RESISTANCE + momentum > 0  → BUY   (breakout implied)
+NEAR_RESISTANCE + momentum < 0  → SELL  (rejection implied)
+NEAR_SUPPORT    + momentum > 0  → BUY   (bounce implied)
+NEAR_SUPPORT    + momentum < 0  → SELL  (breakdown implied)
+MID_RANGE       + any           → NEUTRAL
 ```
 
-Volatility *amplifies* a real move but cannot manufacture confidence on its own. A wildly oscillating stock with no momentum and no pressure still scores LOW.
+**Step 2 — Directional alignment** (only count what supports the direction):
+
+```ts
+// BUY direction: only positive values help
+alignedMomentum = direction === "BUY" ? max(momentum.value, 0) : max(-momentum.value, 0)
+alignedPressure = direction === "BUY" ? max(pressure.value, 0) : max(-pressure.value, 0)
+// NEUTRAL direction: both = 0
+```
+
+**Step 3 — Minimum alignment check** (filter fake weak signals):
+
+```ts
+if (alignedMomentum < 0.2 && alignedPressure < 0.2) → cap at LOW, skip amplifier
+```
+
+**Step 4 — Confidence formula** (unchanged structure, direction-aware inputs):
+
+```ts
+base       = alignedMomentum * 0.5 + alignedPressure * 0.5
+confidence = base * (0.7 + volatility.score * 0.3)
+```
+
+Volatility *amplifies* a real directional move but cannot manufacture confidence on its own.
 
 ```
 confidence > 0.7  → HIGH
 confidence > 0.5  → MEDIUM
 otherwise         → LOW
 ```
+
+**Why this matters:** Previously, `|momentum.value|` and `|pressure.value|` were used — a stock with strong SELL pressure near support would get HIGH confidence for a BOUNCE outlook. Now, wrong-direction strength contributes 0.
 
 ### 6. Outlook (decision table — full truth table)
 
@@ -767,7 +803,7 @@ Identical refresh cadence as the stocks view. No new endpoints, no new state.
 | File | Purpose |
 |---|---|
 | `lib/intelligence-transformer.ts` | **NEW** — `toIntelligence()` + `buildMarketContext()` pure functions |
-| `lib/intelligence-transformer.test.ts` | **NEW** — 37 unit tests covering zone, momentum, pressure, volatility, confidence, outlook truth table, bias, market context |
+| `lib/intelligence-transformer.test.ts` | **NEW** — 40 unit tests covering zone, momentum, pressure, volatility, direction-aware confidence (aligned, wrong-direction, minimum alignment cap, MID_RANGE), outlook truth table, bias, market context |
 | `lib/pressure-from-candles.ts` | **NEW** — `pressureFromCandles()` pure function. Approximates pressure from recent minute candles using the same scoring formula as the live engine. Used by the on-demand snapshot endpoint for untracked stocks. |
 | `lib/pressure-from-candles.test.ts` | **NEW** — 9 unit tests covering guard clauses, strong BUY/SELL, dead zone, mixed direction, consistency boost, recent-candle weighting |
 | `lib/types.ts` | Added intelligence types alongside the existing internal types |

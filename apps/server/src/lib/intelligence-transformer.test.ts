@@ -158,26 +158,67 @@ describe("toIntelligence — confidence formula", () => {
     assert.equal(r.confidenceLabel, "LOW");
   });
 
-  it("high momentum + high pressure + high volatility → HIGH confidence", () => {
+  it("high aligned momentum + pressure near support + high volatility → HIGH confidence", () => {
     const r = toIntelligence(baseInput({
+      sr: makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } }),
       momentum: makeMomentum("STRONG_UP", 0.9),
       pressure: makePressure("STRONG_BUY", 0.9),
       high: 1030, low: 1000, // 3% range -> volatility 1.0
     }));
+    // direction=BUY (support + positive momentum), aligned m=0.9, aligned p=0.9
     // (0.9*0.5 + 0.9*0.5) * (0.7 + 1.0*0.3) = 0.9 * 1.0 = 0.9
     assert.ok(r.confidence > 0.7, `expected HIGH, got ${r.confidence}`);
     assert.equal(r.confidenceLabel, "HIGH");
   });
 
-  it("strong momentum + strong pressure + LOW volatility → MEDIUM confidence", () => {
+  it("high aligned momentum + pressure near support + LOW volatility → MEDIUM confidence", () => {
     const r = toIntelligence(baseInput({
+      sr: makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } }),
       momentum: makeMomentum("STRONG_UP", 0.9),
       pressure: makePressure("STRONG_BUY", 0.9),
       high: 1003, low: 1000, // 0.3% range -> volatility 0.2
     }));
-    // 0.9 * (0.7 + 0.06) = 0.9 * 0.76 = 0.684
+    // direction=BUY, aligned m=0.9, aligned p=0.9
+    // 0.9 * (0.7 + 0.2*0.3) = 0.9 * 0.76 = 0.684
     assert.ok(r.confidence > 0.5 && r.confidence <= 0.7, `expected MEDIUM, got ${r.confidence}`);
     assert.equal(r.confidenceLabel, "MEDIUM");
+  });
+
+  it("wrong-direction pressure near support → LOW confidence", () => {
+    const r = toIntelligence(baseInput({
+      sr: makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } }),
+      momentum: makeMomentum("WEAK_UP", 0.2),
+      pressure: makePressure("STRONG_SELL", -0.8),
+      high: 1010, low: 990,
+    }));
+    // direction=BUY (support + positive momentum), aligned p=max(-0.8,0)=0
+    // aligned m=0.2, aligned p=0 → min alignment check: m≥0.2 passes
+    // base = 0.2*0.5 + 0*0.5 = 0.1 → LOW
+    assert.ok(r.confidence <= 0.5, `expected LOW, got ${r.confidence}`);
+    assert.equal(r.confidenceLabel, "LOW");
+  });
+
+  it("MID_RANGE → confidence 0 regardless of magnitude", () => {
+    const r = toIntelligence(baseInput({
+      momentum: makeMomentum("STRONG_UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
+      high: 1030, low: 1000,
+    }));
+    // direction=NEUTRAL (MID_RANGE), all aligned scores = 0
+    assert.equal(r.confidence, 0);
+    assert.equal(r.confidenceLabel, "LOW");
+  });
+
+  it("both aligned < 0.2 → minimum alignment cap (LOW)", () => {
+    const r = toIntelligence(baseInput({
+      sr: makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } }),
+      momentum: makeMomentum("WEAK_UP", 0.1),
+      pressure: makePressure("BUY", 0.15),
+      high: 1010, low: 990,
+    }));
+    // direction=BUY, aligned m=0.1, aligned p=0.15 → both < 0.2 → capped
+    assert.ok(r.confidence <= 0.25, `expected very low, got ${r.confidence}`);
+    assert.equal(r.confidenceLabel, "LOW");
   });
 });
 
