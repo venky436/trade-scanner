@@ -187,7 +187,7 @@ describe("toIntelligence — confidence formula", () => {
   it("wrong-direction pressure near support → LOW confidence", () => {
     const r = toIntelligence(baseInput({
       sr: makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } }),
-      momentum: makeMomentum("WEAK_UP", 0.2),
+      momentum: makeMomentum("UP", 0.2),
       pressure: makePressure("STRONG_SELL", -0.8),
       high: 1010, low: 990,
     }));
@@ -212,7 +212,7 @@ describe("toIntelligence — confidence formula", () => {
   it("both aligned < 0.2 → minimum alignment cap (LOW)", () => {
     const r = toIntelligence(baseInput({
       sr: makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } }),
-      momentum: makeMomentum("WEAK_UP", 0.1),
+      momentum: makeMomentum("UP", 0.1),
       pressure: makePressure("BUY", 0.15),
       high: 1010, low: 990,
     }));
