@@ -1,9 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import type { SignalAccuracyService } from "../services/signal-accuracy.service.js";
+import type { SignalTrackingService } from "../services/signal-tracking.service.js";
 import { authMiddleware, adminGuard } from "../modules/auth/auth.middleware.js";
 
 interface AdminRouteOpts {
   getAccuracyService: () => SignalAccuracyService | null;
+  getTrackingService?: () => SignalTrackingService | null;
 }
 
 export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts) {
@@ -33,6 +35,31 @@ export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts)
 
     const { date } = req.query as { date?: string };
     const signals = await service.getRecentSignals(500, date ? new Date(date) : undefined);
+    return { signals, count: signals.length };
+  });
+
+  // ── Signal Tracking (confidence-bucketed, 15-min evaluation) ──
+
+  fastify.get("/api/admin/tracking", { preHandler: [authMiddleware, adminGuard] }, async (_req, reply) => {
+    const service = opts.getTrackingService?.();
+    if (!service) return reply.status(503).send({ error: "Tracking service not initialized" });
+    const metrics = await service.getMetrics();
+    return metrics ?? { error: "No data" };
+  });
+
+  fastify.get("/api/admin/tracking/:date", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+    const service = opts.getTrackingService?.();
+    if (!service) return reply.status(503).send({ error: "Tracking service not initialized" });
+    const { date } = req.params as { date: string };
+    const metrics = await service.getMetrics(new Date(date));
+    return metrics ?? { error: "No data" };
+  });
+
+  fastify.get("/api/admin/tracking/signals", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+    const service = opts.getTrackingService?.();
+    if (!service) return reply.status(503).send({ error: "Tracking service not initialized" });
+    const { date } = req.query as { date?: string };
+    const signals = await service.getRecentSignals(200, date ? new Date(date) : undefined);
     return { signals, count: signals.length };
   });
 }

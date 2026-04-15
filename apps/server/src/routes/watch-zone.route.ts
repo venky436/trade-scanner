@@ -35,13 +35,13 @@ export async function watchZoneRoute(fastify: FastifyInstance) {
       signalType?: string;
     };
 
-    if (!symbol || !addedPrice || !signalAction) {
-      return reply.status(400).send({ error: "symbol, addedPrice, and signalAction are required" });
+    if (!symbol || !addedPrice) {
+      return reply.status(400).send({ error: "symbol and addedPrice are required" });
     }
 
-    if (signalAction !== "BUY" && signalAction !== "SELL") {
-      return reply.status(400).send({ error: "signalAction must be BUY or SELL" });
-    }
+    // signalAction / signalType are kept inert for back-compat: stored if provided,
+    // otherwise defaulted. The frontend renders live intelligence, not these fields.
+    const storedAction = signalAction ?? "WATCH";
 
     try {
       // Check limit
@@ -64,7 +64,7 @@ export async function watchZoneRoute(fastify: FastifyInstance) {
         userId: req.user.userId,
         symbol,
         addedPrice: addedPrice.toFixed(2),
-        signalAction,
+        signalAction: storedAction,
         signalType: signalType ?? null,
       }).returning();
 

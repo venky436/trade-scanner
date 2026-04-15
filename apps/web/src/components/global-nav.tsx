@@ -281,6 +281,11 @@ export function GlobalNav() {
                   <Shield className="size-4" />
                 </Button>
               </Link>
+              <Link href="/admin/tracking">
+                <Button variant="ghost" size="icon-sm" aria-label="Signal Tracking" className="text-muted-foreground hover:text-foreground">
+                  <TrendingUp className="size-4" />
+                </Button>
+              </Link>
             </>
           )}
 

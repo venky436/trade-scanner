@@ -1,9 +1,14 @@
 import type { WsManager } from "../ws/ws-server.js";
-import type { StockSnapshot, WsMessage, SignalSnapshot, SignalStage, PressureResult, MomentumResult, PatternSignal } from "../lib/types.js";
+import type {
+  IntelligenceSnapshot,
+  IntelligenceWsMessage,
+  MarketContext,
+  MomentumResult,
+  PressureResult,
+  SupportResistanceResult,
+} from "../lib/types.js";
 import { marketDataService } from "./market-data.service.js";
-
-const STAGE_RANK: Record<SignalStage, number> = { ACTIVITY: 1, MOMENTUM: 2, PRESSURE: 3, CONFIRMED: 4 };
-const CONF_RANK: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+import { buildMarketContext, toIntelligence } from "../lib/intelligence-transformer.js";
 
 interface BroadcastConfig {
   wsManager: WsManager;
@@ -11,16 +16,28 @@ interface BroadcastConfig {
   maxPerBroadcast?: number;
   getPressure?: (symbol: string) => PressureResult | null;
   getMomentum?: (symbol: string) => MomentumResult | null;
-  getPattern?: (symbol: string) => PatternSignal | null;
-  getSignalSnapshot?: (symbol: string) => SignalSnapshot | null;
+  getLevels?: (symbol: string) => SupportResistanceResult | null;
   getEligibleSymbols?: () => string[];
+  onIntelligenceComputed?: (symbol: string, intel: IntelligenceSnapshot, price: number) => void;
 }
+
+const NIFTY_SYMBOL = "NIFTY 50";
+const BANK_NIFTY_SYMBOL = "NIFTY BANK";
 
 export function createBroadcastEngine(config: BroadcastConfig) {
   const { wsManager, intervalMs = 500, maxPerBroadcast = 150 } = config;
   let timer: ReturnType<typeof setInterval> | null = null;
   let broadcastCount = 0;
   let totalSent = 0;
+
+  function computeMarketContext(): MarketContext {
+    const nifty = marketDataService.getQuote(NIFTY_SYMBOL);
+    const bankNifty = marketDataService.getQuote(BANK_NIFTY_SYMBOL);
+    return buildMarketContext(
+      nifty ? { lastPrice: nifty.lastPrice, close: nifty.close } : null,
+      bankNifty ? { lastPrice: bankNifty.lastPrice, close: bankNifty.close } : null,
+    );
+  }
 
   function tick() {
     if (wsManager.clientCount() === 0) return;
@@ -29,70 +46,47 @@ export function createBroadcastEngine(config: BroadcastConfig) {
     if (dirty.length === 0) return;
 
     const quotes = marketDataService.getAllQuotes();
-
-    // Filter to eligible stocks only (+ always include BUY/SELL signals)
     const eligibleSet = new Set(config.getEligibleSymbols?.() ?? []);
-    const signalSymbols: string[] = [];
-    const otherSymbols: string[] = [];
+
+    // Sort dirty symbols by confidence after transform so the top N are highest-conviction.
+    const candidates: IntelligenceSnapshot[] = [];
 
     for (const symbol of dirty) {
-      const cached = config.getSignalSnapshot?.(symbol);
-      // Always include stocks with active BUY/SELL signals
-      if (cached && cached.signal.action !== "WAIT") {
-        signalSymbols.push(symbol);
-      } else if (eligibleSet.size === 0 || eligibleSet.has(symbol)) {
-        otherSymbols.push(symbol);
-      }
-    }
-
-    // Sort signal symbols by stage (CONFIRMED first) then confidence
-    signalSymbols.sort((a, b) => {
-      const sa = config.getSignalSnapshot?.(a);
-      const sb = config.getSignalSnapshot?.(b);
-      const stageA = sa?.stage ? STAGE_RANK[sa.stage] : 0;
-      const stageB = sb?.stage ? STAGE_RANK[sb.stage] : 0;
-      if (stageB !== stageA) return stageB - stageA;
-      const confA = CONF_RANK[sa?.signal.confidence ?? "LOW"] ?? 0;
-      const confB = CONF_RANK[sb?.signal.confidence ?? "LOW"] ?? 0;
-      return confB - confA;
-    });
-
-    const selected = [
-      ...signalSymbols,
-      ...otherSymbols.slice(0, Math.max(0, maxPerBroadcast - signalSymbols.length)),
-    ];
-
-    // Build snapshots — ALL reads from caches, NO computation
-    const data: StockSnapshot[] = [];
-
-    for (const symbol of selected) {
       const q = quotes.get(symbol);
       if (!q) continue;
+      if (eligibleSet.size > 0 && !eligibleSet.has(symbol)) continue;
 
-      const change = q.close !== 0 ? ((q.lastPrice - q.close) / q.close) * 100 : 0;
-      const cached = config.getSignalSnapshot?.(symbol);
-
-      data.push({
+      const intel = toIntelligence({
         symbol,
         price: q.lastPrice,
         open: q.open,
         high: q.high,
         low: q.low,
         close: q.close,
-        volume: q.volume,
-        change: Math.round(change * 100) / 100,
         timestamp: q.timestamp,
-        pressure: config.getPressure?.(symbol) ?? undefined,
-        reaction: cached?.reaction ?? undefined,
-        momentum: config.getMomentum?.(symbol) ?? undefined,
-        pattern: config.getPattern?.(symbol) ?? undefined,
-        signal: cached?.signal ?? undefined,
+        pressure: config.getPressure?.(symbol) ?? null,
+        momentum: config.getMomentum?.(symbol) ?? null,
+        sr: config.getLevels?.(symbol) ?? null,
       });
+      candidates.push(intel);
+
+      config.onIntelligenceComputed?.(symbol, intel, q.lastPrice);
     }
 
-    const msg: WsMessage = {
+    // Highest confidence first, then stocks with clearest outlook
+    candidates.sort((a, b) => {
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      const aActionable = a.context.zone !== "MID_RANGE" ? 1 : 0;
+      const bActionable = b.context.zone !== "MID_RANGE" ? 1 : 0;
+      return bActionable - aActionable;
+    });
+
+    const selected = candidates.slice(0, maxPerBroadcast);
+
+    const msg: IntelligenceWsMessage = {
       type: "market_update",
-      data,
+      data: selected,
+      market: computeMarketContext(),
       timestamp: Date.now(),
     };
 
@@ -100,11 +94,12 @@ export function createBroadcastEngine(config: BroadcastConfig) {
     marketDataService.clearDirty();
 
     broadcastCount++;
-    totalSent += data.length;
+    totalSent += selected.length;
 
-    // Log every 60 broadcasts (~30s at 500ms interval)
     if (broadcastCount % 60 === 0) {
-      console.log(`[Broadcast] ${broadcastCount} ticks, avg ${Math.round(totalSent / broadcastCount)} symbols/tick, ${wsManager.clientCount()} clients`);
+      console.log(
+        `[Broadcast] ${broadcastCount} ticks, avg ${Math.round(totalSent / broadcastCount)} symbols/tick, ${wsManager.clientCount()} clients`,
+      );
     }
   }
 

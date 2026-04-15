@@ -11,6 +11,7 @@ import { createLevelsWorker, type LevelsWorker } from "./services/levels-worker.
 import { createStockFilter, type StockFilter } from "./services/stock-filter.service.js";
 import { createEodJob, type EodJob } from "./services/eod-job.service.js";
 import { createSignalAccuracyService, type SignalAccuracyService } from "./services/signal-accuracy.service.js";
+import { createSignalTrackingService, type SignalTrackingService } from "./services/signal-tracking.service.js";
 import { redisService } from "./services/redis.service.js";
 import { getIntradaySR } from "./services/intraday-levels.service.js";
 import { getMomentum } from "./lib/momentum-engine.js";
@@ -40,6 +41,7 @@ async function main() {
   let stockFilterInstance: StockFilter | null = null;
   let eodJobInstance: EodJob | null = null;
   let accuracyServiceInstance: SignalAccuracyService | null = null;
+  let trackingServiceInstance: SignalTrackingService | null = null;
 
   // Exposed so routes can use them
   let currentAccessToken: string | null = null;
@@ -152,9 +154,13 @@ async function main() {
     signalWorker.setSymbols(instrumentMaps.symbols);
     signalWorkerInstance = signalWorker;
 
-    // Create signal accuracy service
+    // Create signal accuracy service (old: score-based, target/SL evaluation)
     const accuracyService = createSignalAccuracyService();
     accuracyServiceInstance = accuracyService;
+
+    // Create signal tracking service (new: confidence-bucketed, 15-min evaluation)
+    const trackingService = createSignalTrackingService();
+    trackingServiceInstance = trackingService;
 
     // Hook: record high-confidence signals for accuracy tracking
     signalWorker.setOnHighConfidenceSignal((symbol, signal, price) => {
@@ -179,8 +185,7 @@ async function main() {
       symbols: instrumentMaps.symbols,
       getPressure: (s) => pressureEngine.getPressure(s),
       getMomentum: (s) => momentumMap.get(s) ?? null,
-      getPattern: (s) => patternMap.get(s) ?? null,
-      getSignalSnapshot: (s) => signalWorker.getSignal(s),
+      getLevels: (s) => cachedLevels[s] ?? null,
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
     });
     wsManager.attach(server.server);
@@ -246,9 +251,11 @@ async function main() {
       maxPerBroadcast: 150,
       getPressure: (s) => pressureEngine.getPressure(s),
       getMomentum: (s) => momentumMap.get(s) ?? null,
-      getPattern: (s) => patternMap.get(s) ?? null,
+      getLevels: (s) => cachedLevels[s] ?? null,
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
-      getSignalSnapshot: (s) => signalWorker.getSignal(s),
+      onIntelligenceComputed: (symbol, intel, price) => {
+        trackingService.recordSignal(symbol, intel, price);
+      },
     });
     broadcast.start();
     broadcastStop = broadcast.stop;
@@ -258,6 +265,7 @@ async function main() {
     signalWorker.start();
     levelsWorker.start();
     accuracyService.start();
+    trackingService.start();
 
     // Connect to Kite ticker
     if (tickerDisconnect) tickerDisconnect();
@@ -285,7 +293,12 @@ async function main() {
     for (const delay of [8000, 15000]) {
       setTimeout(() => {
         if (wsManager && wsManager.clientCount() > 0) {
-          const snapshot = { type: "snapshot" as const, data: wsManager.buildSnapshot(), timestamp: Date.now() };
+          const snapshot = {
+            type: "snapshot" as const,
+            data: wsManager.buildSnapshot(),
+            market: wsManager.buildMarketContextSnapshot(),
+            timestamp: Date.now(),
+          };
           wsManager.broadcast(snapshot);
           console.log(`[Startup] Pushed snapshot (${snapshot.data.length} stocks) to ${wsManager.clientCount()} clients at +${delay / 1000}s`);
         }
@@ -318,9 +331,9 @@ async function main() {
     onLevelsComputed: (levels) => { cachedLevels = levels; },
     getCachedLevels: () => cachedLevels,
     getEodJob: () => eodJobInstance,
-    getSignalSnapshot: (s: string) => signalWorkerInstance?.getSignal(s) ?? null,
     getMomentum: (s: string) => currentMomentumMap?.get(s) ?? null,
     getAccuracyService: () => accuracyServiceInstance,
+    getTrackingService: () => trackingServiceInstance,
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });
@@ -345,6 +358,7 @@ async function main() {
     if (signalWorkerInstance) signalWorkerInstance.stop();
     if (levelsWorkerInstance) levelsWorkerInstance.stop();
     if (accuracyServiceInstance) accuracyServiceInstance.stop();
+    if (trackingServiceInstance) trackingServiceInstance.stop();
     if (broadcastStop) broadcastStop();
     if (tickerDisconnect) tickerDisconnect();
     if (wsManager) wsManager.close();

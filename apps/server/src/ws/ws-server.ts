@@ -1,19 +1,26 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
-import type { StockSnapshot, WsMessage, SignalSnapshot, PressureResult, MomentumResult, PatternSignal } from "../lib/types.js";
+import type {
+  IntelligenceSnapshot,
+  IntelligenceWsMessage,
+  MomentumResult,
+  PressureResult,
+  SupportResistanceResult,
+} from "../lib/types.js";
 import { marketDataService } from "../services/market-data.service.js";
+import { buildMarketContext, toIntelligence } from "../lib/intelligence-transformer.js";
 
 interface WsManagerConfig {
   symbols: string[];
   getPressure?: (symbol: string) => PressureResult | null;
   getMomentum?: (symbol: string) => MomentumResult | null;
-  getPattern?: (symbol: string) => PatternSignal | null;
-  getSignalSnapshot?: (symbol: string) => SignalSnapshot | null;
+  getLevels?: (symbol: string) => SupportResistanceResult | null;
   getEligibleSymbols?: () => string[];
 }
 
-const FALLBACK_SIGNAL = { action: "WAIT" as const, confidence: "LOW" as const, reasons: ["Loading..."] };
+const NIFTY_SYMBOL = "NIFTY 50";
+const BANK_NIFTY_SYMBOL = "NIFTY BANK";
 
 export function createWsManager(config: WsManagerConfig) {
   const { symbols } = config;
@@ -21,48 +28,61 @@ export function createWsManager(config: WsManagerConfig) {
   const clients = new Set<WebSocket>();
   let pingInterval: ReturnType<typeof setInterval> | null = null;
 
-  function buildSnapshot(): StockSnapshot[] {
+  function buildSnapshot(): IntelligenceSnapshot[] {
     const quotes = marketDataService.getAllQuotes();
-    const snapshots: StockSnapshot[] = [];
+    const snapshots: IntelligenceSnapshot[] = [];
 
-    // Send eligible stocks, fallback to all symbols when market closed (few eligible)
     let symbolList = config.getEligibleSymbols?.() ?? symbols;
     if (symbolList.length < 50) symbolList = symbols;
+
     for (const symbol of symbolList) {
       const q = quotes.get(symbol);
       if (!q) continue;
 
-      const change = q.close !== 0 ? ((q.lastPrice - q.close) / q.close) * 100 : 0;
-      const cached = config.getSignalSnapshot?.(symbol);
-
-      snapshots.push({
-        symbol,
-        price: q.lastPrice,
-        open: q.open,
-        high: q.high,
-        low: q.low,
-        close: q.close,
-        volume: q.volume,
-        change: Math.round(change * 100) / 100,
-        timestamp: q.timestamp,
-        pressure: config.getPressure?.(symbol) ?? undefined,
-        momentum: config.getMomentum?.(symbol) ?? undefined,
-        pattern: config.getPattern?.(symbol) ?? undefined,
-        reaction: cached?.reaction ?? undefined,
-        signal: cached?.signal ?? FALLBACK_SIGNAL,
-      });
+      snapshots.push(
+        toIntelligence({
+          symbol,
+          price: q.lastPrice,
+          open: q.open,
+          high: q.high,
+          low: q.low,
+          close: q.close,
+          timestamp: q.timestamp,
+          pressure: config.getPressure?.(symbol) ?? null,
+          momentum: config.getMomentum?.(symbol) ?? null,
+          sr: config.getLevels?.(symbol) ?? null,
+        }),
+      );
     }
 
+    // Confidence-first ordering so the initial snapshot already highlights actionable stocks.
+    snapshots.sort((a, b) => {
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      const aActionable = a.context.zone !== "MID_RANGE" ? 1 : 0;
+      const bActionable = b.context.zone !== "MID_RANGE" ? 1 : 0;
+      return bActionable - aActionable;
+    });
+
     return snapshots;
+  }
+
+  function buildMarketContextSnapshot() {
+    const nifty = marketDataService.getQuote(NIFTY_SYMBOL);
+    const bankNifty = marketDataService.getQuote(BANK_NIFTY_SYMBOL);
+    return buildMarketContext(
+      nifty ? { lastPrice: nifty.lastPrice, close: nifty.close } : null,
+      bankNifty ? { lastPrice: bankNifty.lastPrice, close: bankNifty.close } : null,
+    );
   }
 
   function handleConnection(ws: WebSocket) {
     clients.add(ws);
     console.log(`WS client connected. Total: ${clients.size}`);
 
-    const snapshot: WsMessage = {
+    const snapshot: IntelligenceWsMessage = {
       type: "snapshot",
       data: buildSnapshot(),
+      market: buildMarketContextSnapshot(),
       timestamp: Date.now(),
     };
     ws.send(JSON.stringify(snapshot));
@@ -116,7 +136,7 @@ export function createWsManager(config: WsManagerConfig) {
       console.log("WebSocket server attached on /ws");
     },
 
-    broadcast(msg: WsMessage) {
+    broadcast(msg: IntelligenceWsMessage) {
       const data = JSON.stringify(msg);
       for (const ws of clients) {
         if (ws.readyState === WebSocket.OPEN) {
@@ -130,6 +150,7 @@ export function createWsManager(config: WsManagerConfig) {
     },
 
     buildSnapshot,
+    buildMarketContextSnapshot,
 
     close() {
       if (pingInterval) clearInterval(pingInterval);

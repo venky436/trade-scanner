@@ -1,31 +1,82 @@
-export interface StockData {
+// ── Market Intelligence (public, user-facing shape) ──
+//
+// The frontend never reads BUY/SELL/score-style signal data. The server's
+// internal engines still produce them for accuracy tracking + admin dashboard,
+// but the public WS / REST payloads expose only intelligence.
+
+export type Zone = "NEAR_RESISTANCE" | "NEAR_SUPPORT" | "MID_RANGE";
+export type MomentumLabel = "STRONG_UP" | "WEAK_UP" | "NEUTRAL" | "WEAK_DOWN" | "STRONG_DOWN";
+export type PressureLabel = "BUY" | "NEUTRAL" | "SELL";
+export type VolatilityLabel = "HIGH" | "MEDIUM" | "LOW";
+export type Outlook =
+  | "BREAKOUT_LIKELY"
+  | "BREAKDOWN_RISK"
+  | "BOUNCE_EXPECTED"
+  | "REJECTION_POSSIBLE"
+  | "NO_CLEAR_EDGE";
+export type Bias = "BULLISH" | "BEARISH" | "NEUTRAL";
+export type ConfidenceLabel = "HIGH" | "MEDIUM" | "LOW";
+
+export interface IntelligenceContext {
+  zone: Zone;
+  distanceToLevel: number | null;
+  level: number | null;
+}
+
+export interface IntelligenceMomentum {
+  label: MomentumLabel;
+  score: number;
+}
+
+export interface IntelligencePressure {
+  label: PressureLabel;
+  score: number;
+}
+
+export interface IntelligenceVolatility {
+  label: VolatilityLabel;
+  score: number;
+}
+
+export interface IntelligenceSnapshot {
   symbol: string;
   price: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
   change: number;
   timestamp: number;
-  pressure?: PressureResult;
-  reaction?: "APPROACHING" | "REJECTING" | "BREAKING" | null;
-  momentum?: MomentumResult;
-  pattern?: PatternSignal;
-  signal?: SignalResult;
+  context: IntelligenceContext;
+  momentum: IntelligenceMomentum;
+  pressure: IntelligencePressure;
+  volatility: IntelligenceVolatility;
+  outlook: Outlook;
+  bias: Bias;
+  confidence: number;
+  confidenceLabel: ConfidenceLabel;
+}
+
+// Alias kept so existing imports of StockData keep working — they all become intelligence now.
+export type StockData = IntelligenceSnapshot;
+
+export type MarketCondition = "TRENDING" | "SIDEWAYS";
+export type IndexDirection = "UP" | "DOWN" | "FLAT";
+
+export interface MarketContext {
+  condition: MarketCondition;
+  nifty: { direction: IndexDirection; changePercent: number };
+  bankNifty: { direction: IndexDirection; changePercent: number };
 }
 
 export interface MarketMessage {
   type: "snapshot" | "market_update";
-  data: StockData[];
+  data: IntelligenceSnapshot[];
+  market: MarketContext | null;
   timestamp: number;
 }
 
-export type SortKey = "symbol" | "price" | "change" | "volume" | "high" | "low" | "open";
+export type SortKey = "symbol" | "price" | "change" | "confidence";
 export type SortDirection = "asc" | "desc";
 
 export interface CandleData {
-  time: number; // unix seconds
+  time: number;
   open: number;
   high: number;
   low: number;
@@ -33,93 +84,22 @@ export interface CandleData {
   volume: number;
 }
 
-export type Proximity = "VERY_CLOSE" | "NEAR" | "FAR";
-export type Reaction = "APPROACHING" | "REJECTING" | "NEUTRAL";
-export type DirectionHint = "BULLISH" | "BEARISH" | "NEUTRAL";
+// ── Chart-helper types (kept for the candlestick chart S/R drawing) ──
 
-export interface SRZone {
-  min: number;
-  max: number;
-  level: number;
-  touches: number;
-  strength: number;
-  confidence: number;
-  distancePercent: number;
-  proximity: Proximity;
-  reaction: Reaction;
-  zoneScore: number;
-  isActionable: boolean;
-  directionHint: DirectionHint;
-}
-
-export interface SupportResistanceResult {
+export interface SROnlyLevels {
   support: number | null;
   resistance: number | null;
-  supportZone: SRZone | null;
-  resistanceZone: SRZone | null;
-  summary: {
-    hasNearbySupport: boolean;
-    hasNearbyResistance: boolean;
-  };
 }
 
-export type PatternName =
-  | "HAMMER" | "SHOOTING_STAR"
-  | "BULLISH_ENGULFING" | "BEARISH_ENGULFING"
-  | "DOJI" | "MORNING_STAR" | "EVENING_STAR";
-
-export interface PatternSignal {
-  pattern: PatternName;
-  direction: "BULLISH" | "BEARISH";
-  strength: 1 | 2;        // 1=single-candle, 2=multi-candle
-  reason: string;
-}
-
-export type PressureSignal = "STRONG_BUY" | "BUY" | "NEUTRAL" | "SELL" | "STRONG_SELL";
-export type PressureTrend = "rising" | "falling" | "mixed";
-
-export interface PressureResult {
-  value: number;
-  signal: PressureSignal;
-  trend: PressureTrend;
-  confidence: number;
-}
-
-export type MomentumSignal = "STRONG_UP" | "UP" | "FLAT" | "DOWN" | "STRONG_DOWN";
-export type MomentumAcceleration = "INCREASING" | "DECREASING" | "STABLE";
-
-export interface MomentumResult {
-  value: number;
-  signal: MomentumSignal;
-  acceleration: MomentumAcceleration;
-  accelerationRaw: number;
-  quality: number;
-}
-
-export type SignalAction = "BUY" | "SELL" | "WAIT";
-export type SignalType = "BOUNCE" | "REJECTION" | "BREAKOUT" | "BREAKDOWN" | "CONTINUATION";
-export type SignalConfidence = "LOW" | "MEDIUM" | "HIGH";
-
-export type SignalStage = "ACTIVITY" | "MOMENTUM" | "PRESSURE" | "CONFIRMED";
-
-export type MarketPhase = "OPENING" | "STABILIZING" | "NORMAL" | "CLOSED";
-
-export interface SignalResult {
-  action: SignalAction;
-  type?: SignalType;
-  confidence: SignalConfidence;
-  reasons: string[];
-  score?: number; // 1-10 signal strength from server
-  finalScore?: number; // phase-adjusted score
-  marketPhase?: MarketPhase;
-  warningMessage?: string | null;
-  srType?: "INTRADAY" | "DAILY";
-  stage?: SignalStage; // progressive pipeline stage
-  scoreBreakdown?: {
-    pressure: number;   // 0-10
-    momentum: number;
-    sr: number;
-    pattern: number;
-    volatility: number;
-  };
+// Single-stock detail snapshot returned by /api/stocks/:symbol/snapshot.
+// Combines the public intelligence shape with chart-only helper fields.
+export interface StockDetailSnapshot extends IntelligenceSnapshot {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  levels: SROnlyLevels;
+  dataSource: "live" | "on-demand";
+  computedAt: number;
 }

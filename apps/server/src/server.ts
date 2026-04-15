@@ -12,6 +12,7 @@ import type { InstrumentMaps, SupportResistanceResult } from "./lib/types.js";
 import type { PressureEngine } from "./services/pressure.service.js";
 import type { EodJob } from "./services/eod-job.service.js";
 import type { SignalAccuracyService } from "./services/signal-accuracy.service.js";
+import type { SignalTrackingService } from "./services/signal-tracking.service.js";
 
 interface ServerDeps {
   apiKey: string;
@@ -25,7 +26,7 @@ interface ServerDeps {
   getCachedLevels?: () => Record<string, SupportResistanceResult>;
   getEodJob?: () => EodJob | null;
   getAccuracyService?: () => SignalAccuracyService | null;
-  getSignalSnapshot?: (symbol: string) => any;
+  getTrackingService?: () => SignalTrackingService | null;
   getMomentum?: (symbol: string) => any;
 }
 
@@ -53,7 +54,6 @@ export async function buildServer(deps: ServerDeps) {
     onLevelsComputed: deps.onLevelsComputed,
     getCachedLevels: deps.getCachedLevels,
     getEodJob: deps.getEodJob,
-    getSignalSnapshot: deps.getSignalSnapshot,
     getMomentum: deps.getMomentum,
   });
 
@@ -61,6 +61,7 @@ export async function buildServer(deps: ServerDeps) {
 
   await server.register(adminRoute, {
     getAccuracyService: deps.getAccuracyService ?? (() => null),
+    getTrackingService: deps.getTrackingService ?? (() => null),
   });
 
   await server.register(docsRoute);
