@@ -83,9 +83,12 @@ function filterStocks(stocks: IntelligenceSnapshot[], filter: GridFilter): Intel
   if (filter === "ALL") return stocks;
   if (filter === "NEAR_RESISTANCE") return stocks.filter((s) => s.context.zone === "NEAR_RESISTANCE");
   if (filter === "NEAR_SUPPORT") return stocks.filter((s) => s.context.zone === "NEAR_SUPPORT");
-  // ACTIONABLE (default): near a level AND has a directional outlook
+  // ACTIONABLE (default): near a level + directional outlook + confidence >= 0.5
   return stocks.filter(
-    (s) => s.context.zone !== "MID_RANGE" && s.outlook !== "NO_CLEAR_EDGE",
+    (s) =>
+      s.context.zone !== "MID_RANGE" &&
+      s.outlook !== "NO_CLEAR_EDGE" &&
+      s.confidence >= 0.5,
   );
 }
 

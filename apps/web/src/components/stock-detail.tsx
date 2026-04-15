@@ -17,12 +17,14 @@ import {
   Flame,
   Gauge,
   Lightbulb,
+  Maximize2,
   Minus,
   Pause,
   Sparkles,
   Target,
   TrendingDown,
   TrendingUp,
+  X,
   Zap,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -408,6 +410,7 @@ export function StockDetail({ symbol }: StockDetailProps) {
   const [snapshot, setSnapshot] = useState<StockDetailSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [interval, setInterval] = useState("5m");
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Live data overlays the REST snapshot (if the symbol is tracked).
   const liveStock = stockMap.get(symbol);
@@ -659,18 +662,25 @@ export function StockDetail({ symbol }: StockDetailProps) {
               )}
             </div>
 
-            {/* Levels list */}
+            {/* Levels list with distance */}
             {snapshot?.levels && (
-              <div className="space-y-1.5 border-t border-zinc-200 dark:border-zinc-800/80 pt-3">
+              <div className="space-y-2 border-t border-zinc-200 dark:border-zinc-800/80 pt-3">
                 {snapshot.levels.resistance !== null && (
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
                       <Crosshair className="size-3 text-rose-500 dark:text-rose-400/70" />
                       <span>Resistance</span>
                     </div>
-                    <span className="font-mono font-semibold tabular-nums text-rose-700 dark:text-rose-300">
-                      ₹{snapshot.levels.resistance.toFixed(2)}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-semibold tabular-nums text-rose-700 dark:text-rose-300">
+                        ₹{snapshot.levels.resistance.toFixed(2)}
+                      </span>
+                      <span className="rounded-full bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                        {intel.price > 0
+                          ? `${(((snapshot.levels.resistance - intel.price) / intel.price) * 100).toFixed(2)}%`
+                          : "—"}
+                      </span>
+                    </div>
                   </div>
                 )}
                 {snapshot.levels.support !== null && (
@@ -679,9 +689,16 @@ export function StockDetail({ symbol }: StockDetailProps) {
                       <Crosshair className="size-3 text-emerald-500 dark:text-emerald-400/70" />
                       <span>Support</span>
                     </div>
-                    <span className="font-mono font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
-                      ₹{snapshot.levels.support.toFixed(2)}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+                        ₹{snapshot.levels.support.toFixed(2)}
+                      </span>
+                      <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                        {intel.price > 0
+                          ? `${(((intel.price - snapshot.levels.support) / intel.price) * 100).toFixed(2)}%`
+                          : "—"}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -798,23 +815,32 @@ export function StockDetail({ symbol }: StockDetailProps) {
               Price Chart
             </h2>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 p-1">
-            {(["1m", "5m", "15m", "1H", "1D"] as const).map((opt) => (
-              <button
-                key={opt}
-                onClick={() => setInterval(opt)}
-                className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-                  interval === opt
-                    ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-                }`}
-              >
-                {opt}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 p-1">
+              {(["1m", "5m", "15m", "1H", "1D"] as const).map((opt) => (
+                <button
+                  key={opt}
+                  onClick={() => setInterval(opt)}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                    interval === opt
+                      ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                  }`}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setIsFullscreen(true)}
+              className="flex size-8 items-center justify-center rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 text-zinc-500 transition-colors hover:text-zinc-900 dark:hover:text-zinc-100"
+              title="Full screen"
+            >
+              <Maximize2 className="size-3.5" />
+            </button>
           </div>
         </div>
-        <div className="h-[320px] w-full">
+        <div className="h-[500px] w-full">
           <CandlestickChart
             symbol={symbol}
             interval={interval}
@@ -825,6 +851,57 @@ export function StockDetail({ symbol }: StockDetailProps) {
           />
         </div>
       </section>
+
+      {/* Fullscreen chart overlay */}
+      {isFullscreen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-zinc-950">
+          <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800/80 px-5 py-3">
+            <div className="flex items-center gap-3">
+              <BarChart3 className="size-4 text-cyan-600 dark:text-cyan-400" />
+              <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                {symbol}
+              </span>
+              <span className="text-xs tabular-nums text-zinc-500">
+                ₹{intel.price.toFixed(2)}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 p-1">
+                {(["1m", "5m", "15m", "1H", "1D"] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    onClick={() => setInterval(opt)}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                      interval === opt
+                        ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                        : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setIsFullscreen(false)}
+                className="flex size-8 items-center justify-center rounded-lg border border-zinc-200 dark:border-zinc-800/80 text-zinc-500 transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
+                title="Close"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 p-4">
+            <CandlestickChart
+              symbol={symbol}
+              interval={interval}
+              tick={chartTick}
+              days={interval === "1D" ? 90 : 5}
+              supportLevel={supportLevel}
+              resistanceLevel={resistanceLevel}
+            />
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -205,9 +205,18 @@ export function TrackingDashboard() {
         </p>
       </div>
 
-      {/* 3 Bucket Cards */}
+      {/* 3 Bucket Cards — always render all 3, using zero defaults when no data */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {(metrics?.buckets ?? []).map((b) => {
+        {(["ULTRA_HIGH", "HIGH", "MEDIUM"] as const).map((bucketKey) => {
+          const b: BucketData = (metrics?.buckets ?? []).find((x) => x.bucket === bucketKey) ?? {
+            bucket: bucketKey,
+            total: 0, pending: 0, success: 0, failed: 0, neutral: 0,
+            accuracy: 0, avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0,
+            expectancy: 0, riskReward: 0,
+            sampleSufficient: false,
+            minSampleRequired: bucketKey === "ULTRA_HIGH" ? 20 : bucketKey === "HIGH" ? 50 : 100,
+            byOutlook: {},
+          };
           const style = BUCKET_STYLE[b.bucket] ?? BUCKET_STYLE.MEDIUM;
           const BucketIcon = style.icon;
           const decided = b.success + b.failed;
@@ -302,8 +311,8 @@ export function TrackingDashboard() {
             </div>
             {(() => {
               const buckets = selectedBucket
-                ? metrics.buckets.filter((b) => b.bucket === selectedBucket)
-                : metrics.buckets;
+                ? (metrics.buckets ?? []).filter((b) => b.bucket === selectedBucket)
+                : (metrics.buckets ?? []);
               const totals = buckets.reduce(
                 (acc, b) => ({
                   avgGain: acc.avgGain + b.avgGain * b.success,
@@ -361,8 +370,8 @@ export function TrackingDashboard() {
             <div className="space-y-2.5">
               {["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"].map((outlook) => {
                 const buckets = selectedBucket
-                  ? metrics.buckets.filter((b) => b.bucket === selectedBucket)
-                  : metrics.buckets;
+                  ? (metrics.buckets ?? []).filter((b) => b.bucket === selectedBucket)
+                  : (metrics.buckets ?? []);
                 const totals = buckets.reduce(
                   (acc, b) => {
                     const o = b.byOutlook[outlook];
