@@ -49,7 +49,7 @@ export function toOptionInsight(intel: IntelligenceSnapshot): OptionInsight {
 export const STRIKE_SPACING: Record<string, number> = {
   "NIFTY 50": 50,
   "NIFTY BANK": 100,
-  SENSEX: 100,
+  "NIFTY FIN SERVICE": 100,
 };
 
 export interface Strike {
@@ -90,5 +90,5 @@ export interface SupportedIndex {
 export const SUPPORTED_OPTION_INDICES: SupportedIndex[] = [
   { symbol: "NIFTY 50", displayName: "NIFTY", spacing: 50 },
   { symbol: "NIFTY BANK", displayName: "BANKNIFTY", spacing: 100 },
-  { symbol: "SENSEX", displayName: "SENSEX", spacing: 100 },
+  { symbol: "NIFTY FIN SERVICE", displayName: "NIFTY FIN", spacing: 100 },
 ];
