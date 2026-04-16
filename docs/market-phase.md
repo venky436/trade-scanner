@@ -26,23 +26,23 @@ The solution: **don't suppress signals — penalize and warn**. Traders still se
 Market Timeline (IST)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Before 9:15        9:15      9:20        10:00             15:30  After 15:30
-  ─────────────┬──────┬─────────┬───────────┬────────────────┬─────────────
-    CLOSED     │OPENING│STABILIZE│  NORMAL   │    NORMAL      │  CLOSED
-               │(5 min)│(40 min) │           │                │
-               │       │         │           │                │
-  No signals   │WAIT   │Confirmed│Full speed │Full speed      │No signals
-  No penalty   │forced │only     │No penalty │No penalty      │No penalty
-               │×0.6   │×0.8     │×1.0       │×1.0            │
-  ─────────────┴──────┴─────────┴───────────┴────────────────┴─────────────
+  Before 9:15        9:15      9:20     9:30                  15:30  After 15:30
+  ─────────────┬──────┬────────┬────────┬────────────────────┬─────────────
+    CLOSED     │OPENING│STABIL.│       NORMAL                │  CLOSED
+               │(5 min)│(10min)│                             │
+               │       │       │                             │
+  No signals   │WAIT   │Confir-│Full speed                   │No signals
+  No penalty   │forced │med    │No penalty                   │No penalty
+               │×0.6   │×0.8   │×1.0                        │
+  ─────────────┴──────┴────────┴────────┴────────────────────┴─────────────
 ```
 
 | Phase | Time Window | Score Multiplier | Decision Override | Accuracy Tracking |
 |-------|-------------|------------------|-------------------|-------------------|
 | **CLOSED** | Before 9:15 / After 15:30 / Weekends | ×1.0 (no change) | None | N/A |
 | **OPENING** | 9:15 – 9:20 (0-5 min) | ×0.6 | Force ALL to WAIT | Disabled |
-| **STABILIZING** | 9:20 – 10:00 (5-45 min) | ×0.8 | Only confirmed types pass | Disabled |
-| **NORMAL** | 10:00 – 15:30 (45+ min) | ×1.0 (no change) | None | Enabled (until 3:30 PM) |
+| **STABILIZING** | 9:20 – 9:30 (5-15 min) | ×0.8 | Only confirmed types pass | Disabled |
+| **NORMAL** | 9:30 – 15:30 (15+ min) | ×1.0 (no change) | None | Enabled (until 3:30 PM) |
 
 ### CLOSED (Before 9:15 / After 15:30 / Weekends)
 
@@ -65,7 +65,7 @@ After phase:   WAIT, score 5 (9×0.6=5.4→5), LOW confidence
                "Market opening volatility — signals restricted"
 ```
 
-### STABILIZING (9:20 – 9:25, minutes 5-10)
+### STABILIZING (9:20 – 9:30, minutes 5-15)
 
 Opening noise is fading but not gone. Only signals with a confirmed type (BREAKOUT, REJECTION, BOUNCE, BREAKDOWN) are allowed through. Unconfirmed signals (ACTIVITY/MOMENTUM stage with no type) remain WAIT.
 
