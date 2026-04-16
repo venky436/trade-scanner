@@ -69,6 +69,7 @@ interface SignalRecord {
   maxProfitPercent: string | null;
   maxDrawdownPercent: string | null;
   evaluatedAt: string | null;
+  groupId: string;
 }
 
 const BUCKET_STYLE: Record<string, { accent: string; border: string; gradient: string; icon: typeof Crown; label: string; range: string }> = {

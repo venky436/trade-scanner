@@ -145,8 +145,8 @@ range = 2.2% / price                       score: 0.6
                                           alignedMomentum = max(0.78, 0) = 0.78
                                           alignedPressure = max(0.71, 0) = 0.71
                                           base = (0.78*0.5 + 0.71*0.5) = 0.745
-                                          × (0.7 + 0.6*0.3) = × 0.88
-                                        = 0.656
+                                          × (1 - 0.6*0.15) = × 0.91
+                                        = 0.678
                                     →   confidenceLabel: "MEDIUM"
 
                                     →   outlook lookup:
@@ -245,14 +245,14 @@ alignedPressure = direction === "BUY" ? max(pressure.value, 0) : max(-pressure.v
 if (alignedMomentum < 0.2 && alignedPressure < 0.2) → cap at LOW, skip amplifier
 ```
 
-**Step 4 — Confidence formula** (unchanged structure, direction-aware inputs):
+**Step 4 — Confidence formula** (direction-aware inputs, volatility dampener):
 
 ```ts
 base       = alignedMomentum * 0.5 + alignedPressure * 0.5
-confidence = base * (0.7 + volatility.score * 0.3)
+confidence = base * (1 - volatility.score * 0.15)
 ```
 
-Volatility *amplifies* a real directional move but cannot manufacture confidence on its own.
+Volatility acts as a **dampener**, not a booster. High-volatility stocks get a slight confidence penalty (max −15%) because wild swings are less predictable. Calm stocks with strong directional alignment are rewarded with near-full confidence.
 
 ```
 confidence > 0.7  → HIGH

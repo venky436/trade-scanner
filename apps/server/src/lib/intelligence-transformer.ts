@@ -146,7 +146,7 @@ function buildConfidence(
   }
 
   const base = alignedMomentum * 0.5 + alignedPressure * 0.5;
-  const amplifier = 0.7 + volatilityScore * 0.3;
+  const amplifier = 1 - volatilityScore * 0.15;
   const confidence = clamp01(base * amplifier);
   const confidenceLabel: ConfidenceLabel =
     confidence > 0.7 ? "HIGH" : confidence > 0.5 ? "MEDIUM" : "LOW";

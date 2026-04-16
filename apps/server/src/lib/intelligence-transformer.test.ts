@@ -171,7 +171,7 @@ describe("toIntelligence — confidence formula", () => {
     assert.equal(r.confidenceLabel, "HIGH");
   });
 
-  it("high aligned momentum + pressure near support + LOW volatility → MEDIUM confidence", () => {
+  it("high aligned momentum + pressure near support + LOW volatility → HIGH confidence (calm stocks rewarded)", () => {
     const r = toIntelligence(baseInput({
       sr: makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } }),
       momentum: makeMomentum("STRONG_UP", 0.9),
@@ -179,9 +179,9 @@ describe("toIntelligence — confidence formula", () => {
       high: 1003, low: 1000, // 0.3% range -> volatility 0.2
     }));
     // direction=BUY, aligned m=0.9, aligned p=0.9
-    // 0.9 * (0.7 + 0.2*0.3) = 0.9 * 0.76 = 0.684
-    assert.ok(r.confidence > 0.5 && r.confidence <= 0.7, `expected MEDIUM, got ${r.confidence}`);
-    assert.equal(r.confidenceLabel, "MEDIUM");
+    // 0.9 * (1 - 0.2*0.15) = 0.9 * 0.97 = 0.873
+    assert.ok(r.confidence > 0.7, `expected HIGH, got ${r.confidence}`);
+    assert.equal(r.confidenceLabel, "HIGH");
   });
 
   it("wrong-direction pressure near support → LOW confidence", () => {

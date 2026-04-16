@@ -40,8 +40,15 @@ function getBucket(confidence: number): ConfidenceBucket | null {
   return null;
 }
 
+const BUCKET_RANK: Record<ConfidenceBucket, number> = {
+  MEDIUM: 1,
+  HIGH: 2,
+  ULTRA_HIGH: 3,
+};
+
 export function createSignalTrackingService() {
   const activeMap = new Map<string, ActiveTracking>();
+  const trackedToday = new Map<string, ConfidenceBucket>();
   let dailyCount = 0;
   let dailyDate = "";
   let evalTimer: ReturnType<typeof setInterval> | null = null;
@@ -52,6 +59,7 @@ export function createSignalTrackingService() {
     if (dailyDate !== today) {
       dailyCount = 0;
       dailyDate = today;
+      trackedToday.clear();
     }
   }
 
@@ -99,7 +107,11 @@ export function createSignalTrackingService() {
     if (istTotalMin >= 15 * 60 + 15) return; // 3:15 PM — need 15 min before close
 
     if (price < 50) return;
-    if (activeMap.has(symbol)) return;
+    if (activeMap.has(symbol)) return; // still pending evaluation
+
+    // Dedup: only allow if bucket is higher than previously tracked today
+    const previousBucket = trackedToday.get(symbol);
+    if (previousBucket && BUCKET_RANK[bucket] <= BUCKET_RANK[previousBucket]) return;
 
     checkDailyReset();
     if (dailyCount >= MAX_DAILY_SIGNALS) return;
@@ -128,6 +140,7 @@ export function createSignalTrackingService() {
         recordedAt: Date.now(),
       });
       dailyCount++;
+      trackedToday.set(symbol, bucket);
 
       console.log(`[Tracking] Recorded: ${symbol} ${intel.outlook} conf=${intel.confidence.toFixed(2)} bucket=${bucket} entry=₹${price.toFixed(2)} [${dailyCount}/${MAX_DAILY_SIGNALS} today, ${activeMap.size} active]`);
     } catch (err: any) {
@@ -332,7 +345,7 @@ export function createSignalTrackingService() {
       const dayEnd = new Date(targetDate);
       dayEnd.setHours(23, 59, 59, 999);
 
-      return await db
+      const rows = await db
         .select()
         .from(signalTracking)
         .where(and(
@@ -341,6 +354,11 @@ export function createSignalTrackingService() {
         ))
         .orderBy(sql`${signalTracking.signalTime} DESC`)
         .limit(limit);
+
+      return rows.map(r => ({
+        ...r,
+        groupId: `${r.symbol}-${new Date(r.signalTime).toISOString().slice(0, 10)}`,
+      }));
     } catch {
       return [];
     }
