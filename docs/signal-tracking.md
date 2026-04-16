@@ -63,7 +63,8 @@ Guards:
   ✗ phase ≠ NORMAL         → skip (OPENING/STABILIZING)
   ✗ after 3:15 PM IST      → skip (need 15 min before close)
   ✗ price < ₹50            → skip
-  ✗ already tracking symbol → skip (no duplicates)
+  ✗ already pending eval     → skip (activeMap has symbol)
+  ✗ already tracked today at same or higher bucket → skip (trackedToday dedup)
   ✗ daily cap (200) hit     → skip
     ↓
 INSERT into signal_tracking table
@@ -95,7 +96,7 @@ Classification (±0.3% threshold):
     else             → NEUTRAL
     ↓
 UPDATE row with all fields + evaluatedAt
-Remove from activeMap
+Remove from activeMap (evaluation lifecycle only — trackedToday retains the symbol)
 ```
 
 ### Market close cleanup
@@ -295,8 +296,30 @@ Admin users see a TrendingUp icon in the navbar (next to the existing Shield adm
 | `phase !== "NORMAL"` | Opening/stabilizing noise would pollute data |
 | `IST time >= 15:15` | Need 15 min before market close at 15:30 |
 | `price < ₹50` | Penny stocks are unreliable |
-| Already tracking symbol | One signal per stock at a time |
+| `activeMap.has(symbol)` | Signal still pending 15-min evaluation |
+| `trackedToday` same or lower bucket | Prevents duplicate entries at same confidence level. Allows re-tracking only when stock upgrades to a higher bucket (MEDIUM → HIGH → ULTRA_HIGH). Max 3 entries per symbol per day. |
 | Daily cap (200) hit | Prevent runaway DB writes |
+
+---
+
+## Signal grouping (groupId)
+
+Signals from the same stock on the same day are linked by a computed `groupId`:
+
+```
+groupId = `${symbol}-${YYYY-MM-DD from signalTime}`
+```
+
+Example: RELIANCE tracked at MEDIUM (10:15), then upgrades to HIGH (11:30):
+```
+{ symbol: "RELIANCE", bucket: "MEDIUM", groupId: "RELIANCE-2026-04-16" }
+{ symbol: "RELIANCE", bucket: "HIGH",   groupId: "RELIANCE-2026-04-16" }
+```
+
+`groupId` is **not stored in the database** — it's computed in the API layer (`getRecentSignals`) from existing `symbol` + `signalTime` columns. This enables:
+- De-duplicated analytics (count one result per group)
+- Signal evolution tracking (MEDIUM → HIGH → ULTRA progression)
+- Per-stock analysis without schema changes
 
 ---
 

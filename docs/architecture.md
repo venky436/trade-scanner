@@ -297,9 +297,9 @@ Clamped to 1-10, rounded
 Protects traders from unreliable signals during the first 10 minutes after market open (9:15 AM IST).
 
 ```
-  9:15         9:20           9:25                    15:30
+  9:15         9:20           9:30                    15:30
    │  OPENING   │ STABILIZING  │       NORMAL           │
-   │  (5 min)   │  (5 min)     │      (full speed)      │
+   │  (5 min)   │  (10 min)    │      (full speed)      │
    │            │              │                         │
    │ ALL → WAIT │ Confirmed    │ No restrictions         │
    │ Score ×0.6 │ types only   │ Score ×1.0              │
@@ -311,8 +311,8 @@ Protects traders from unreliable signals during the first 10 minutes after marke
 | Phase | Score | Decision | Accuracy Tracking |
 |-------|-------|----------|-------------------|
 | OPENING (0-5 min) | ×0.6 | Force WAIT, LOW confidence | Disabled |
-| STABILIZING (5-10 min) | ×0.8 | Only confirmed types (BREAKOUT, BOUNCE, etc.) pass | Disabled |
-| NORMAL (10+ min) | ×1.0 | No change | Enabled |
+| STABILIZING (5-15 min) | ×0.8 | Only confirmed types (BREAKOUT, BOUNCE, etc.) pass | Disabled |
+| NORMAL (15+ min) | ×1.0 | No change | Enabled |
 | CLOSED | ×1.0 | No change | N/A |
 
 **Frontend:** Nav badge shows phase with countdown ("Opening (3m)"). Trade Decision Box shows phase warning banner. Score displays use `finalScore` (phase-adjusted).
@@ -539,7 +539,7 @@ KEY LEVELS (Near Support + Near Resistance, top 7 each)
 │              ↓                                                │
 │  Market Phase Control (in setCacheEntry)                       │
 │    ├─ OPENING (0-5 min): WAIT forced, score ×0.6              │
-│    ├─ STABILIZING (5-10 min): confirmed only, score ×0.8      │
+│    ├─ STABILIZING (5-15 min): confirmed only, score ×0.8      │
 │    └─ NORMAL (10+ min): pass through                          │
 │              ↓                                                │
 │  Stock Filter (every 5s) → top 150 active                    │
@@ -578,7 +578,7 @@ First tick arrives:
 
 During market:
   0-5 min      → OPENING phase: all signals forced WAIT, score ×0.6
-  5-10 min     → STABILIZING phase: only confirmed types, score ×0.8
+  5-15 min     → STABILIZING phase: only confirmed types, score ×0.8
   10+ min      → NORMAL phase: full speed, no restrictions
   Every 500ms  → Broadcast to clients
   Every 5s     → Stock filter re-evaluates active stocks
