@@ -9,7 +9,7 @@ const MARKET_CLOSE_HOUR = 15;
 const MARKET_CLOSE_MIN = 30;
 
 const OPENING_DURATION_MIN = 5;
-const STABILIZING_DURATION_MIN = 30; // 9:15 + 30 min = 9:45 AM IST
+const STABILIZING_DURATION_MIN = 15; // 9:15 + 15 min = 9:30 AM IST
 
 export interface MarketPhaseResult {
   phase: MarketPhase;
