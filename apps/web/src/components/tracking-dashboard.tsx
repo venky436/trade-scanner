@@ -125,6 +125,10 @@ function expectancyColor(exp: number): string {
   return "text-zinc-500";
 }
 
+function getTodayIST(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
+}
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
@@ -135,14 +139,22 @@ export function TrackingDashboard() {
   const [signals, setSignals] = useState<SignalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedBucket, setSelectedBucket] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState(getTodayIST());
+
+  const isToday = selectedDate === getTodayIST();
 
   useEffect(() => {
     let active = true;
     async function fetchData() {
       try {
+        const metricsUrl = isToday
+          ? "/api/admin/tracking"
+          : `/api/admin/tracking/${selectedDate}`;
+        const signalsUrl = `/api/admin/tracking/signals?date=${selectedDate}`;
+
         const [metricsRes, signalsRes] = await Promise.all([
-          apiFetch("/api/admin/tracking"),
-          apiFetch("/api/admin/tracking/signals"),
+          apiFetch(metricsUrl),
+          apiFetch(signalsUrl),
         ]);
         if (!active) return;
         if (metricsRes.ok) setMetrics(await metricsRes.json());
@@ -156,10 +168,11 @@ export function TrackingDashboard() {
         if (active) setLoading(false);
       }
     }
+    setLoading(true);
     fetchData();
-    const handle = setInterval(fetchData, 30_000);
-    return () => { active = false; clearInterval(handle); };
-  }, []);
+    const interval = isToday ? setInterval(fetchData, 30_000) : null;
+    return () => { active = false; if (interval) clearInterval(interval); };
+  }, [selectedDate, isToday]);
 
   const filteredSignals = selectedBucket
     ? signals.filter((s) => s.confidenceBucket === selectedBucket)
@@ -189,11 +202,30 @@ export function TrackingDashboard() {
           <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" />
           Back to Admin
         </Link>
-        <div className="flex items-center gap-2">
-          <Activity className="size-4 text-emerald-500" />
-          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-            {metrics?.activeCount ?? 0} active
-          </span>
+        <div className="flex items-center gap-3">
+          <input
+            type="date"
+            value={selectedDate}
+            max={getTodayIST()}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className="px-3 py-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/40 text-sm text-zinc-900 dark:text-zinc-100"
+          />
+          {!isToday && (
+            <button
+              onClick={() => setSelectedDate(getTodayIST())}
+              className="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
+            >
+              Today
+            </button>
+          )}
+          {isToday && (
+            <div className="flex items-center gap-2">
+              <Activity className="size-4 text-emerald-500" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                {metrics?.activeCount ?? 0} active
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
