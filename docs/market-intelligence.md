@@ -423,18 +423,16 @@ Above the main "Opportunities" grid, the dashboard renders a small highlighted l
 const candidates = allStocks.filter(
   (s) => s.context.zone !== "MID_RANGE" && s.outlook !== "NO_CLEAR_EDGE",
 );
-const sorted = [...candidates].sort((a, b) => b.confidence - a.confidence);
-const top5 = sorted.slice(0, 5);
-
-// Floor: only show the section if at least one card clears 0.6 confidence
-const meetsFloor = top5.some((s) => s.confidence >= 0.6);
-return meetsFloor ? top5 : [];
+// Each card must individually clear 0.8 confidence
+const filtered = candidates.filter((s) => s.confidence >= 0.8);
+return [...filtered].sort((a, b) => b.confidence - a.confidence).slice(0, 5);
 ```
 
 Notes:
 - Always at most 5 cards
+- **Every card must have confidence ≥ 0.8** — no weak signals dragged in by sorting
 - **Excludes `NO_CLEAR_EDGE` outlook** — a stock can be near a level but have flat momentum, in which case it isn't an "opportunity"
-- Section hides entirely if no card clears 0.6 confidence (avoids "Top Opportunities" looking broken in dead markets)
+- Section hides entirely if no card clears 0.8 confidence (avoids "Top Opportunities" looking broken in dead markets)
 - The 5 selected stocks are **excluded from the main Opportunities grid** below — no duplication
 - Section label is "Top Opportunities", not "High Confidence" — avoids implying certainty
 - All 5 cards render with `highlight={true}` so they get the colored ring
@@ -471,7 +469,7 @@ The "Opportunities" section header has a dropdown letting the user widen or narr
 | Near resistance only | `zone === "NEAR_RESISTANCE"` | |
 | Near support only | `zone === "NEAR_SUPPORT"` | |
 
-The default **Actionable setups** filter is intentionally tighter than just "near a level". A stock can sit at support but have neutral momentum (`outlook === "NO_CLEAR_EDGE"`), and that's not actionable. By filtering both zone AND outlook, the default view stays clean and only shows stocks where the system has a directional read. Users who want the full picture switch to "All stocks".
+The default **Actionable setups** filter is intentionally tighter than just "near a level". It requires zone ≠ MID_RANGE, outlook ≠ NO_CLEAR_EDGE, AND **confidence ≥ 0.65**. A stock can sit at support but have neutral momentum or weak alignment — that's not actionable. Users who want the full picture switch to "All stocks".
 
 The two zone-only options (`Near resistance only` / `Near support only`) deliberately do NOT filter outlook — when you explicitly ask for a zone, you want every stock there regardless of whether momentum has formed.
 
@@ -831,7 +829,7 @@ Identical refresh cadence as the stocks view. No new endpoints, no new state.
 | `components/index-card.tsx` | **NEW** — gradient hero card per index (NIFTY 50 / NIFTY BANK / SENSEX), with icon, big price, change chip. Wrapped in `<Link>` to `/stock/[symbol]`. |
 | `components/market-context-banner.tsx` | **NEW** — top banner with market condition + index pills (icons added) |
 | `components/option-card.tsx` | **NEW** — index option card: header, secondary outlook, **Option Insight hero**, strike chips, confidence bar |
-| `components/dashboard.tsx` | Rewritten — banner + indices row + `[Stocks \| Options]` toggle + **Top Opportunities lane** (top 5 by confidence, floor 0.6, excludes `NO_CLEAR_EDGE`) + main "Opportunities" grid (default filter excludes `NO_CLEAR_EDGE`, excludes top symbols) |
+| `components/dashboard.tsx` | Rewritten — banner + indices row + `[Stocks \| Options]` toggle + **Top Opportunities lane** (top 5 by confidence, each ≥ 0.8, excludes `NO_CLEAR_EDGE`) + main "Opportunities" grid (default "Actionable" filter: zone + outlook + confidence ≥ 0.65, excludes top symbols) |
 | `components/ui/select.tsx` | **NEW** — styled Select component built on `@base-ui/react/select` (Trigger / Content / Item) with light + dark variants. Drop-in replacement for the native `<select>` used by the Opportunities filter dropdown. |
 | `components/stock-detail.tsx` | Rewritten — hero header + **What this means** (plain language) + **Suggested Approach** (non-directive) + 4-section grid + 320px chart |
 | `components/watch-zone.tsx` | Rewritten — reads live intelligence from `stockMap`; renders `signalType === "OPTION"` items as option cards (OPT badge + CALL/PUT bias) |
@@ -932,7 +930,7 @@ Manual sanity check for the options module:
 Manual sanity check for the decision-focused UX:
 
 1. Reload `localhost:3000` in stocks mode
-2. Confirm a "Top Opportunities" lane renders above the main "Opportunities" grid (only when at least one stock has confidence ≥ 0.6 AND a directional outlook — the section hides entirely otherwise)
+2. Confirm a "Top Opportunities" lane renders above the main "Opportunities" grid (only when at least one stock has confidence ≥ 0.8 AND a directional outlook — the section hides entirely otherwise)
 3. Top Opportunity cards have a colored ring (emerald for bullish outlooks, rose for bearish)
 4. Cards are simplified: header + outlook hero + confidence bar only — **no metric tiles, no bias footer**
 5. LOW-confidence cards in the main grid are visibly dimmed (~70% opacity)
