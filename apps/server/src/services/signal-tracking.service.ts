@@ -104,7 +104,7 @@ export function createSignalTrackingService() {
 
     const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const istTotalMin = istNow.getHours() * 60 + istNow.getMinutes();
-    if (istTotalMin >= 15 * 60 + 15) return; // 3:15 PM — need 15 min before close
+    if (istTotalMin >= 15 * 60 + 30) return; // 3:30 PM — market close
 
     if (price < 50) return;
     if (activeMap.has(symbol)) return; // still pending evaluation
@@ -388,3 +388,116 @@ export function createSignalTrackingService() {
 }
 
 export type SignalTrackingService = ReturnType<typeof createSignalTrackingService>;
+
+// Standalone DB queries — work without a running service (for weekends/market closed)
+export async function getTrackingMetricsFromDB(date?: Date) {
+  const targetDate = date ?? new Date();
+  const dayStart = new Date(targetDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(targetDate);
+  dayEnd.setHours(23, 59, 59, 999);
+
+  try {
+    const records = await db
+      .select()
+      .from(signalTracking)
+      .where(and(
+        gte(signalTracking.signalTime, dayStart),
+        lte(signalTracking.signalTime, dayEnd),
+      ));
+
+    type ConfBucket = "ULTRA_HIGH" | "HIGH" | "MEDIUM";
+    const minSamples: Record<ConfBucket, number> = { ULTRA_HIGH: 20, HIGH: 50, MEDIUM: 100 };
+    const buckets: ConfBucket[] = ["ULTRA_HIGH", "HIGH", "MEDIUM"];
+    const result: Record<string, any>[] = [];
+
+    for (const bucket of buckets) {
+      const bucketRecords = records.filter((r) => r.confidenceBucket === bucket);
+      const evaluated = bucketRecords.filter((r) => r.status !== "PENDING");
+      const success = evaluated.filter((r) => r.status === "SUCCESS");
+      const failed = evaluated.filter((r) => r.status === "FAILED");
+      const neutral = evaluated.filter((r) => r.status === "NEUTRAL");
+      const pending = bucketRecords.filter((r) => r.status === "PENDING");
+
+      const decided = success.length + failed.length;
+      const accuracy = decided > 0 ? Math.round((success.length / decided) * 100) : 0;
+      const winRate = decided > 0 ? success.length / decided : 0;
+      const lossRate = decided > 0 ? failed.length / decided : 0;
+
+      const gains = success.map((r) => Number(r.changePercent)).filter((v) => !isNaN(v));
+      const losses = failed.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
+      const maxProfits = evaluated.map((r) => Number(r.maxProfitPercent)).filter((v) => !isNaN(v));
+      const maxDrawdowns = evaluated.map((r) => Number(r.maxDrawdownPercent)).filter((v) => !isNaN(v));
+
+      const avgGain = gains.length > 0 ? gains.reduce((a, b) => a + b, 0) / gains.length : 0;
+      const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+      const avgMaxProfit = maxProfits.length > 0 ? maxProfits.reduce((a, b) => a + b, 0) / maxProfits.length : 0;
+      const avgMaxDrawdown = maxDrawdowns.length > 0 ? maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length : 0;
+      const expectancy = (winRate * avgGain) - (lossRate * avgLoss);
+      const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
+
+      const outlooks = ["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"];
+      const byOutlook: Record<string, { total: number; wins: number; rate: number }> = {};
+      for (const outlook of outlooks) {
+        const outlookDecided = evaluated.filter((r) => r.outlook === outlook && (r.status === "SUCCESS" || r.status === "FAILED"));
+        const outlookWins = outlookDecided.filter((r) => r.status === "SUCCESS").length;
+        byOutlook[outlook] = {
+          total: outlookDecided.length,
+          wins: outlookWins,
+          rate: outlookDecided.length > 0 ? Math.round((outlookWins / outlookDecided.length) * 100) : 0,
+        };
+      }
+
+      result.push({
+        bucket,
+        total: bucketRecords.length,
+        pending: pending.length,
+        success: success.length,
+        failed: failed.length,
+        neutral: neutral.length,
+        accuracy,
+        avgGain: Math.round(avgGain * 100) / 100,
+        avgLoss: Math.round(avgLoss * 100) / 100,
+        avgMaxProfit: Math.round(avgMaxProfit * 100) / 100,
+        avgMaxDrawdown: Math.round(avgMaxDrawdown * 100) / 100,
+        expectancy: Math.round(expectancy * 1000) / 1000,
+        riskReward: Math.round(riskReward * 100) / 100,
+        sampleSufficient: decided >= minSamples[bucket],
+        minSampleRequired: minSamples[bucket],
+        byOutlook,
+      });
+    }
+
+    return { date: dayStart.toISOString().split("T")[0], buckets: result, activeCount: 0 };
+  } catch (err: any) {
+    console.warn("[Tracking] Standalone metrics error:", err.message);
+    return null;
+  }
+}
+
+export async function getTrackingSignalsFromDB(limit = 200, date?: Date) {
+  try {
+    const targetDate = date ?? new Date();
+    const dayStart = new Date(targetDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(targetDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const rows = await db
+      .select()
+      .from(signalTracking)
+      .where(and(
+        gte(signalTracking.signalTime, dayStart),
+        lte(signalTracking.signalTime, dayEnd),
+      ))
+      .orderBy(sql`${signalTracking.signalTime} DESC`)
+      .limit(limit);
+
+    return rows.map(r => ({
+      ...r,
+      groupId: `${r.symbol}-${new Date(r.signalTime).toISOString().slice(0, 10)}`,
+    }));
+  } catch {
+    return [];
+  }
+}
