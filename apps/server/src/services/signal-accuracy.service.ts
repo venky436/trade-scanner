@@ -83,9 +83,12 @@ export function createSignalAccuracyService() {
     const { phase } = getMarketPhase();
     if (phase === "OPENING" || phase === "STABILIZING") return;
 
-    // Skip after 3:30 PM IST — market close
+    // Skip before 10:00 AM IST — early signals are unreliable for accuracy tracking
     const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const istTotalMin = istNow.getHours() * 60 + istNow.getMinutes();
+    if (istTotalMin < 10 * 60) return; // before 10:00 AM
+
+    // Skip after 3:30 PM IST — market close
     if (istTotalMin >= 15 * 60 + 30) return; // 15:30 = 3:30 PM
 
     // Skip low-price stocks — unreliable signals below ₹50
@@ -385,3 +388,95 @@ export function createSignalAccuracyService() {
 }
 
 export type SignalAccuracyService = ReturnType<typeof createSignalAccuracyService>;
+
+// Standalone DB queries — work without a running service (for weekends/market closed)
+export async function getAccuracyMetricsFromDB(date?: Date) {
+  const targetDate = date ?? new Date();
+  const dayStart = new Date(targetDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(targetDate);
+  dayEnd.setHours(23, 59, 59, 999);
+
+  try {
+    const records = await db
+      .select()
+      .from(signalAccuracyLog)
+      .where(and(
+        gte(signalAccuracyLog.entryTime, dayStart),
+        lte(signalAccuracyLog.entryTime, dayEnd),
+      ));
+
+    const total = records.length;
+    const evaluated = records.filter((r) => r.result !== null);
+    const success = evaluated.filter((r) => r.result === "SUCCESS").length;
+    const failed = evaluated.filter((r) => r.result === "FAILED").length;
+    const neutral = evaluated.filter((r) => r.result === "NEUTRAL").length;
+    const pending = records.filter((r) => r.result === null).length;
+
+    const decided = success + failed;
+    const accuracy = decided > 0 ? Math.round((success / decided) * 100) : 0;
+
+    const types = ["BREAKOUT", "BREAKDOWN", "BOUNCE", "REJECTION", "CONTINUATION"];
+    const winRateByType: Record<string, { total: number; wins: number; rate: number }> = {};
+    for (const type of types) {
+      const typeDecided = evaluated.filter((r) => r.signalType === type && (r.result === "SUCCESS" || r.result === "FAILED"));
+      const typeWins = typeDecided.filter((r) => r.result === "SUCCESS").length;
+      winRateByType[type] = {
+        total: typeDecided.length,
+        wins: typeWins,
+        rate: typeDecided.length > 0 ? Math.round((typeWins / typeDecided.length) * 100) : 0,
+      };
+    }
+
+    const gains: number[] = [];
+    const losses: number[] = [];
+    for (const r of evaluated) {
+      const entry = Number(r.entryPrice);
+      const final = Number(r.finalPrice);
+      if (!entry || !final) continue;
+      const pnl = r.action === "BUY"
+        ? ((final - entry) / entry) * 100
+        : ((entry - final) / entry) * 100;
+      if (r.result === "SUCCESS") gains.push(pnl);
+      if (r.result === "FAILED") losses.push(pnl);
+    }
+
+    const avgGain = gains.length > 0 ? gains.reduce((a, b) => a + b, 0) / gains.length : 0;
+    const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+    const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
+
+    return {
+      date: dayStart.toISOString().split("T")[0],
+      total, pending, success, failed, neutral, accuracy,
+      winRateByType,
+      avgGain: Math.round(avgGain * 100) / 100,
+      avgLoss: Math.round(avgLoss * 100) / 100,
+      riskReward: Math.round(riskReward * 100) / 100,
+    };
+  } catch (err: any) {
+    console.warn("[Accuracy] Standalone metrics error:", err.message);
+    return null;
+  }
+}
+
+export async function getAccuracySignalsFromDB(limit = 500, date?: Date) {
+  try {
+    const targetDate = date ?? new Date();
+    const dayStart = new Date(targetDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(targetDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    return await db
+      .select()
+      .from(signalAccuracyLog)
+      .where(and(
+        gte(signalAccuracyLog.entryTime, dayStart),
+        lte(signalAccuracyLog.entryTime, dayEnd),
+      ))
+      .orderBy(sql`${signalAccuracyLog.entryTime} DESC`)
+      .limit(limit);
+  } catch {
+    return [];
+  }
+}
