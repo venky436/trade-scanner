@@ -7,7 +7,7 @@ import type { IntelligenceSnapshot } from "../lib/types.js";
 
 const MAX_DAILY_SIGNALS = 200;
 const EVAL_INTERVAL_MS = 60_000; // check every 1 minute
-const EVAL_WINDOW_MS = 15 * 60_000; // 15 minutes
+const EVAL_WINDOW_MS = 10 * 60_000; // 10 minutes
 const SUCCESS_THRESHOLD = 0.3; // ±0.3%
 
 type ConfidenceBucket = "ULTRA_HIGH" | "HIGH" | "MEDIUM";
@@ -104,7 +104,8 @@ export function createSignalTrackingService() {
 
     const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const istTotalMin = istNow.getHours() * 60 + istNow.getMinutes();
-    if (istTotalMin >= 15 * 60 + 30) return; // 3:30 PM — market close
+    if (istTotalMin < 9 * 60 + 45) return; // before 9:45 AM
+    if (istTotalMin >= 15 * 60 + 10) return; // 3:10 PM — stop before close
 
     if (price < 50) return;
     if (activeMap.has(symbol)) return; // still pending evaluation
