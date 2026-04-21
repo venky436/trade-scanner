@@ -1,13 +1,13 @@
 # Signal Tracking System
 
-> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a fixed 15-minute evaluation window with movement analytics and confidence buckets. Admin-only — not user-facing.
+> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a fixed 10-minute evaluation window with movement analytics and confidence buckets. Admin-only — not user-facing.
 
 ## Why this exists
 
 The intelligence layer produces a confidence score (0–1) for every stock. But confidence is only useful if higher confidence actually leads to better outcomes. This system answers:
 
 - Are high-confidence signals actually working?
-- How much do they move in 15 minutes?
+- How much do they move in 10 minutes?
 - Is the system profitable in terms of expectancy?
 - Which outlook types (Breakout / Bounce / Rejection / Breakdown) perform best?
 - Does ULTRA_HIGH confidence outperform HIGH, which outperforms MEDIUM?
@@ -61,7 +61,8 @@ Guards:
   ✗ confidence < 0.5      → skip
   ✗ outlook = NO_CLEAR_EDGE → skip (no directional bet)
   ✗ phase ≠ NORMAL         → skip (OPENING/STABILIZING)
-  ✗ after 3:15 PM IST      → skip (need 15 min before close)
+  ✗ before 9:45 AM IST     → skip (early signals unreliable)
+  ✗ after 3:10 PM IST      → skip (stop before close)
   ✗ price < ₹50            → skip
   ✗ already pending eval     → skip (activeMap has symbol)
   ✗ already tracked today at same or higher bucket → skip (trackedToday dedup)
@@ -71,10 +72,10 @@ INSERT into signal_tracking table
   status = PENDING
   bucket = ULTRA_HIGH / HIGH / MEDIUM
     ↓
-... 15 minutes pass ...
+... 10 minutes pass ...
     ↓
 Evaluation timer (every 60 seconds)
-  Find rows where status=PENDING AND now >= signal_time + 15 min
+  Find rows where status=PENDING AND now >= signal_time + 10 min
     ↓
 For each:
   price_after = marketDataService.getQuote(symbol).lastPrice
@@ -123,7 +124,7 @@ bias                VARCHAR(10)    NOT NULL   -- BULLISH / BEARISH / NEUTRAL
 
 status              VARCHAR(10)    NOT NULL DEFAULT 'PENDING'
 
--- Filled after 15 minutes
+-- Filled after 10 minutes
 price_after            NUMERIC(12,2)
 change_percent         NUMERIC(8,4)
 change_points          NUMERIC(12,2)
@@ -294,9 +295,10 @@ Admin users see a TrendingUp icon in the navbar (next to the existing Shield adm
 | `confidence < 0.5` | Below the MEDIUM bucket floor — no tracking |
 | `outlook === "NO_CLEAR_EDGE"` | No directional bet to validate |
 | `phase !== "NORMAL"` | Opening/stabilizing noise would pollute data |
-| `IST time >= 15:15` | Need 15 min before market close at 15:30 |
+| `IST time < 9:45 AM` | Early signals are unreliable |
+| `IST time >= 3:10 PM` | Stop recording before market close |
 | `price < ₹50` | Penny stocks are unreliable |
-| `activeMap.has(symbol)` | Signal still pending 15-min evaluation |
+| `activeMap.has(symbol)` | Signal still pending 10-min evaluation |
 | `trackedToday` same or lower bucket | Prevents duplicate entries at same confidence level. Allows re-tracking only when stock upgrades to a higher bucket (MEDIUM → HIGH → ULTRA_HIGH). Max 3 entries per symbol per day. |
 | Daily cap (200) hit | Prevent runaway DB writes |
 
@@ -329,7 +331,7 @@ Example: RELIANCE tracked at MEDIUM (10:15), then upgrades to HIGH (11:30):
 |---|---|---|
 | `MAX_DAILY_SIGNALS` | 200 | Higher than old system's 100 because we track 3 buckets |
 | `EVAL_INTERVAL_MS` | 60,000 (1 min) | Check timer cadence |
-| `EVAL_WINDOW_MS` | 900,000 (15 min) | Fixed evaluation window |
+| `EVAL_WINDOW_MS` | 600,000 (10 min) | Fixed evaluation window |
 | `SUCCESS_THRESHOLD` | 0.3% | Minimum move to classify as directional |
 | `MIN_SAMPLES.ULTRA_HIGH` | 20 | Minimum decided signals before trusting results |
 | `MIN_SAMPLES.HIGH` | 50 | |
@@ -368,7 +370,7 @@ cd apps/server && npx drizzle-kit push
 
 Then during market hours, check:
 - Server logs: `[Tracking] Recorded: SYMBOL outlook conf=X bucket=Y`
-- After 15 min: `[Tracking] SUCCESS/FAILED: SYMBOL change=+X%`
+- After 10 min: `[Tracking] SUCCESS/FAILED: SYMBOL change=+X%`
 - Admin page: `localhost:3000/admin/tracking`
 
 ---

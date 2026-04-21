@@ -83,13 +83,13 @@ export function createSignalAccuracyService() {
     const { phase } = getMarketPhase();
     if (phase === "OPENING" || phase === "STABILIZING") return;
 
-    // Skip before 10:00 AM IST — early signals are unreliable for accuracy tracking
+    // Skip before 9:45 AM IST — early signals are unreliable
     const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const istTotalMin = istNow.getHours() * 60 + istNow.getMinutes();
-    if (istTotalMin < 10 * 60) return; // before 10:00 AM
+    if (istTotalMin < 9 * 60 + 45) return; // before 9:45 AM
 
-    // Skip after 3:30 PM IST — market close
-    if (istTotalMin >= 15 * 60 + 30) return; // 15:30 = 3:30 PM
+    // Skip after 3:10 PM IST — stop before close
+    if (istTotalMin >= 15 * 60 + 10) return; // 15:10 = 3:10 PM
 
     // Skip low-price stocks — unreliable signals below ₹50
     if (price < 50) return;

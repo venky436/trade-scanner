@@ -83,12 +83,12 @@ function filterStocks(stocks: IntelligenceSnapshot[], filter: GridFilter): Intel
   if (filter === "ALL") return stocks;
   if (filter === "NEAR_RESISTANCE") return stocks.filter((s) => s.context.zone === "NEAR_RESISTANCE");
   if (filter === "NEAR_SUPPORT") return stocks.filter((s) => s.context.zone === "NEAR_SUPPORT");
-  // ACTIONABLE (default): near a level + directional outlook + confidence >= 0.5
+  // ACTIONABLE (default): near a level + directional outlook + confidence >= 0.65
   return stocks.filter(
     (s) =>
       s.context.zone !== "MID_RANGE" &&
       s.outlook !== "NO_CLEAR_EDGE" &&
-      s.confidence >= 0.5,
+      s.confidence >= 0.65,
   );
 }
 
@@ -181,12 +181,9 @@ export function Dashboard() {
   // floor. Independent of the user's filter dropdown.
   const topOpportunities = useMemo(() => {
     const candidates = allStocks.filter(
-      (s) => s.context.zone !== "MID_RANGE" && s.outlook !== "NO_CLEAR_EDGE",
+      (s) => s.context.zone !== "MID_RANGE" && s.outlook !== "NO_CLEAR_EDGE" && s.confidence >= 0.8,
     );
-    const sorted = [...candidates].sort((a, b) => b.confidence - a.confidence);
-    const top5 = sorted.slice(0, 5);
-    const meetsFloor = top5.some((s) => s.confidence >= 0.6);
-    return meetsFloor ? top5 : [];
+    return [...candidates].sort((a, b) => b.confidence - a.confidence).slice(0, 5);
   }, [allStocks]);
 
   const topSymbols = useMemo(
