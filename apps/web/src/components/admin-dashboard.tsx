@@ -143,7 +143,7 @@ export function AdminDashboard() {
         <div className="text-center py-16 text-muted-foreground">
           <Target className="size-12 mx-auto mb-4 text-muted-foreground/30" />
           <p className="text-lg font-medium">No signals tracked yet</p>
-          <p className="text-sm mt-1">Signals with score ≥ 8 will be automatically tracked after 10:00 AM IST</p>
+          <p className="text-sm mt-1">Signals with score ≥ 8 will be automatically tracked after 9:45 AM IST</p>
         </div>
       ) : (
         <div className="space-y-6">

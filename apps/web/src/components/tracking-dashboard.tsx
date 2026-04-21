@@ -453,7 +453,7 @@ export function TrackingDashboard() {
 
         {filteredSignals.length === 0 ? (
           <div className="py-12 text-center text-sm text-zinc-500">
-            No signals recorded yet. Tracking starts after 10:00 AM IST when confidence ≥ 0.5.
+            No signals recorded yet. Tracking starts after 9:45 AM IST when confidence ≥ 0.5.
           </div>
         ) : (
           <div className="overflow-x-auto">

@@ -279,8 +279,9 @@ Log: "[Accuracy] Loaded 12 pending signals from DB [12 active]"
 | Market close cleanup | 3:30 PM IST | Remaining active signals → NEUTRAL |
 | Min risk-reward | 1.0 | Reward must be >= risk |
 | Min score | 9 | Only highest-confidence signals |
-| Market phase | NORMAL only (9:30 AM+) | Skip OPENING/STABILIZING (first 15 min) |
-| Late session cutoff | Before 3:30 PM IST | Stop tracking after 15:30 — market close |
+| Market phase | NORMAL only (9:30 AM+) | Skip OPENING/STABILIZING |
+| Early session cutoff | After 9:45 AM IST | Skip early unreliable signals |
+| Late session cutoff | Before 3:10 PM IST | Stop recording before market close |
 | Min price | ₹50 | Skip low-price stocks — unreliable signals |
 | Targets/SL | Type-specific (see table below) | Different signal types have different risk profiles |
 
@@ -356,7 +357,8 @@ Signal arrives at setCacheEntry()
   Gate 3: signal.type exists?            → skip if no BREAKOUT/BOUNCE/REJECTION/BREAKDOWN
   Gate 4: stage == CONFIRMED?            → skip if MOMENTUM/PRESSURE stage
   Gate 5: marketPhase == NORMAL?         → skip if OPENING/STABILIZING (before 9:30 AM)
-  Gate 6: time < 3:30 PM IST?           → skip if market closed
+  Gate 6: time >= 9:45 AM IST?          → skip if before 9:45 AM
+  Gate 7: time < 3:10 PM IST?           → skip if near market close
   Gate 7: price >= ₹50?                 → skip if low-price stock
   │
   ALL PASS → record for accuracy
@@ -368,8 +370,9 @@ Signal arrives at setCacheEntry()
 | action != WAIT | Confirmed direction | Stocks sitting at S/R without confirmation |
 | signal.type exists | Has BREAKOUT/BOUNCE/REJECTION/BREAKDOWN | MOMENTUM/PRESSURE stage signals (no S/R validation) |
 | stage == CONFIRMED | Passed through signal engine with S/R checks | Early-stage signals that bypass S/R confirmation |
-| phase == NORMAL | Market is past opening volatility | First 15 minutes of trading (until 9:30 AM) |
-| time < 3:30 PM | Before market close | Stop recording after market closes |
+| phase == NORMAL | Market is past opening volatility | OPENING/STABILIZING phase (until 9:30 AM) |
+| time >= 9:45 AM | Past early session noise | First 30 minutes of trading unreliable for accuracy |
+| time < 3:10 PM | Before market close window | Stop recording near market close |
 | price >= ₹50 | Minimum stock price | Low-price penny stocks with unreliable signals |
 
 Plus the accuracy service adds:
