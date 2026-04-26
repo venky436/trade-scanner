@@ -67,19 +67,16 @@ function closeCandle(symbol: string, state: TickState, timestamp: number): void 
   const totalVolume = state.buyerVolume + state.sellerVolume;
   const deltaStrength = totalVolume > 0 ? state.delta / totalVolume : 0;
 
-  const priceDiff = state.candleOpenPrice !== 0
-    ? (state.currentPrice - state.candleOpenPrice) / state.candleOpenPrice
-    : 0;
-  const momentum = clamp(priceDiff / 0.003, -1, 1);
-
   const elapsedMinutes = (timestamp - state.firstTickTime) / 60_000;
   const avgCandleVolume = elapsedMinutes >= 1 ? state.totalVolumeProcessed / elapsedMinutes : 0;
   const volumeStrength = avgCandleVolume > 0 ? clamp(state.candleVolume / avgCandleVolume, 0, 1) : 0;
 
+  // Pure flow score: order delta + volume confirmation. Momentum used to
+  // contribute 0.3 here, but momentum is already an independent input to
+  // confidence — counting it twice inflated momentum's effective weight.
   const combined =
-    deltaStrength * 0.5 +
-    momentum * 0.3 +
-    volumeStrength * 0.2 * Math.sign(deltaStrength);
+    deltaStrength * 0.7 +
+    volumeStrength * 0.3 * Math.sign(deltaStrength);
 
   state.candleScores.push(combined);
   if (state.candleScores.length > 3) state.candleScores.shift();

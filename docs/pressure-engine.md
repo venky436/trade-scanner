@@ -87,22 +87,15 @@ This is O(1) per tick — no loops, no async, no allocations.
 
 ### 2. Candle Close (`closeCandle`)
 
-When a 1-minute candle closes, we score it using three components:
+When a 1-minute candle closes, we score it using two components — pure order flow:
 
-#### Delta Strength (weight: 50%)
+#### Delta Strength (weight: 70%)
 ```
 deltaStrength = delta / (buyerVolume + sellerVolume)
 ```
 This is the net buy/sell ratio. Ranges from -1 (all sellers) to +1 (all buyers). This is the primary signal.
 
-#### Price Momentum (weight: 30%)
-```
-priceDiff = (currentPrice - candleOpenPrice) / candleOpenPrice
-momentum = clamp(priceDiff / 0.003, -1, 1)
-```
-How much did the price actually move this candle? We normalize against 0.3% (a meaningful 1-minute move). This catches cases where volume is split but price clearly moved one direction.
-
-#### Volume Strength (weight: 20%)
+#### Volume Strength (weight: 30%)
 ```
 avgCandleVolume = totalVolumeProcessed / elapsedMinutes
 volumeStrength = clamp(candleVolume / avgCandleVolume, 0, 1)
@@ -111,8 +104,10 @@ Was this candle's volume above or below average? High-volume candles carry more 
 
 #### Combined Score
 ```
-combined = deltaStrength * 0.5 + momentum * 0.3 + volumeStrength * 0.2 * sign(deltaStrength)
+combined = deltaStrength * 0.7 + volumeStrength * 0.3 * sign(deltaStrength)
 ```
+
+> **Note — momentum is intentionally absent.** An earlier version of this formula included a `momentum * 0.3` term. That created a hidden double-count: momentum is already an independent input to the confidence formula in `intelligence-transformer.ts`, so baking it into pressure too made momentum count ~0.65 effective weight instead of the intended 0.50. Removing it restores pressure to a pure-flow signal and lets the confidence formula's 50/50 momentum/pressure split actually mean 50/50.
 
 The score is pushed into a ring buffer (`candleScores`). Only the last 3 scores are kept.
 

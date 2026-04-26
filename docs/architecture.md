@@ -167,7 +167,7 @@ Analyzes buy/sell volume pressure using 1-minute candles.
 ```
 Every tick: classify volume delta by price direction
 Every 1-min candle close:
-  → Compute score: deltaStrength(0.5) + momentum(0.3) + volumeStrength(0.2)
+  → Compute score: deltaStrength(0.7) + volumeStrength(0.3) — pure flow, no momentum (momentum is a separate input to confidence)
   → Ring buffer (last 3 scores)
   → Increment version counter
 

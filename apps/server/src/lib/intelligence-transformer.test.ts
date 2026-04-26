@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildMarketContext, toIntelligence, type IntelligenceInput } from "./intelligence-transformer.js";
-import type { MomentumResult, PressureResult, SupportResistanceResult, SRZone } from "./types.js";
+import type { Candle, MomentumResult, PressureResult, SupportResistanceResult, SRZone } from "./types.js";
 
 function makeZone(level: number, distancePercent: number): SRZone {
   return {
@@ -368,6 +368,78 @@ describe("toIntelligence — volatility labels", () => {
   it("0.3% range → LOW", () => {
     const r = toIntelligence(baseInput({ high: 1003, low: 1000 }));
     assert.equal(r.volatility.label, "LOW");
+  });
+});
+
+function makeCandles(specs: Array<{ high: number; low: number }>): Candle[] {
+  return specs.map((s, i) => ({
+    time: 1700000000 + i * 300,
+    open: s.low,
+    high: s.high,
+    low: s.low,
+    close: s.high,
+    volume: 1000,
+  }));
+}
+
+describe("toIntelligence — rolling-window volatility", () => {
+  it("uses rolling window when ≥ 3 candles supplied (overrides session high/low)", () => {
+    // Session would say HIGH (3% range), but rolling window says MEDIUM (1% range).
+    const r = toIntelligence(baseInput({
+      high: 1030, low: 1000, // session: 3% range
+      recentCandles: makeCandles([
+        { high: 1005, low: 1000 },
+        { high: 1008, low: 1002 },
+        { high: 1010, low: 1003 },
+        { high: 1009, low: 1001 },
+        { high: 1010, low: 1004 },
+        { high: 1010, low: 1000 }, // window: max=1010, min=1000 → 1.0% range
+      ]),
+    }));
+    assert.equal(r.volatility.label, "MEDIUM");
+    assert.equal(r.volatility.score, 0.6);
+  });
+
+  it("rolling window 0.3% range → LOW even when session high/low say HIGH", () => {
+    const r = toIntelligence(baseInput({
+      high: 1030, low: 1000, // session: 3% range → would be HIGH
+      recentCandles: makeCandles([
+        { high: 1001, low: 1000 },
+        { high: 1002, low: 1000 },
+        { high: 1003, low: 1000 }, // window: 0.3% range
+      ]),
+    }));
+    assert.equal(r.volatility.label, "LOW");
+  });
+
+  it("falls back to session high/low when fewer than 3 candles supplied", () => {
+    const r = toIntelligence(baseInput({
+      high: 1030, low: 1000, // session: 3% range
+      recentCandles: makeCandles([
+        { high: 1001, low: 1000 },
+        { high: 1002, low: 1000 },
+      ]),
+    }));
+    assert.equal(r.volatility.label, "HIGH");
+    assert.equal(r.volatility.score, 1.0);
+  });
+
+  it("falls back to session high/low when recentCandles is empty array", () => {
+    const r = toIntelligence(baseInput({
+      high: 1010, low: 1000, // session: 1% range → MEDIUM
+      recentCandles: [],
+    }));
+    assert.equal(r.volatility.label, "MEDIUM");
+    assert.equal(r.volatility.score, 0.6);
+  });
+
+  it("returns LOW safety floor when both candles and session high/low are missing", () => {
+    const r = toIntelligence(baseInput({
+      high: 0, low: 0, // no session OHLC
+      recentCandles: [], // no candles
+    }));
+    assert.equal(r.volatility.label, "LOW");
+    assert.equal(r.volatility.score, 0.2);
   });
 });
 

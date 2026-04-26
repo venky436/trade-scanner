@@ -358,6 +358,7 @@ export async function stocksRoute(
     let sr = levels[symbol] ?? null;
     let onDemandMomentum: MomentumResult | null = null;
     let onDemandPressure: PressureResult | null = null;
+    let onDemandRecentCandles: Candle[] | undefined;
 
     // Price from live quote
     let price = quote?.lastPrice ?? 0;
@@ -429,6 +430,9 @@ export async function stocksRoute(
 
               // Pressure: approximate from the same 5-min window
               onDemandPressure = pressureFromCandles(intradayCandles.slice(-3));
+
+              // Volatility: last 6 × 5-min candles (~30-min rolling window)
+              onDemandRecentCandles = intradayCandles.slice(-6);
             }
           }
         } catch {
@@ -454,6 +458,7 @@ export async function stocksRoute(
       pressure,
       momentum,
       sr,
+      recentCandles: onDemandRecentCandles,
     });
 
     // Chart-helper levels (kept outside intelligence so the frontend chart can draw both lines).

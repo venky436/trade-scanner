@@ -26,7 +26,7 @@ interface CandleScore {
 }
 
 // Per-candle score, matching the live engine's `closeCandle` formula:
-//   combined = deltaStrength*0.5 + momentum*0.3 + volumeStrength*0.2*sign(deltaStrength)
+//   combined = deltaStrength*0.7 + volumeStrength*0.3*sign(deltaStrength)
 //
 // Differences from the live engine:
 // - deltaStrength: we don't have tick-level direction, so we assume green candles are
@@ -48,16 +48,12 @@ function scoreCandle(c: Candle, avgVolume: number): CandleScore {
     deltaStrength = -1;
   }
 
-  const priceDiff = (c.close - c.open) / c.open;
-  const momentum = clamp(priceDiff / 0.003, -1, 1);
-
   const volumeStrength =
     avgVolume > 0 ? clamp(c.volume / avgVolume, 0, 1) : 0;
 
   const combined =
-    deltaStrength * 0.5 +
-    momentum * 0.3 +
-    volumeStrength * 0.2 * Math.sign(deltaStrength);
+    deltaStrength * 0.7 +
+    volumeStrength * 0.3 * Math.sign(deltaStrength);
 
   return { score: clamp(combined, -1, 1), delta };
 }
