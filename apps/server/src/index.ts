@@ -186,6 +186,7 @@ async function main() {
       getPressure: (s) => pressureEngine.getPressure(s),
       getMomentum: (s) => momentumMap.get(s) ?? null,
       getLevels: (s) => cachedLevels[s] ?? null,
+      getRecentCandles: (s) => candleTrackerRef?.getRecentCandles(s, 6) ?? [],
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
     });
     wsManager.attach(server.server);
@@ -252,6 +253,7 @@ async function main() {
       getPressure: (s) => pressureEngine.getPressure(s),
       getMomentum: (s) => momentumMap.get(s) ?? null,
       getLevels: (s) => cachedLevels[s] ?? null,
+      getRecentCandles: (s) => candleTrackerRef?.getRecentCandles(s, 6) ?? [],
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
       onIntelligenceComputed: (symbol, intel, price) => {
         trackingService.recordSignal(symbol, intel, price);

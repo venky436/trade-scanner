@@ -1,5 +1,6 @@
 import type { WsManager } from "../ws/ws-server.js";
 import type {
+  Candle,
   IntelligenceSnapshot,
   IntelligenceWsMessage,
   MarketContext,
@@ -17,6 +18,7 @@ interface BroadcastConfig {
   getPressure?: (symbol: string) => PressureResult | null;
   getMomentum?: (symbol: string) => MomentumResult | null;
   getLevels?: (symbol: string) => SupportResistanceResult | null;
+  getRecentCandles?: (symbol: string) => Candle[];
   getEligibleSymbols?: () => string[];
   onIntelligenceComputed?: (symbol: string, intel: IntelligenceSnapshot, price: number) => void;
 }
@@ -40,11 +42,10 @@ export function createBroadcastEngine(config: BroadcastConfig) {
   }
 
   function tick() {
-    if (wsManager.clientCount() === 0) return;
-
     const dirty = marketDataService.getDirtySymbols();
     if (dirty.length === 0) return;
 
+    const hasClients = wsManager.clientCount() > 0;
     const quotes = marketDataService.getAllQuotes();
     const eligibleSet = new Set(config.getEligibleSymbols?.() ?? []);
 
@@ -67,10 +68,18 @@ export function createBroadcastEngine(config: BroadcastConfig) {
         pressure: config.getPressure?.(symbol) ?? null,
         momentum: config.getMomentum?.(symbol) ?? null,
         sr: config.getLevels?.(symbol) ?? null,
+        recentCandles: config.getRecentCandles?.(symbol),
       });
-      candidates.push(intel);
+      if (hasClients) candidates.push(intel);
 
+      // Fire tracking hook regardless of WS clients — server-driven recording
+      // must continue when no browsers are connected.
       config.onIntelligenceComputed?.(symbol, intel, q.lastPrice);
+    }
+
+    if (!hasClients) {
+      marketDataService.clearDirty();
+      return;
     }
 
     // Highest confidence first, then stocks with clearest outlook

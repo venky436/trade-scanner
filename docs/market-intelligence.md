@@ -202,12 +202,18 @@ STRONG_SELL        →     SELL
 score = |pressure.value|
 ```
 
-### 4. Volatility (from intraday range)
+### 4. Volatility (rolling 30-min range, with session fallback)
 
-Same formula as the original score-engine, just exposed as a 0–1 score + label:
+Volatility measures **current chaos**, not the day's cumulative swing. Primary input is a **rolling window of the last 6 five-minute candles** (~30 min). When fewer than 3 recent candles are available (cold start, server restart, brand-new symbol mid-day), it falls back to today's session high/low. Same scoring bands as the original score-engine, just with a smarter input.
 
 ```
-range = (intraday high - intraday low) / price
+// Primary path: rolling 30-min window (last 6 × 5-min candles)
+high  = max(candle.high) over window
+low   = min(candle.low)  over window
+range = (high - low) / price
+
+// Fallback (when window has < 3 candles):
+range = (sessionHigh - sessionLow) / price
 
 range ≥ 3.0%  → score 1.0   label HIGH
 range ≥ 2.0%  → score 0.8   label HIGH
@@ -215,6 +221,13 @@ range ≥ 1.0%  → score 0.6   label MEDIUM
 range ≥ 0.5%  → score 0.4   label MEDIUM
 range <  0.5% → score 0.2   label LOW
 ```
+
+**Why rolling, not session-cumulative?** The session-cumulative `(today's high − today's low)` was monotonically non-decreasing — once a stock whipsawed 3% by 10:30 AM, it stayed HIGH-volatility for the rest of the day even after going dead-flat. Rolling-window volatility reflects right-now conditions: the morning swing ages out of the window after ~30 min, so a stock that calms down gets credit for calming down.
+
+**Implementation:**
+- `apps/server/src/services/candle-tracker.service.ts` — `getRecentCandles(symbol, n)` slices the newest n entries from session candles
+- `apps/server/src/lib/intelligence-transformer.ts` — `buildVolatility(price, sessionHigh, sessionLow, recentCandles?)` prefers the rolling window, falls back to session OHLC, returns LOW (0.2) as the safety floor when both are unavailable
+- Wired into `broadcast.service.ts` (live every 500ms), `ws/ws-server.ts` (initial snapshot), and `routes/stocks.route.ts` (on-demand snapshot — uses last 6 of the Kite-fetched intraday candles)
 
 ### 5. Confidence (direction-aware formula)
 
@@ -518,6 +531,7 @@ Results:
 2. **Intraday 5-min candles** (today's session, ~75 candles)
    - Momentum: `getMomentum(intradayCandles.slice(-3))` — last 3 × 5-min candles, **exactly the same scale as the live engine** (which also uses 3 × 5-min from the candle tracker)
    - Pressure: `pressureFromCandles(intradayCandles.slice(-3))` — approximation, see next section
+   - Volatility: `intradayCandles.slice(-6)` is passed into `toIntelligence` as `recentCandles` — same rolling 30-min window as the live engine
 
 Both calls use `Promise.allSettled` so the snapshot still renders if either one fails.
 
@@ -532,13 +546,13 @@ New helper at `apps/server/src/lib/pressure-from-candles.ts`. Mirrors the live p
 
 **Per-candle score** (same formula as `pressure.service.ts:closeCandle`):
 ```ts
-combined = deltaStrength * 0.5
-         + momentum * 0.3
-         + volumeStrength * 0.2 * sign(deltaStrength)
+combined = deltaStrength * 0.7
+         + volumeStrength * 0.3 * sign(deltaStrength)
 ```
 Where:
-- `momentum = clamp((close - open) / open / 0.003, -1, 1)` — same 0.3% normalization as the live engine
 - `volumeStrength = clamp(c.volume / avgVolume, 0, 1)` — relative to the mean volume across the 3-candle window (the live engine uses a running day-average; we use window-average to stay self-contained)
+
+> **Why no momentum term?** An earlier version included `momentum * 0.3`, but momentum is already a separate input to the confidence formula. Counting it inside pressure too inflated momentum's effective weight (~0.65 instead of the intended 0.50). Removing it makes pressure a pure-flow signal and restores the intended 50/50 split in confidence. See `pressure-engine.md` for full rationale.
 
 **Rolling 3-candle weighted average** (same formula as `getPressureForState`):
 ```ts
@@ -576,7 +590,7 @@ All pass. Run with `npx tsx --test src/lib/pressure-from-candles.test.ts`.
 | Zone | Real (from cached S/R) | Real (fetched per request) |
 | Momentum | Real (3 × 5-min from candle tracker) | Real (3 × 5-min from Kite API) |
 | Pressure | Real (tick-level) | **Approximate** (candle-level) |
-| Volatility | Real (intraday high/low) | Real (daily high/low) |
+| Volatility | Rolling 30-min (last 6 × 5-min candles) | Rolling 30-min (last 6 × 5-min candles from Kite API) |
 | Outlook | Full decision table | Full decision table |
 | Confidence | Real | Real (no longer capped at 0.5) |
 
@@ -801,7 +815,7 @@ Identical refresh cadence as the stocks view. No new endpoints, no new state.
 | File | Purpose |
 |---|---|
 | `lib/intelligence-transformer.ts` | **NEW** — `toIntelligence()` + `buildMarketContext()` pure functions |
-| `lib/intelligence-transformer.test.ts` | **NEW** — 40 unit tests covering zone, momentum, pressure, volatility, direction-aware confidence (aligned, wrong-direction, minimum alignment cap, MID_RANGE), outlook truth table, bias, market context |
+| `lib/intelligence-transformer.test.ts` | **NEW** — 45 unit tests covering zone, momentum, pressure, volatility (session + rolling-window paths + fallbacks), direction-aware confidence (aligned, wrong-direction, minimum alignment cap, MID_RANGE), outlook truth table, bias, market context |
 | `lib/pressure-from-candles.ts` | **NEW** — `pressureFromCandles()` pure function. Approximates pressure from recent minute candles using the same scoring formula as the live engine. Used by the on-demand snapshot endpoint for untracked stocks. |
 | `lib/pressure-from-candles.test.ts` | **NEW** — 9 unit tests covering guard clauses, strong BUY/SELL, dead zone, mixed direction, consistency boost, recent-candle weighting |
 | `lib/types.ts` | Added intelligence types alongside the existing internal types |

@@ -1,5 +1,6 @@
 import type {
   Bias,
+  Candle,
   ConfidenceLabel,
   IndexDirection,
   IntelligenceMomentum,
@@ -29,6 +30,9 @@ export interface IntelligenceInput {
   pressure: PressureResult | null;
   momentum: MomentumResult | null;
   sr: SupportResistanceResult | null;
+  // Optional rolling-window OHLC (last N five-min candles) for "current chaos"
+  // volatility. When ≥ 3 candles supplied, used instead of session high/low.
+  recentCandles?: Candle[];
 }
 
 const NEAR_ZONE_PERCENT = 1.0; // ≤ 1% from a level counts as "near"
@@ -112,9 +116,38 @@ function buildPressure(p: PressureResult | null): IntelligencePressure {
   return { label, score: clamp01(Math.abs(p.value)) };
 }
 
-// Volatility from intraday range — formula matches score-engine.ts
-function buildVolatility(price: number, high: number, low: number): IntelligenceVolatility {
-  if (price <= 0 || high <= 0 || low <= 0) return { label: "LOW", score: 0.2 };
+// Volatility from intraday range. Prefers a rolling window of the last N
+// five-min candles ("current chaos"); falls back to today's session high/low
+// when fewer than 3 recent candles are available (cold start, fresh symbol,
+// server restart). Bands match score-engine.ts.
+function buildVolatility(
+  price: number,
+  sessionHigh: number,
+  sessionLow: number,
+  recentCandles?: Candle[],
+): IntelligenceVolatility {
+  if (price <= 0) return { label: "LOW", score: 0.2 };
+
+  let high: number;
+  let low: number;
+  if (recentCandles && recentCandles.length >= 3) {
+    high = -Infinity;
+    low = Infinity;
+    for (const c of recentCandles) {
+      if (c.high > high) high = c.high;
+      if (c.low < low) low = c.low;
+    }
+  } else if (sessionHigh > 0 && sessionLow > 0) {
+    high = sessionHigh;
+    low = sessionLow;
+  } else {
+    return { label: "LOW", score: 0.2 };
+  }
+
+  if (!Number.isFinite(high) || !Number.isFinite(low) || high <= 0 || low <= 0) {
+    return { label: "LOW", score: 0.2 };
+  }
+
   const range = (high - low) / price;
   let score: number;
   if (range >= 0.03) score = 1.0;
@@ -185,7 +218,7 @@ export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
   const { zone, distanceToLevel, level } = computeZone(input.price, input.sr);
   const momentum = buildMomentum(input.momentum);
   const pressure = buildPressure(input.pressure);
-  const volatility = buildVolatility(input.price, input.high, input.low);
+  const volatility = buildVolatility(input.price, input.high, input.low, input.recentCandles);
 
   // Direction-aware pipeline: zone → direction → confidence → outlook
   const direction = getImpliedDirection(zone, input.momentum?.value ?? 0);

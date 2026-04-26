@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
 import type {
+  Candle,
   IntelligenceSnapshot,
   IntelligenceWsMessage,
   MomentumResult,
@@ -16,6 +17,7 @@ interface WsManagerConfig {
   getPressure?: (symbol: string) => PressureResult | null;
   getMomentum?: (symbol: string) => MomentumResult | null;
   getLevels?: (symbol: string) => SupportResistanceResult | null;
+  getRecentCandles?: (symbol: string) => Candle[];
   getEligibleSymbols?: () => string[];
 }
 
@@ -51,6 +53,7 @@ export function createWsManager(config: WsManagerConfig) {
           pressure: config.getPressure?.(symbol) ?? null,
           momentum: config.getMomentum?.(symbol) ?? null,
           sr: config.getLevels?.(symbol) ?? null,
+          recentCandles: config.getRecentCandles?.(symbol),
         }),
       );
     }
