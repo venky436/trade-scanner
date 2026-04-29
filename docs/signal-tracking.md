@@ -154,8 +154,8 @@ interface BucketMetrics {
   failed: number;
   neutral: number;
   accuracy: number;        // success / (success + failed) * 100
-  avgGain: number;         // avg change_percent for SUCCESS signals
-  avgLoss: number;         // avg |change_percent| for FAILED signals
+  avgGain: number;         // avg |change_percent| for SUCCESS signals (magnitude — direction-agnostic)
+  avgLoss: number;         // avg |change_percent| for FAILED signals (magnitude — direction-agnostic)
   avgMaxProfit: number;    // avg max_profit_percent across all evaluated
   avgMaxDrawdown: number;  // avg max_drawdown_percent across all evaluated
   expectancy: number;      // (winRate * avgGain) - (lossRate * avgLoss)
@@ -172,12 +172,14 @@ interface BucketMetrics {
 Expectancy = (WinRate × AvgGain) − (LossRate × AvgLoss)
 ```
 
+`AvgGain` and `AvgLoss` are both **magnitudes** (always ≥ 0). They're computed as `|change_percent|` so BUY-side and SELL-side outcomes contribute equally — a SELL success where price dropped 0.5% counts the same as a BUY success where price rose 0.5%.
+
 Example:
 ```
 ULTRA_HIGH:
   WinRate = 72% (0.72)
-  AvgGain = +0.8%
-  AvgLoss = -0.3%
+  AvgGain = 0.8%   (magnitude)
+  AvgLoss = 0.3%   (magnitude)
 
   Expectancy = (0.72 × 0.8) − (0.28 × 0.3)
              = 0.576 − 0.084
