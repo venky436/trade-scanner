@@ -246,22 +246,32 @@ describe("toIntelligence — outlook decision table", () => {
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("NEAR_RESISTANCE + STRONG_DOWN → REJECTION_POSSIBLE", () => {
+  it("NEAR_RESISTANCE + STRONG_DOWN + HIGH conf → REJECTION_POSSIBLE", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_DOWN", -0.95),
+      pressure: makePressure("STRONG_SELL", -0.95),
+      high: 1003, low: 1000,
+    }));
+    assert.equal(r.outlook, "REJECTION_POSSIBLE");
+  });
+
+  it("NEAR_RESISTANCE + STRONG_DOWN + MED/LOW conf → NO_CLEAR_EDGE (HIGH floor filters mid-grade setups)", () => {
     const r = toIntelligence(baseInput({
       sr: nearRes,
       momentum: makeMomentum("STRONG_DOWN", -0.7),
       pressure: makePressure("STRONG_SELL", -0.7),
     }));
-    assert.equal(r.outlook, "REJECTION_POSSIBLE");
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("NEAR_RESISTANCE + WEAK_DOWN → REJECTION_POSSIBLE", () => {
+  it("NEAR_RESISTANCE + WEAK_DOWN → NO_CLEAR_EDGE (HIGH floor filters weak setups)", () => {
     const r = toIntelligence(baseInput({
       sr: nearRes,
       momentum: makeMomentum("DOWN", -0.4),
       pressure: makePressure("SELL", -0.4),
     }));
-    assert.equal(r.outlook, "REJECTION_POSSIBLE");
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
   it("NEAR_RESISTANCE + NEUTRAL momentum → NO_CLEAR_EDGE (not REJECTION)", () => {
