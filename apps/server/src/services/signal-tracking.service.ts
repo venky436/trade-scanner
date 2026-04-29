@@ -283,7 +283,10 @@ export function createSignalTrackingService() {
         const winRate = decided > 0 ? success.length / decided : 0;
         const lossRate = decided > 0 ? failed.length / decided : 0;
 
-        const gains = success.map((r) => Number(r.changePercent)).filter((v) => !isNaN(v));
+        // Math.abs on gains: changePercent is signed, so SELL-side SUCCESS (price down → success)
+        // is negative. Without abs, BUY/SELL successes cancel in the average and tank expectancy
+        // even when accuracy is high.
+        const gains = success.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
         const losses = failed.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
         const maxProfits = evaluated.map((r) => Number(r.maxProfitPercent)).filter((v) => !isNaN(v));
         const maxDrawdowns = evaluated.map((r) => Number(r.maxDrawdownPercent)).filter((v) => !isNaN(v));
@@ -425,7 +428,8 @@ export async function getTrackingMetricsFromDB(date?: Date) {
       const winRate = decided > 0 ? success.length / decided : 0;
       const lossRate = decided > 0 ? failed.length / decided : 0;
 
-      const gains = success.map((r) => Number(r.changePercent)).filter((v) => !isNaN(v));
+      // See note on the equivalent block in getMetrics — magnitude only, never signed.
+      const gains = success.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
       const losses = failed.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
       const maxProfits = evaluated.map((r) => Number(r.maxProfitPercent)).filter((v) => !isNaN(v));
       const maxDrawdowns = evaluated.map((r) => Number(r.maxDrawdownPercent)).filter((v) => !isNaN(v));
