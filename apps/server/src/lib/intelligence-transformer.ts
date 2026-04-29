@@ -196,7 +196,11 @@ function buildOutlook(
 
   if (zone === "NEAR_RESISTANCE") {
     if (momentumLabel === "STRONG_UP" && confidenceLabel === "HIGH") return "BREAKOUT_LIKELY";
-    if (momentumLabel === "STRONG_DOWN" || momentumLabel === "WEAK_DOWN") return "REJECTION_POSSIBLE";
+    // HIGH confidence floor mirrors BREAKOUT/BREAKDOWN gates. 3-day prod data showed
+    // MEDIUM-conf REJECTION at 41% accuracy (127 signals) vs HIGH at 50% (47 signals);
+    // gating to HIGH cuts the noise cohort and preserves the monotonic signal.
+    if ((momentumLabel === "STRONG_DOWN" || momentumLabel === "WEAK_DOWN")
+        && confidenceLabel === "HIGH") return "REJECTION_POSSIBLE";
     return "NO_CLEAR_EDGE";
   }
 
