@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
+import type { Duplex } from "node:stream";
 import type {
   Candle,
   IntelligenceSnapshot,
@@ -24,11 +25,19 @@ interface WsManagerConfig {
 const NIFTY_SYMBOL = "NIFTY 50";
 const BANK_NIFTY_SYMBOL = "NIFTY BANK";
 
+type UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
+
 export function createWsManager(config: WsManagerConfig) {
   const { symbols } = config;
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
   let pingInterval: ReturnType<typeof setInterval> | null = null;
+  // Track the http.Server we're bound to plus the bound handler reference so
+  // close() can unregister cleanly. Without this, repeated attach()/close()
+  // cycles (e.g. on Kite re-login) leave stale listeners on the HTTP server,
+  // and a stale closed WSS will respond 503 to every WS upgrade.
+  let attachedServer: Server | null = null;
+  let upgradeHandler: UpgradeHandler | null = null;
 
   function buildSnapshot(): IntelligenceSnapshot[] {
     const quotes = marketDataService.getAllQuotes();
@@ -122,7 +131,14 @@ export function createWsManager(config: WsManagerConfig) {
 
   return {
     attach(httpServer: Server) {
-      httpServer.on("upgrade", (req: IncomingMessage, socket, head) => {
+      // Defensive: if attach() is called twice on the same instance without
+      // an intervening close(), unbind the previous handler first.
+      if (attachedServer && upgradeHandler) {
+        attachedServer.off("upgrade", upgradeHandler);
+        console.warn("WebSocket attach() called twice — replaced previous upgrade listener");
+      }
+
+      const handler: UpgradeHandler = (req, socket, head) => {
         const url = new URL(req.url || "/", `http://${req.headers.host}`);
         if (url.pathname !== "/ws") {
           socket.destroy();
@@ -133,7 +149,11 @@ export function createWsManager(config: WsManagerConfig) {
           (ws as any).__alive = true;
           handleConnection(ws);
         });
-      });
+      };
+
+      httpServer.on("upgrade", handler);
+      attachedServer = httpServer;
+      upgradeHandler = handler;
 
       startPingInterval();
       console.log("WebSocket server attached on /ws");
@@ -156,6 +176,13 @@ export function createWsManager(config: WsManagerConfig) {
     buildMarketContextSnapshot,
 
     close() {
+      // Unbind upgrade listener from the HTTP server so a freshly-created
+      // wsManager replacing this one isn't shadowed by a stale handler.
+      if (attachedServer && upgradeHandler) {
+        attachedServer.off("upgrade", upgradeHandler);
+        attachedServer = null;
+        upgradeHandler = null;
+      }
       if (pingInterval) clearInterval(pingInterval);
       for (const ws of clients) {
         ws.close();
