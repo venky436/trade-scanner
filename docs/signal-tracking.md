@@ -97,7 +97,10 @@ Classification (±0.3% threshold):
     else             → NEUTRAL
     ↓
 UPDATE row with all fields + evaluatedAt
-Remove from activeMap (evaluation lifecycle only — trackedToday retains the symbol)
+Remove from activeMap (evaluation lifecycle done)
+If status === NEUTRAL AND trackedToday[symbol] === this signal's bucket:
+    delete from trackedToday — stock becomes re-eligible same day
+    (SUCCESS / FAILED retain the dedup lock)
 ```
 
 ### Market close cleanup
@@ -301,8 +304,37 @@ Admin users see a TrendingUp icon in the navbar (next to the existing Shield adm
 | `IST time >= 3:10 PM` | Stop recording before market close |
 | `price < ₹50` | Penny stocks are unreliable |
 | `activeMap.has(symbol)` | Signal still pending 10-min evaluation |
-| `trackedToday` same or lower bucket | Prevents duplicate entries at same confidence level. Allows re-tracking only when stock upgrades to a higher bucket (MEDIUM → HIGH → ULTRA_HIGH). Max 3 entries per symbol per day. |
+| `trackedToday` same or lower bucket | Prevents duplicate entries at same confidence level. Allows re-tracking when stock upgrades to a higher bucket (MEDIUM → HIGH → ULTRA_HIGH), or when the previous tracked signal at the same bucket evaluated to NEUTRAL (the slot was released — see "NEUTRAL re-tracking" below). |
 | Daily cap (200) hit | Prevent runaway DB writes |
+
+---
+
+## NEUTRAL re-tracking
+
+When a tracked signal evaluates to **NEUTRAL** (price stayed within ±0.3% during the 10-minute window), the call had no real outcome — it neither won nor lost. The dedup slot is released so the same stock can be picked up again the same day at the same or higher bucket.
+
+`SUCCESS` and `FAILED` evaluations **do not** release the slot — once a stock has produced a decided outcome at a given bucket, it stays locked at that bucket for the rest of the IST day.
+
+### The same-bucket guard
+
+The release only fires when the just-evaluated signal still owns its dedup slot. Concretely: `trackedToday[symbol] === sig.confidenceBucket`. This prevents a subtle bug:
+
+```
+10:15  RELIANCE tracked at MEDIUM  → trackedToday[RELIANCE] = MEDIUM
+11:30  RELIANCE upgrades to HIGH   → trackedToday[RELIANCE] = HIGH (overwrite)
+11:45  10-min eval on the MEDIUM signal: NEUTRAL
+       Without the guard: trackedToday.delete(RELIANCE) — wipes the active HIGH lock
+       With the guard:    trackedToday[RELIANCE] is HIGH, ≠ MEDIUM → no-op (correct)
+```
+
+The guard ensures only the *currently-locking* signal can release the lock when it goes NEUTRAL.
+
+### Practical consequences
+
+- A stock that fires HIGH → goes NEUTRAL → fires HIGH again will appear as **two rows** in the dashboard with the same bucket. This is intended behavior, not duplication.
+- The 200-signal daily cap may be reached marginally faster on choppy/sideways days where many signals evaluate NEUTRAL.
+- Aggregate accuracy math is unaffected — each row is a fair independent sample of an independent 10-minute window.
+- `trackedToday` is in-memory only. A server restart wipes it (pre-existing behavior); after restart, `loadPending()` rebuilds `activeMap` from PENDING DB rows but `trackedToday` starts empty until new signals come in.
 
 ---
 
@@ -320,9 +352,15 @@ Example: RELIANCE tracked at MEDIUM (10:15), then upgrades to HIGH (11:30):
 { symbol: "RELIANCE", bucket: "HIGH",   groupId: "RELIANCE-2026-04-16" }
 ```
 
+A stock can also appear in the same bucket twice if the first signal evaluated to NEUTRAL (see "NEUTRAL re-tracking"):
+```
+{ symbol: "TCS", bucket: "HIGH", status: "NEUTRAL", groupId: "TCS-2026-04-16" }   // 10:20, evaluated 10:30
+{ symbol: "TCS", bucket: "HIGH", status: "SUCCESS", groupId: "TCS-2026-04-16" }   // 11:05, fresh entry
+```
+
 `groupId` is **not stored in the database** — it's computed in the API layer (`getRecentSignals`) from existing `symbol` + `signalTime` columns. This enables:
 - De-duplicated analytics (count one result per group)
-- Signal evolution tracking (MEDIUM → HIGH → ULTRA progression)
+- Signal evolution tracking (MEDIUM → HIGH → ULTRA progression, plus NEUTRAL re-entries within a bucket)
 - Per-stock analysis without schema changes
 
 ---
