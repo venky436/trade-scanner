@@ -27,6 +27,7 @@ interface ActiveTracking {
   isBuySide: boolean;
   entryPrice: number;
   recordedAt: number;
+  confidenceBucket: ConfidenceBucket;
 }
 
 function getISTDate(): string {
@@ -78,6 +79,7 @@ export function createSignalTrackingService() {
           isBuySide: BUY_SIDE_OUTLOOKS.has(r.outlook),
           entryPrice: Number(r.priceAtSignal),
           recordedAt: new Date(r.signalTime).getTime(),
+          confidenceBucket: r.confidenceBucket as ConfidenceBucket,
         });
       }
 
@@ -139,6 +141,7 @@ export function createSignalTrackingService() {
         isBuySide,
         entryPrice: price,
         recordedAt: Date.now(),
+        confidenceBucket: bucket,
       });
       dailyCount++;
       trackedToday.set(symbol, bucket);
@@ -201,6 +204,14 @@ export function createSignalTrackingService() {
         }).where(eq(signalTracking.id, sig.dbId));
 
         activeMap.delete(sig.symbol);
+
+        // NEUTRAL outcomes free the stock for re-tracking same day. Same-bucket guard:
+        // only clear if THIS signal still owns the dedup slot — protects an active
+        // upgrade (e.g. MEDIUM tracked → HIGH tracked → MEDIUM evaluates NEUTRAL).
+        if (status === "NEUTRAL" && trackedToday.get(sig.symbol) === sig.confidenceBucket) {
+          trackedToday.delete(sig.symbol);
+        }
+
         console.log(`[Tracking] ${status}: ${sig.symbol} change=${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}% maxProfit=${maxProfitPercent >= 0 ? "+" : ""}${maxProfitPercent.toFixed(2)}% [${activeMap.size} active]`);
       } catch (err: any) {
         console.warn(`[Tracking] Failed to evaluate ${sig.symbol}:`, err.message);
@@ -245,6 +256,9 @@ export function createSignalTrackingService() {
           evaluatedAt: new Date(),
         }).where(eq(signalTracking.id, sig.dbId));
         activeMap.delete(sig.symbol);
+        if (status === "NEUTRAL" && trackedToday.get(sig.symbol) === sig.confidenceBucket) {
+          trackedToday.delete(sig.symbol);
+        }
       } catch (err: any) {
         console.warn(`[Tracking] Market close eval failed for ${sig.symbol}:`, err.message);
       }
