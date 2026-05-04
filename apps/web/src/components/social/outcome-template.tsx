@@ -8,12 +8,13 @@ import {
   formatTimeIST,
   formatDateIST,
   outcomeVerdict,
+  pointsBetween,
 } from "./template-shared";
 
 export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
   const verdict = outcomeVerdict(signal.status);
-  const change = Number(signal.changePercent ?? 0);
-  const DirectionIcon = change > 0.05 ? ArrowUp : change < -0.05 ? ArrowDown : Minus;
+  const points = Number(signal.changePoints ?? 0);
+  const DirectionIcon = points > 0.01 ? ArrowUp : points < -0.01 ? ArrowDown : Minus;
   const VerdictIcon = verdict.iconKind === "check" ? Check : verdict.iconKind === "x" ? X : Minus;
 
   const triggerTime = formatTimeIST(signal.signalTime);
@@ -48,11 +49,14 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
               className={`text-[128px] font-extrabold leading-none ${verdict.bigNumberColor}`}
               style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
             >
-              {formatSigned(signal.changePercent)}
+              {formatSigned(signal.changePoints, "")}
             </span>
           </div>
           <p className="mt-5 text-slate-400 text-[16px] font-semibold tracking-[0.4em]">
-            PRICE MOVEMENT
+            POINTS MOVED
+          </p>
+          <p className="mt-2 text-slate-500 text-[14px] tracking-wide">
+            {formatSigned(signal.changePercent)}
           </p>
         </div>
       </div>

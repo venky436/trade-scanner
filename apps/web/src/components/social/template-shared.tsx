@@ -16,6 +16,7 @@ export interface SocialSignal {
   status: string;
   priceAfter: string | null;
   changePercent: string | null;
+  changePoints: string | null;
   maxPrice: string | null;
   minPrice: string | null;
   maxProfitPercent: string | null;
@@ -117,12 +118,24 @@ export function directionAccent(direction: Direction) {
   };
 }
 
-export function formatSigned(percentStr: string | null): string {
-  if (percentStr == null) return "—";
-  const v = Number(percentStr);
+export function formatSigned(value: string | null, suffix = "%"): string {
+  if (value == null) return "—";
+  const v = Number(value);
   if (!Number.isFinite(v)) return "—";
   const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
+  return `${sign}${v.toFixed(2)}${suffix}`;
+}
+
+// Best/Worst use price-vs-entry differences; we don't store maxProfit/maxDrawdown
+// as points, only as percent. Helper computes the points delta from the prices.
+export function pointsBetween(target: string | null, base: string | null): string {
+  if (target == null || base == null) return "—";
+  const t = Number(target);
+  const b = Number(base);
+  if (!Number.isFinite(t) || !Number.isFinite(b)) return "—";
+  const diff = t - b;
+  const sign = diff > 0 ? "+" : "";
+  return `${sign}${diff.toFixed(2)}`;
 }
 
 // IST time formatters used in template headers.
