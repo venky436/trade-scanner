@@ -61,7 +61,7 @@ Guards:
   ✗ confidence < 0.5      → skip
   ✗ outlook = NO_CLEAR_EDGE → skip (no directional bet)
   ✗ phase ≠ NORMAL         → skip (OPENING/STABILIZING)
-  ✗ before 9:45 AM IST     → skip (early signals unreliable)
+  ✗ before 9:30 AM IST     → skip (NORMAL phase begins at 9:30)
   ✗ after 3:10 PM IST      → skip (stop before close)
   ✗ price < ₹50            → skip
   ✗ already pending eval     → skip (activeMap has symbol)
@@ -300,7 +300,7 @@ Admin users see a TrendingUp icon in the navbar (next to the existing Shield adm
 | `confidence < 0.5` | Below the MEDIUM bucket floor — no tracking |
 | `outlook === "NO_CLEAR_EDGE"` | No directional bet to validate |
 | `phase !== "NORMAL"` | Opening/stabilizing noise would pollute data |
-| `IST time < 9:45 AM` | Early signals are unreliable |
+| `IST time < 9:30 AM` | NORMAL phase begins at 9:30; OPENING + STABILIZING already filtered by phase guard |
 | `IST time >= 3:10 PM` | Stop recording before market close |
 | `price < ₹50` | Penny stocks are unreliable |
 | `activeMap.has(symbol)` | Signal still pending 10-min evaluation |
