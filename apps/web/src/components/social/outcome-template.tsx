@@ -102,7 +102,7 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
       {/* Spacer */}
       <div className="flex-1" />
 
-      <DisclaimerFooter outcome />
+      <DisclaimerFooter />
     </TemplateFrame>
   );
 }
