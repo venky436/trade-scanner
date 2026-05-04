@@ -208,24 +208,27 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ ⓘ  EDUCATIONAL · MARKET STUDY                                │
+│ ⓘ EDUCATIONAL · MARKET STUDY        10:42 AM ·  4 May 2026   │  banner with timestamp
 │───────────────────────────────────────────────────────────────│
 │                                                               │
-│                       S B I N                                 │  ← 148px
-│                       ━━━━━━━                                 │  ← gradient bar
+│             ╭────────────────────╮                            │  direction chip
+│             │ ↑  BULLISH SETUP   │                            │  (or ↓ BEARISH)
+│             ╰────────────────────╯                            │
 │                                                               │
+│                       SBIN                                    │  112px white
+│                       ━━━━━━━                                 │  cyan→violet bar
 │              Market Behavior Snapshot                         │
 │                                                               │
-│      ╔══════════════════════════════════════════════╗         │
-│      ║   📍  ZONE              Near Support         ║         │
-│      ║   📈  MOMENTUM          Building             ║         │
-│      ║   💹  PRESSURE          Strong Buying        ║         │
-│      ║   🌊  VOLATILITY        High                 ║         │
-│      ╚══════════════════════════════════════════════╝         │
+│      ┌──────────────────────────────────────────┐             │
+│      │ 📍 ZONE              Near Resistance     │             │
+│      │ 📈 MOMENTUM          Building            │             │  factor card
+│      │ 💹 PRESSURE          Buying Present      │             │  with row dividers
+│      │ 🌊 VOLATILITY        High                │             │
+│      └──────────────────────────────────────────┘             │
 │                                                               │
-│        ╭──────────────────────────────────────╮              │
-│        │  ◆  FACTOR ALIGNMENT · STRONG  ◆     │              │
-│        ╰──────────────────────────────────────╯              │
+│       ╭───────────────────────────────────────╮              │
+│       │ ◆ FACTOR ALIGNMENT · STRONG  • • •    │              │  pill + 3 dots
+│       ╰───────────────────────────────────────╯              │  (filled by tier)
 │                                                               │
 │───────────────────────────────────────────────────────────────│
 │ For educational study only                                   │
@@ -254,21 +257,22 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ ⓘ  EDUCATIONAL · MARKET STUDY                                │
+│ ⓘ EDUCATIONAL · MARKET STUDY        10:52 AM ·  4 May 2026   │  banner shows EVAL time
 │───────────────────────────────────────────────────────────────│
 │                                                               │
-│                       S B I N                                 │  ← 100px
-│              10 Minutes Later                                 │
+│                       SBIN                                    │  88px white
+│                                                               │
+│           ⏱  10:42 AM  →  10:52 AM  · 10 min later            │  trigger → eval timeline
 │                                                               │
 │        ╭───────────────────────────────────╮                 │
-│        │           ↑  +0.55%               │                 │  ← 140px mono
-│        │       PRICE MOVEMENT              │                 │     status-tinted glow
+│        │           ↑  +0.55%               │                 │  128px mono
+│        │       PRICE MOVEMENT              │                 │  status-tinted glow
 │        ╰───────────────────────────────────╯                 │
 │                                                               │
 │  ╭────────────────────╮      ╭────────────────────╮          │
 │  │ ▲ BEST             │      │ ▼ WORST            │          │
-│  │   +0.78%           │      │   -0.12%           │          │
-│  │   intraday peak    │      │   intraday dip     │          │
+│  │   +0.78%           │      │   -0.12%           │          │  side cards
+│  │   intraday peak    │      │   intraday dip     │          │  with chip icons
 │  ╰────────────────────╯      ╰────────────────────╯          │
 │                                                               │
 │        ╭──────────────────────────────────────╮              │

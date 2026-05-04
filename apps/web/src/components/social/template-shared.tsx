@@ -74,10 +74,47 @@ export function alignmentLabel(confidence: string): string {
   return "FORMING";
 }
 
-export function directionColor(direction: Direction) {
-  if (direction === "BULLISH") return { text: "text-emerald-400", glow: "shadow-[0_0_60px_rgba(16,185,129,0.25)]", grad: "from-emerald-400 to-cyan-400" };
-  if (direction === "BEARISH") return { text: "text-rose-400", glow: "shadow-[0_0_60px_rgba(244,63,94,0.25)]", grad: "from-rose-400 to-amber-400" };
-  return { text: "text-amber-400", glow: "shadow-[0_0_60px_rgba(245,158,11,0.25)]", grad: "from-amber-400 to-violet-400" };
+// Number of filled dots out of 3 — visual confidence-tier indicator on the
+// alignment pill. Avoids showing the literal % which we don't surface.
+export function alignmentDots(confidence: string): number {
+  const conf = Number(confidence);
+  if (conf >= 0.9) return 3;
+  if (conf >= 0.8) return 2;
+  return 1;
+}
+
+export function directionAccent(direction: Direction) {
+  if (direction === "BULLISH") {
+    return {
+      text: "text-emerald-400",
+      glow: "shadow-[0_0_60px_rgba(16,185,129,0.25)]",
+      grad: "from-emerald-400 to-cyan-400",
+      pillBg: "bg-emerald-500/10",
+      pillBorder: "border-emerald-400/40",
+      arrowKind: "up" as const,
+      arrowLabel: "BULLISH SETUP",
+    };
+  }
+  if (direction === "BEARISH") {
+    return {
+      text: "text-rose-400",
+      glow: "shadow-[0_0_60px_rgba(244,63,94,0.25)]",
+      grad: "from-rose-400 to-amber-400",
+      pillBg: "bg-rose-500/10",
+      pillBorder: "border-rose-400/40",
+      arrowKind: "down" as const,
+      arrowLabel: "BEARISH SETUP",
+    };
+  }
+  return {
+    text: "text-amber-400",
+    glow: "shadow-[0_0_60px_rgba(245,158,11,0.25)]",
+    grad: "from-amber-400 to-violet-400",
+    pillBg: "bg-amber-500/10",
+    pillBorder: "border-amber-400/40",
+    arrowKind: "neutral" as const,
+    arrowLabel: "MIXED SETUP",
+  };
 }
 
 export function formatSigned(percentStr: string | null): string {
@@ -86,6 +123,27 @@ export function formatSigned(percentStr: string | null): string {
   if (!Number.isFinite(v)) return "—";
   const sign = v > 0 ? "+" : "";
   return `${sign}${v.toFixed(2)}%`;
+}
+
+// IST time formatters used in template headers.
+export function formatTimeIST(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+export function formatDateIST(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 // Derive outcome verdict from status. SUCCESS → played out for the predicted
@@ -139,34 +197,59 @@ export function outcomeVerdict(status: string): OutcomeVerdict {
   };
 }
 
-// Common 1080×1080 wrapper with the deep-navy gradient background + corner glow.
+// Common 1080×1080 wrapper with the deep-navy gradient background + corner glows.
+// Subtle dotted texture overlay adds visual depth without competing for attention.
 export function TemplateFrame({ children }: { children: React.ReactNode }) {
   return (
     <div
       className="relative flex flex-col w-[1080px] h-[1080px] text-white overflow-hidden"
       style={{
         background:
-          "radial-gradient(circle at 85% 10%, rgba(30, 64, 175, 0.18), transparent 55%), radial-gradient(circle at 15% 90%, rgba(139, 92, 246, 0.10), transparent 50%), #0A0E1A",
+          "radial-gradient(circle at 85% 5%, rgba(6, 182, 212, 0.18), transparent 50%), radial-gradient(circle at 10% 95%, rgba(139, 92, 246, 0.14), transparent 55%), #0A0E1A",
         fontFamily: "var(--font-geist-sans, ui-sans-serif, system-ui, sans-serif)",
       }}
     >
-      {children}
+      {/* Faint dotted texture for depth */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-[0.025]"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle, white 1px, transparent 1px)",
+          backgroundSize: "24px 24px",
+        }}
+      />
+      <div className="relative flex flex-col w-full h-full">{children}</div>
     </div>
   );
 }
 
-// Top "EDUCATIONAL · MARKET STUDY" banner, used by both templates.
-export function EducationalBanner() {
+// Top "EDUCATIONAL · MARKET STUDY" banner with optional timestamp on the right.
+// Renders trigger time on Initial, signal time on Outcome (with eval time below in body).
+export function EducationalBanner({ timestamp, dateText }: { timestamp?: string; dateText?: string }) {
   return (
-    <div className="flex items-center justify-center gap-3 px-10 py-5 bg-amber-500/[0.06] border-b border-amber-500/20">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400/90">
-        <circle cx="12" cy="12" r="10" />
-        <path d="M12 16v-4" />
-        <path d="M12 8h.01" />
-      </svg>
-      <span className="text-amber-400/90 text-[15px] font-semibold tracking-[0.4em] uppercase">
-        Educational · Market Study
-      </span>
+    <div className="flex items-center justify-between px-10 py-5 bg-amber-500/[0.06] border-b border-amber-500/20">
+      <div className="flex items-center gap-3">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400/90">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 16v-4" />
+          <path d="M12 8h.01" />
+        </svg>
+        <span className="text-amber-400/90 text-[14px] font-semibold tracking-[0.4em] uppercase">
+          Educational · Market Study
+        </span>
+      </div>
+      {timestamp && (
+        <div className="flex flex-col items-end leading-tight">
+          <span className="text-slate-300 text-[15px] font-semibold tracking-wide font-mono">
+            {timestamp}
+          </span>
+          {dateText && (
+            <span className="text-slate-500 text-[11px] tracking-widest uppercase mt-0.5">
+              {dateText}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
