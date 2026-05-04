@@ -69,4 +69,28 @@ export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts)
       : await getTrackingSignalsFromDB(200, targetDate);
     return { signals, count: signals.length };
   });
+
+  // ── Social templates feed (subset of tracking — high-conf + high-volatility signals) ──
+
+  fastify.get("/api/admin/social", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+    const service = opts.getTrackingService?.();
+    if (!service) return { signals: [], count: 0 };
+    const { date } = req.query as { date?: string };
+    const targetDate = date ? new Date(date) : undefined;
+    const signals = await service.getSocialFeed(targetDate);
+    return { signals, count: signals.length };
+  });
+
+  fastify.get("/api/admin/social/:id", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+    const service = opts.getTrackingService?.();
+    if (!service) return reply.code(404).send({ error: "Service unavailable" });
+    const { id } = req.params as { id: string };
+    const signalId = Number(id);
+    if (!Number.isFinite(signalId) || signalId <= 0) {
+      return reply.code(400).send({ error: "Invalid id" });
+    }
+    const signal = await service.getSocialSignal(signalId);
+    if (!signal) return reply.code(404).send({ error: "Signal not found" });
+    return { signal };
+  });
 }
