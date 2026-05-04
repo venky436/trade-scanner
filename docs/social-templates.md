@@ -265,15 +265,10 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 │           ⏱  10:42 AM  →  10:52 AM  · 10 min later            │  trigger → eval timeline
 │                                                               │
 │        ╭───────────────────────────────────╮                 │
-│        │           ↑  +0.55%               │                 │  128px mono
-│        │       PRICE MOVEMENT              │                 │  status-tinted glow
+│        │           ↑  +1.50                │                 │  128px mono (POINTS)
+│        │        POINTS MOVED               │                 │  status-tinted glow
+│        │           +0.55%                  │                 │  small subtitle
 │        ╰───────────────────────────────────╯                 │
-│                                                               │
-│  ╭────────────────────╮      ╭────────────────────╮          │
-│  │ ▲ BEST             │      │ ▼ WORST            │          │
-│  │   +0.78%           │      │   -0.12%           │          │  side cards
-│  │   intraday peak    │      │   intraday dip     │          │  with chip icons
-│  ╰────────────────────╯      ╰────────────────────╯          │
 │                                                               │
 │        ╭──────────────────────────────────────╮              │
 │        │  ✓  PLAYED OUT AS SYSTEM OBSERVED    │              │

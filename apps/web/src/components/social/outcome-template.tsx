@@ -1,4 +1,4 @@
-import { ArrowUp, ArrowDown, Minus, TrendingUp, TrendingDown, Check, X, Clock } from "lucide-react";
+import { ArrowUp, ArrowDown, Minus, Check, X, Clock } from "lucide-react";
 import {
   type SocialSignal,
   TemplateFrame,
@@ -8,7 +8,6 @@ import {
   formatTimeIST,
   formatDateIST,
   outcomeVerdict,
-  pointsBetween,
 } from "./template-shared";
 
 export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
@@ -61,49 +60,8 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
         </div>
       </div>
 
-      {/* Best / Worst grid */}
-      <div className="px-16 mt-6">
-        <div className="grid grid-cols-2 gap-5">
-          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl px-7 py-6">
-            <div className="flex items-center gap-2.5">
-              <div className="flex items-center justify-center size-8 rounded-lg bg-emerald-500/15 border border-emerald-400/25">
-                <TrendingUp className="size-4 text-emerald-300" />
-              </div>
-              <span className="text-slate-400 text-[12px] font-semibold tracking-[0.3em] uppercase">
-                Best
-              </span>
-            </div>
-            <div
-              className="mt-4 text-[52px] font-bold text-emerald-400 leading-none"
-              style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
-            >
-              {formatSigned(signal.maxProfitPercent)}
-            </div>
-            <p className="mt-2 text-slate-500 text-[14px]">intraday peak</p>
-          </div>
-
-          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl px-7 py-6">
-            <div className="flex items-center gap-2.5">
-              <div className="flex items-center justify-center size-8 rounded-lg bg-rose-500/15 border border-rose-400/25">
-                <TrendingDown className="size-4 text-rose-300" />
-              </div>
-              <span className="text-slate-400 text-[12px] font-semibold tracking-[0.3em] uppercase">
-                Worst
-              </span>
-            </div>
-            <div
-              className="mt-4 text-[52px] font-bold text-rose-400 leading-none"
-              style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
-            >
-              {formatSigned(signal.maxDrawdownPercent)}
-            </div>
-            <p className="mt-2 text-slate-500 text-[14px]">intraday dip</p>
-          </div>
-        </div>
-      </div>
-
       {/* Status pill */}
-      <div className="flex justify-center mt-7">
+      <div className="flex justify-center mt-10">
         <div
           className={`inline-flex items-center gap-3.5 px-8 py-4 rounded-full border ${verdict.pillBg} ${verdict.pillBorder}`}
         >
