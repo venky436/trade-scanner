@@ -10,6 +10,11 @@ const EVAL_INTERVAL_MS = 60_000; // check every 1 minute
 const EVAL_WINDOW_MS = 10 * 60_000; // 10 minutes
 const SUCCESS_THRESHOLD = 0.3; // ±0.3%
 
+// Social-template eligibility: confidence ≥ 0.75 AND volatility HIGH (score ≥ 0.7).
+// Filters which signal_tracking rows surface in /admin/social.
+const SOCIAL_MIN_CONFIDENCE = 0.75;
+const SOCIAL_MIN_VOLATILITY_SCORE = 0.7;
+
 type ConfidenceBucket = "ULTRA_HIGH" | "HIGH" | "MEDIUM";
 type TrackingStatus = "PENDING" | "SUCCESS" | "FAILED" | "NEUTRAL";
 
@@ -121,6 +126,9 @@ export function createSignalTrackingService() {
 
     const isBuySide = BUY_SIDE_OUTLOOKS.has(intel.outlook);
     const now = new Date();
+    const volatilityScore = intel.volatility.score;
+    const socialEligible =
+      intel.confidence >= SOCIAL_MIN_CONFIDENCE && volatilityScore >= SOCIAL_MIN_VOLATILITY_SCORE;
 
     try {
       const [inserted] = await db.insert(signalTracking).values({
@@ -132,6 +140,8 @@ export function createSignalTrackingService() {
         confidenceBucket: bucket,
         zone: intel.context.zone,
         bias: intel.bias,
+        volatilityScore: volatilityScore.toFixed(4),
+        socialEligible,
         status: "PENDING",
       }).returning({ id: signalTracking.id });
 
@@ -382,6 +392,48 @@ export function createSignalTrackingService() {
     }
   }
 
+  // Social-template feed: rows where socialEligible = true on the given day.
+  // Used by /admin/social to list signals that qualify for screenshot templates.
+  async function getSocialFeed(date?: Date) {
+    try {
+      const targetDate = date ?? new Date();
+      const dayStart = new Date(targetDate);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(targetDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const rows = await db
+        .select()
+        .from(signalTracking)
+        .where(and(
+          eq(signalTracking.socialEligible, true),
+          gte(signalTracking.signalTime, dayStart),
+          lte(signalTracking.signalTime, dayEnd),
+        ))
+        .orderBy(sql`${signalTracking.signalTime} DESC`);
+
+      return rows;
+    } catch (err: any) {
+      console.warn("[Tracking] getSocialFeed error:", err.message);
+      return [];
+    }
+  }
+
+  // Single signal lookup for the template renderer page.
+  async function getSocialSignal(id: number) {
+    try {
+      const [row] = await db
+        .select()
+        .from(signalTracking)
+        .where(eq(signalTracking.id, id))
+        .limit(1);
+      return row ?? null;
+    } catch (err: any) {
+      console.warn("[Tracking] getSocialSignal error:", err.message);
+      return null;
+    }
+  }
+
   return {
     recordSignal,
 
@@ -402,6 +454,8 @@ export function createSignalTrackingService() {
 
     getMetrics,
     getRecentSignals,
+    getSocialFeed,
+    getSocialSignal,
   };
 }
 

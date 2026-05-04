@@ -1,4 +1,4 @@
-import { pgTable, serial, varchar, numeric, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, varchar, numeric, timestamp, boolean } from "drizzle-orm/pg-core";
 
 export const signalTracking = pgTable("signal_tracking", {
   id: serial("id").primaryKey(),
@@ -12,6 +12,7 @@ export const signalTracking = pgTable("signal_tracking", {
   confidenceBucket: varchar("confidence_bucket", { length: 15 }).notNull(),
   zone: varchar("zone", { length: 20 }).notNull(),
   bias: varchar("bias", { length: 10 }).notNull(),
+  volatilityScore: numeric("volatility_score", { precision: 5, scale: 4 }),
 
   status: varchar("status", { length: 10 }).notNull().default("PENDING"),
 
@@ -23,6 +24,8 @@ export const signalTracking = pgTable("signal_tracking", {
   minPrice: numeric("min_price", { precision: 12, scale: 2 }),
   maxProfitPercent: numeric("max_profit_percent", { precision: 8, scale: 4 }),
   maxDrawdownPercent: numeric("max_drawdown_percent", { precision: 8, scale: 4 }),
+
+  socialEligible: boolean("social_eligible").notNull().default(false),
 
   evaluatedAt: timestamp("evaluated_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

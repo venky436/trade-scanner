@@ -8,5 +8,10 @@ export function apiFetch(path: string, options?: RequestInit): Promise<Response>
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  return fetch(`${API_URL}${path}`, { ...options, headers });
+  // Default to no HTTP cache — every API call returns dynamic data (live quotes,
+  // tracking metrics, social feeds, search results). Browser caching the first
+  // response and serving it on later page opens was the root cause of "/admin and
+  // /admin/tracking sometimes show no data until I refresh." Callers can override
+  // by passing { cache: "default" } if they ever need cached behavior.
+  return fetch(`${API_URL}${path}`, { cache: "no-store", ...options, headers });
 }

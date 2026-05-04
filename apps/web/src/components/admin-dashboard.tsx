@@ -95,7 +95,24 @@ export function AdminDashboard() {
     fetchData();
     // Only auto-refresh for today's data
     const interval = isToday ? setInterval(fetchData, 30_000) : null;
-    return () => { if (interval) clearInterval(interval); };
+
+    // Refetch the moment the tab becomes visible again — covers the case
+    // where the user returns after the browser HTTP cache has staled.
+    function handleVisibility() {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchData();
+      }
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
+    };
   }, [selectedDate, isToday]);
 
   return (
