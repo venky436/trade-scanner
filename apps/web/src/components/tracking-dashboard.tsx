@@ -171,7 +171,25 @@ export function TrackingDashboard() {
     setLoading(true);
     fetchData();
     const interval = isToday ? setInterval(fetchData, 30_000) : null;
-    return () => { active = false; if (interval) clearInterval(interval); };
+
+    // Refetch the moment the tab becomes visible again — guards against
+    // stale data when the user returns to the page.
+    function handleVisibility() {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchData();
+      }
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+
+    return () => {
+      active = false;
+      if (interval) clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
+    };
   }, [selectedDate, isToday]);
 
   const filteredSignals = selectedBucket

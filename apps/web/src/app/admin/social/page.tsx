@@ -88,9 +88,23 @@ export default function SocialListPage() {
     }
     fetchData();
     const interval = isToday ? setInterval(fetchData, 30_000) : null;
+
+    // Refetch when the tab becomes visible again — guards against stale data.
+    function handleVisibility() {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchData();
+      }
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+
     return () => {
       active = false;
       if (interval) clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
     };
   }, [selectedDate, isToday]);
 
