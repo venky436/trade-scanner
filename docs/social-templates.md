@@ -228,8 +228,7 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 │        ╰──────────────────────────────────────╯              │
 │                                                               │
 │───────────────────────────────────────────────────────────────│
-│ For educational study only · Not investment advice           │
-│ Past patterns do not predict future · Not SEBI registered    │
+│ For educational study only                                   │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -277,8 +276,7 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 │        ╰──────────────────────────────────────╯              │
 │                                                               │
 │───────────────────────────────────────────────────────────────│
-│ Factual market data · Past data does not predict future      │
-│ Not investment advice · Not SEBI registered                  │
+│ For educational study only                                   │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -323,7 +321,7 @@ This feature ships with the explicit understanding that **publicly posting scree
 | Mitigation built into the template | What it lowers |
 |---|---|
 | Top banner: `EDUCATIONAL · MARKET STUDY` | Establishes framing as the viewer's first impression |
-| Bottom disclaimer including `Not SEBI registered` | Removes "regulated authority" inference |
+| Bottom disclaimer `For educational study only` | Reinforces educational framing as last word in the visual |
 | No `BUY` / `SELL` / `HOLD` / `TARGET` / `SL` anywhere | Removes explicit recommendation vocabulary |
 | Neutral language: `Market Behavior Snapshot`, `Played Out`, `No Clear Movement` | Educational tone, not actionable |
 | No `%-confidence` label visible | Removes "act on this" cue |

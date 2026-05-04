@@ -171,18 +171,13 @@ export function EducationalBanner() {
   );
 }
 
-// Bottom disclaimer, two lines, slate-500.
-export function DisclaimerFooter({ outcome = false }: { outcome?: boolean }) {
-  const line1 = outcome
-    ? "Factual market data · Past data does not predict future"
-    : "For educational study only · Not investment advice";
-  const line2 = outcome
-    ? "Not investment advice · Not SEBI registered"
-    : "Past patterns do not predict future · Not SEBI registered";
+// Bottom disclaimer — single line, identical for both Initial and Outcome.
+export function DisclaimerFooter() {
   return (
     <div className="px-10 py-6 border-t border-slate-800/80 text-center">
-      <p className="text-slate-500 text-[15px] tracking-wide leading-relaxed">{line1}</p>
-      <p className="text-slate-500 text-[15px] tracking-wide leading-relaxed">{line2}</p>
+      <p className="text-slate-500 text-[15px] tracking-wide leading-relaxed">
+        For educational study only
+      </p>
     </div>
   );
 }
