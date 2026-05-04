@@ -1,6 +1,6 @@
 # Social Templates (`/admin/social`)
 
-> Admin-only screenshot generator. Renders 1080×1080 templates for high-confidence + high-volatility signals so the admin can manually screenshot and post to Telegram / Instagram. **Not** an auto-poster, **not** a public-facing page.
+> Admin-only screenshot generator. Renders 1080×1080 templates for high-confidence signals (conf ≥ 0.75) so the admin can manually screenshot and post to Telegram / Instagram. **Not** an auto-poster, **not** a public-facing page.
 
 ## Why this exists
 
@@ -18,18 +18,16 @@ The feature is intentionally **scoped down**:
 A signal becomes a "social-eligible" template candidate when **both** are true at the moment `recordSignal()` fires:
 
 ```
-intel.confidence       >= 0.75    (HIGH bucket lower bound)
-intel.volatility.score >= 0.7     (HIGH volatility band)
+intel.confidence >= 0.75    (HIGH bucket lower bound)
 ```
 
-This produces ~15-25 signals on a typical trading day — enough for daily content, sparse enough that each one is hand-pickable.
+The volatility filter (`>= 0.7`) was dropped — it was producing too few templates on calm/sideways days, leaving `/admin/social` empty for stretches. Confidence alone is the gate now. `volatility_score` still gets persisted on every row for future analysis but no longer affects eligibility.
 
-The eligibility flag is computed once, at insert time, and persisted. We do **not** re-evaluate eligibility later (e.g., if volatility changes mid-window, the row's flag stays as it was).
+The eligibility flag is computed once, at insert time, and persisted. We do **not** re-evaluate eligibility later.
 
 | Constant | File | Value |
 |---|---|---|
 | `SOCIAL_MIN_CONFIDENCE` | `apps/server/src/services/signal-tracking.service.ts` | `0.75` |
-| `SOCIAL_MIN_VOLATILITY_SCORE` | same | `0.7` |
 
 ---
 
@@ -55,7 +53,7 @@ broadcast.service.ts onIntelligenceComputed
        ↓
 signal-tracking.service.ts recordSignal()
        ↓
-   conf ≥ 0.75 AND vol ≥ 0.7?
+   conf ≥ 0.75?
        ↓ yes
    INSERT into signal_tracking
      volatility_score = 0.85
@@ -243,7 +241,7 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 | Zone | `signal.zone` → `zoneLabel()` | `Near Support` / `Near Resistance` / `Mid Range` |
 | Momentum | `signal.outlook + confidence` → `momentumLabel()` | `Strong` / `Building` / `Forming` / `Mixed` |
 | Pressure | `signal.bias + confidence` → `pressureLabel()` | `Strong Buying` / `Buying Present` / `Mixed` |
-| Volatility | `signal.volatilityScore` → `volatilityLabel()` | Always `High` (filter requires it) |
+| Volatility | `signal.volatilityScore` → `volatilityLabel()` | `High` / `Medium` / `Low` (no longer filtered) |
 | Alignment | `signal.confidence` → `alignmentLabel()` | `STRONG` (≥0.9) / `ALIGNED` (≥0.8) / `FORMING` (≥0.75) |
 
 **Direction-based color:**

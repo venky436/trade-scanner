@@ -10,10 +10,9 @@ const EVAL_INTERVAL_MS = 60_000; // check every 1 minute
 const EVAL_WINDOW_MS = 10 * 60_000; // 10 minutes
 const SUCCESS_THRESHOLD = 0.3; // ±0.3%
 
-// Social-template eligibility: confidence ≥ 0.75 AND volatility HIGH (score ≥ 0.7).
-// Filters which signal_tracking rows surface in /admin/social.
+// Social-template eligibility: confidence ≥ 0.75. Volatility filter dropped —
+// surfaces more signals so /admin/social has steady content even on calm days.
 const SOCIAL_MIN_CONFIDENCE = 0.75;
-const SOCIAL_MIN_VOLATILITY_SCORE = 0.7;
 
 type ConfidenceBucket = "ULTRA_HIGH" | "HIGH" | "MEDIUM";
 type TrackingStatus = "PENDING" | "SUCCESS" | "FAILED" | "NEUTRAL";
@@ -127,8 +126,7 @@ export function createSignalTrackingService() {
     const isBuySide = BUY_SIDE_OUTLOOKS.has(intel.outlook);
     const now = new Date();
     const volatilityScore = intel.volatility.score;
-    const socialEligible =
-      intel.confidence >= SOCIAL_MIN_CONFIDENCE && volatilityScore >= SOCIAL_MIN_VOLATILITY_SCORE;
+    const socialEligible = intel.confidence >= SOCIAL_MIN_CONFIDENCE;
 
     try {
       const [inserted] = await db.insert(signalTracking).values({
