@@ -111,7 +111,7 @@ export function createSignalTrackingService() {
 
     const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const istTotalMin = istNow.getHours() * 60 + istNow.getMinutes();
-    if (istTotalMin < 9 * 60 + 45) return; // before 9:45 AM
+    if (istTotalMin < 9 * 60 + 30) return; // before 9:30 AM (NORMAL phase begins)
     if (istTotalMin >= 15 * 60 + 10) return; // 3:10 PM — stop before close
 
     if (price < 50) return;
