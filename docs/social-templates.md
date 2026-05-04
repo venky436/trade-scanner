@@ -1,6 +1,6 @@
 # Social Templates (`/admin/social`)
 
-> Admin-only screenshot generator. Renders 1080×1080 templates for high-confidence + high-volatility signals so the admin can manually screenshot and post to Telegram / Instagram. **Not** an auto-poster, **not** a public-facing page.
+> Admin-only screenshot generator. Renders 1080×1080 templates for high-confidence signals (conf ≥ 0.75) so the admin can manually screenshot and post to Telegram / Instagram. **Not** an auto-poster, **not** a public-facing page.
 
 ## Why this exists
 
@@ -18,18 +18,16 @@ The feature is intentionally **scoped down**:
 A signal becomes a "social-eligible" template candidate when **both** are true at the moment `recordSignal()` fires:
 
 ```
-intel.confidence       >= 0.75    (HIGH bucket lower bound)
-intel.volatility.score >= 0.7     (HIGH volatility band)
+intel.confidence >= 0.75    (HIGH bucket lower bound)
 ```
 
-This produces ~15-25 signals on a typical trading day — enough for daily content, sparse enough that each one is hand-pickable.
+The volatility filter (`>= 0.7`) was dropped — it was producing too few templates on calm/sideways days, leaving `/admin/social` empty for stretches. Confidence alone is the gate now. `volatility_score` still gets persisted on every row for future analysis but no longer affects eligibility.
 
-The eligibility flag is computed once, at insert time, and persisted. We do **not** re-evaluate eligibility later (e.g., if volatility changes mid-window, the row's flag stays as it was).
+The eligibility flag is computed once, at insert time, and persisted. We do **not** re-evaluate eligibility later.
 
 | Constant | File | Value |
 |---|---|---|
 | `SOCIAL_MIN_CONFIDENCE` | `apps/server/src/services/signal-tracking.service.ts` | `0.75` |
-| `SOCIAL_MIN_VOLATILITY_SCORE` | same | `0.7` |
 
 ---
 
@@ -55,7 +53,7 @@ broadcast.service.ts onIntelligenceComputed
        ↓
 signal-tracking.service.ts recordSignal()
        ↓
-   conf ≥ 0.75 AND vol ≥ 0.7?
+   conf ≥ 0.75?
        ↓ yes
    INSERT into signal_tracking
      volatility_score = 0.85
@@ -208,24 +206,27 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ ⓘ  EDUCATIONAL · MARKET STUDY                                │
+│ ⓘ EDUCATIONAL · MARKET STUDY        10:42 AM ·  4 May 2026   │  banner with timestamp
 │───────────────────────────────────────────────────────────────│
 │                                                               │
-│                       S B I N                                 │  ← 148px
-│                       ━━━━━━━                                 │  ← gradient bar
+│             ╭────────────────────╮                            │  direction chip
+│             │ ↑  BULLISH SETUP   │                            │  (or ↓ BEARISH)
+│             ╰────────────────────╯                            │
 │                                                               │
+│                       SBIN                                    │  112px white
+│                       ━━━━━━━                                 │  cyan→violet bar
 │              Market Behavior Snapshot                         │
 │                                                               │
-│      ╔══════════════════════════════════════════════╗         │
-│      ║   📍  ZONE              Near Support         ║         │
-│      ║   📈  MOMENTUM          Building             ║         │
-│      ║   💹  PRESSURE          Strong Buying        ║         │
-│      ║   🌊  VOLATILITY        High                 ║         │
-│      ╚══════════════════════════════════════════════╝         │
+│      ┌──────────────────────────────────────────┐             │
+│      │ 📍 ZONE              Near Resistance     │             │
+│      │ 📈 MOMENTUM          Building            │             │  factor card
+│      │ 💹 PRESSURE          Buying Present      │             │  with row dividers
+│      │ 🌊 VOLATILITY        High                │             │
+│      └──────────────────────────────────────────┘             │
 │                                                               │
-│        ╭──────────────────────────────────────╮              │
-│        │  ◆  FACTOR ALIGNMENT · STRONG  ◆     │              │
-│        ╰──────────────────────────────────────╯              │
+│       ╭───────────────────────────────────────╮              │
+│       │ ◆ FACTOR ALIGNMENT · STRONG  • • •    │              │  pill + 3 dots
+│       ╰───────────────────────────────────────╯              │  (filled by tier)
 │                                                               │
 │───────────────────────────────────────────────────────────────│
 │ For educational study only                                   │
@@ -240,7 +241,7 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 | Zone | `signal.zone` → `zoneLabel()` | `Near Support` / `Near Resistance` / `Mid Range` |
 | Momentum | `signal.outlook + confidence` → `momentumLabel()` | `Strong` / `Building` / `Forming` / `Mixed` |
 | Pressure | `signal.bias + confidence` → `pressureLabel()` | `Strong Buying` / `Buying Present` / `Mixed` |
-| Volatility | `signal.volatilityScore` → `volatilityLabel()` | Always `High` (filter requires it) |
+| Volatility | `signal.volatilityScore` → `volatilityLabel()` | `High` / `Medium` / `Low` (no longer filtered) |
 | Alignment | `signal.confidence` → `alignmentLabel()` | `STRONG` (≥0.9) / `ALIGNED` (≥0.8) / `FORMING` (≥0.75) |
 
 **Direction-based color:**
@@ -254,22 +255,18 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ ⓘ  EDUCATIONAL · MARKET STUDY                                │
+│ ⓘ EDUCATIONAL · MARKET STUDY        10:52 AM ·  4 May 2026   │  banner shows EVAL time
 │───────────────────────────────────────────────────────────────│
 │                                                               │
-│                       S B I N                                 │  ← 100px
-│              10 Minutes Later                                 │
+│                       SBIN                                    │  88px white
+│                                                               │
+│           ⏱  10:42 AM  →  10:52 AM  · 10 min later            │  trigger → eval timeline
 │                                                               │
 │        ╭───────────────────────────────────╮                 │
-│        │           ↑  +0.55%               │                 │  ← 140px mono
-│        │       PRICE MOVEMENT              │                 │     status-tinted glow
+│        │           ↑  +1.50                │                 │  128px mono (POINTS)
+│        │        POINTS MOVED               │                 │  status-tinted glow
+│        │           +0.55%                  │                 │  small subtitle
 │        ╰───────────────────────────────────╯                 │
-│                                                               │
-│  ╭────────────────────╮      ╭────────────────────╮          │
-│  │ ▲ BEST             │      │ ▼ WORST            │          │
-│  │   +0.78%           │      │   -0.12%           │          │
-│  │   intraday peak    │      │   intraday dip     │          │
-│  ╰────────────────────╯      ╰────────────────────╯          │
 │                                                               │
 │        ╭──────────────────────────────────────╮              │
 │        │  ✓  PLAYED OUT AS SYSTEM OBSERVED    │              │
