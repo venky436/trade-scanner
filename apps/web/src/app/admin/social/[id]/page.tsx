@@ -58,11 +58,11 @@ export default function SocialTemplatePage() {
       }
     }
     fetchData();
-    // For pending outcomes, poll every 30s so the page transitions when the
-    // evaluator updates the row.
+    // For pending outcomes, poll every 5s — matches the backend first-touch
+    // eval cadence so the page transitions within seconds of the lock-in.
     const interval =
       view === "outcome" && signal?.status === "PENDING"
-        ? setInterval(fetchData, 30_000)
+        ? setInterval(fetchData, 5_000)
         : null;
     return () => {
       active = false;

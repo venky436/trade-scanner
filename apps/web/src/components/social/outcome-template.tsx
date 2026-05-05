@@ -8,12 +8,16 @@ import {
   formatTimeIST,
   formatDateIST,
   outcomeVerdict,
+  socialDisplayStatus,
 } from "./template-shared";
 
 export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
-  const verdict = outcomeVerdict(signal.status);
+  // Social rule: every evaluated signal renders as WIN or LOSS — direction wins,
+  // even for tiny moves (0.05% counts). NEUTRAL never shows on the template.
+  const verdict = outcomeVerdict(socialDisplayStatus(signal));
   const points = Number(signal.changePoints ?? 0);
-  const DirectionIcon = points > 0.01 ? ArrowUp : points < -0.01 ? ArrowDown : Minus;
+  // No Minus case — every signal is win or loss on social, even for tiny moves.
+  const DirectionIcon = points >= 0 ? ArrowUp : ArrowDown;
   const VerdictIcon = verdict.iconKind === "check" ? Check : verdict.iconKind === "x" ? X : Minus;
 
   const triggerTime = formatTimeIST(signal.signalTime);

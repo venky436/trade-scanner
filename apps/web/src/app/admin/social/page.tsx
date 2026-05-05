@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Camera, Clock, CheckCircle, XCircle, Minus, AlertCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import type { SocialSignal } from "@/components/social/template-shared";
+import { socialDisplayStatus, type SocialSignal } from "@/components/social/template-shared";
 
 function getTodayIST(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -87,7 +87,9 @@ export default function SocialListPage() {
       }
     }
     fetchData();
-    const interval = isToday ? setInterval(fetchData, 30_000) : null;
+    // 5s polling matches the backend first-touch eval cadence — outcomes flip
+    // (Pending → Played Out / Did Not Play Out) within seconds of the lock-in.
+    const interval = isToday ? setInterval(fetchData, 5_000) : null;
 
     // Refetch when the tab becomes visible again — guards against stale data.
     function handleVisibility() {
@@ -189,7 +191,9 @@ export default function SocialListPage() {
           </div>
           <div>
             {signals.map((s) => {
-              const meta = statusMeta(s.status);
+              // socialDisplayStatus collapses NEUTRAL → SUCCESS/FAILED based on
+              // direction. The DB status (used by tracking dashboard) stays NEUTRAL.
+              const meta = statusMeta(socialDisplayStatus(s));
               const StatusIcon = meta.icon;
               const defaultView = s.status === "PENDING" ? "initial" : "outcome";
               return (

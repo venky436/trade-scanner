@@ -171,7 +171,9 @@ export function TrackingDashboard() {
     }
     setLoading(true);
     fetchData();
-    const interval = isToday ? setInterval(fetchData, 30_000) : null;
+    // 5s polling matches the backend first-touch eval cadence — bucket counts
+    // and per-outlook accuracy refresh within seconds of new lock-ins.
+    const interval = isToday ? setInterval(fetchData, 5_000) : null;
 
     // Refetch the moment the tab becomes visible again — guards against
     // stale data when the user returns to the page.
