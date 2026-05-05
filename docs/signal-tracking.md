@@ -1,6 +1,6 @@
 # Signal Tracking System
 
-> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a 10-minute evaluation window with **first-touch evaluation** — TP +0.5% / SL −0.3% race, locked the moment either is hit; falls back to NEUTRAL if neither is touched within the window. Admin-only — not user-facing.
+> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a 10-minute evaluation window with **first-touch evaluation** — symmetric ±0.5% TP/SL race, locked the moment either is hit; falls back to NEUTRAL if neither is touched within the window. Admin-only — not user-facing.
 
 ## Why this exists
 
@@ -19,7 +19,7 @@ Two parallel systems run independently:
 | | Old: `signal_accuracy_log` | New: `signal_tracking` |
 |---|---|---|
 | **Trigger** | `score >= 9` (internal 1–10 scale) | `confidence >= 0.5` (intelligence layer 0–1 scale) |
-| **Evaluation** | Target / stop-loss hit (variable time, can run all day) | First-touch TP +0.5% / SL −0.3% race within a 10-minute window |
+| **Evaluation** | Target / stop-loss hit (variable time, can run all day) | First-touch symmetric ±0.5% TP/SL race within a 10-minute window |
 | **Metrics** | SUCCESS / FAILED / NEUTRAL | Same + change %, points, max profit, max drawdown, expectancy |
 | **Grouping** | By signal type (BREAKOUT / BOUNCE / etc.) | By confidence bucket (ULTRA_HIGH / HIGH / MEDIUM) × outlook type |
 | **Check cadence** | Every 1 second | Every 5 seconds |
@@ -77,14 +77,14 @@ Evaluation timer (every 5 seconds, first-touch race)
     quote = marketDataService.getQuote(symbol)   // in-memory, cheap
     change_percent = ((quote.lastPrice - price_at_signal) / price_at_signal) * 100
 
-    Classification (asymmetric TP/SL — race, lock on first crossing):
+    Classification (symmetric ±0.5% TP/SL — race, lock on first crossing):
       BUY-side (BREAKOUT_LIKELY, BOUNCE_EXPECTED):
         change ≥ +0.5%  → SUCCESS, lock now (TP touched)
-        change ≤ -0.3%  → FAILED, lock now  (SL touched)
+        change ≤ -0.5%  → FAILED, lock now  (SL touched)
 
       SELL-side (REJECTION_POSSIBLE, BREAKDOWN_RISK):
         change ≤ -0.5%  → SUCCESS, lock now (TP touched, price went down)
-        change ≥ +0.3%  → FAILED, lock now  (SL touched, price went up)
+        change ≥ +0.5%  → FAILED, lock now  (SL touched, price went up)
 
       Neither touched AND now ≥ signal_time + 10 min  → NEUTRAL fallback
       Neither touched AND within window                → leave PENDING, retry in 5s
@@ -104,13 +104,13 @@ On lock:
       (SUCCESS / FAILED retain the dedup lock)
 ```
 
-### Why asymmetric thresholds (TP +0.5% / SL −0.3%)
+### Why symmetric ±0.5% thresholds
 
-A real trader reads "BREAKOUT" as a buy with a take-profit and stop-loss. We model that explicitly: aim for +0.5%, risk −0.3%. Reward-to-risk = 1.67×. Even a 50% win-rate produces positive expectancy.
+A real trader reads "BREAKOUT" as a buy with a take-profit and stop-loss. We model that explicitly: aim for +0.5%, risk 0.5%. Reward-to-risk = 1×. Need >50% win-rate to be net profitable, which is the natural breakeven framing — easy to interpret on the dashboard. (Earlier iteration used asymmetric +0.5% / −0.3% for an R:R of 1.67×; reverted to symmetric for cleaner interpretation.)
 
 ### Why 5-second polling (was 60-second snapshot)
 
-The old eval looked at price exactly at the 10-minute mark. Prod data showed that ~50% of "FAILED" and "NEUTRAL" signals had actually tapped the (then-symmetric) ±0.3% target during the window before mean-reverting. A real trader with a take-profit order would have closed those as winners. First-touch fixes that gap. Polling every 5 seconds means we catch the touch within at most 5 seconds, which is well inside the noise floor of intraday price moves at the 0.5% scale. CPU impact is <0.1% (5–30 active signals × in-memory `Map.get` + 2 comparisons per cycle).
+The old eval looked at price exactly at the 10-minute mark. Prod data showed that ~50% of "FAILED" and "NEUTRAL" signals had actually tapped the original ±0.3% target during the window before mean-reverting. A real trader with a take-profit order would have closed those as winners. First-touch fixes that gap. Polling every 5 seconds means we catch the touch within at most 5 seconds, which is well inside the noise floor of intraday price moves at the 0.5% scale. CPU impact is <0.1% (5–30 active signals × in-memory `Map.get` + 2 comparisons per cycle).
 
 ### Market close cleanup
 
@@ -181,7 +181,7 @@ interface BucketMetrics {
 
 ### Why NEUTRAL is in the accuracy denominator
 
-A signal that triggered "BREAKOUT" but didn't move ±0.3% in 10 minutes is a miss from the trader's perspective — it never gave you a reason to act. The old metric `success / (success + failed)` silently dropped NEUTRAL, which inflated apparent accuracy on calm/sideways days (NEUTRAL share was 48–76% across outlooks on 2026-05-04). New denominator includes NEUTRAL so the headline number reflects what a follower actually experiences.
+A signal that triggered "BREAKOUT" but didn't move ±0.5% in 10 minutes is a miss from the trader's perspective — it never gave you a reason to act. The old metric `success / (success + failed)` silently dropped NEUTRAL, which inflated apparent accuracy on calm/sideways days (NEUTRAL share was 48–76% across outlooks on 2026-05-04). New denominator includes NEUTRAL so the headline number reflects what a follower actually experiences.
 
 `winRate` and `lossRate` (used to derive `expectancy` and `riskReward`) still use only `success / (success + failed)` — those metrics need realized-trade math, and NEUTRAL has no realized P&L.
 
@@ -193,17 +193,19 @@ Expectancy = (WinRate × AvgGain) − (LossRate × AvgLoss)
 
 `AvgGain` and `AvgLoss` are both **magnitudes** (always ≥ 0). They're computed as `|change_percent|` so BUY-side and SELL-side outcomes contribute equally — a SELL success where price dropped 0.5% counts the same as a BUY success where price rose 0.5%.
 
-Example:
+Example (with symmetric ±0.5% TP/SL, AvgGain ≈ AvgLoss ≈ 0.5%):
 ```
 ULTRA_HIGH:
-  WinRate = 72% (0.72)
-  AvgGain = 0.8%   (magnitude)
-  AvgLoss = 0.3%   (magnitude)
+  WinRate = 60% (0.60)
+  AvgGain = 0.5%   (magnitude — capped at TP touch)
+  AvgLoss = 0.5%   (magnitude — capped at SL touch)
 
-  Expectancy = (0.72 × 0.8) − (0.28 × 0.3)
-             = 0.576 − 0.084
-             = +0.492%
+  Expectancy = (0.60 × 0.5) − (0.40 × 0.5)
+             = 0.30 − 0.20
+             = +0.10%
 ```
+
+With symmetric ±0.5%, breakeven is exactly 50% — anything above is net profitable (in the simplified model that ignores slippage and fees).
 
 A positive expectancy means the system is profitable. A negative expectancy means it's losing money even with a decent win rate (because losses are larger than gains).
 
@@ -230,7 +232,7 @@ All endpoints require `authMiddleware + adminGuard`.
 ```
 ┌─ Header ──────────────────────────────────────────────────────┐
 │ Signal Tracking Analytics              X active signals       │
-│ first-touch eval · TP +0.5% / SL −0.3% · 10-min window        │
+│ first-touch eval · symmetric ±0.5% TP/SL · 10-min window      │
 └───────────────────────────────────────────────────────────────┘
 
 ┌─ 3 Bucket Cards (clickable — filters the table below) ──────┐
@@ -327,7 +329,7 @@ Admin users see a TrendingUp icon in the navbar (next to the existing Shield adm
 
 ## NEUTRAL re-tracking
 
-When a tracked signal evaluates to **NEUTRAL** (neither TP +0.5% nor SL −0.3% touched within the 10-minute window), the call had no real outcome — it neither won nor lost. The dedup slot is released so the same stock can be picked up again the same day at the same or higher bucket.
+When a tracked signal evaluates to **NEUTRAL** (neither side of the symmetric ±0.5% band touched within the 10-minute window), the call had no real outcome — it neither won nor lost. The dedup slot is released so the same stock can be picked up again the same day at the same or higher bucket.
 
 `SUCCESS` and `FAILED` evaluations **do not** release the slot — once a stock has produced a decided outcome at a given bucket, it stays locked at that bucket for the rest of the IST day.
 
@@ -389,7 +391,7 @@ A stock can also appear in the same bucket twice if the first signal evaluated t
 | `EVAL_INTERVAL_MS` | 5,000 (5 sec) | First-touch poll cadence — every active signal checked against TP/SL on every cycle |
 | `EVAL_WINDOW_MS` | 600,000 (10 min) | First-touch race window. After this, NEUTRAL fallback fires |
 | `TP_PERCENT` | 0.5% | Take-profit target. Bullish: +0.5% above entry. Bearish: −0.5% below entry |
-| `SL_PERCENT` | 0.3% | Stop-loss. Bullish: −0.3% below entry. Bearish: +0.3% above entry. Asymmetric R:R = 1.67× |
+| `SL_PERCENT` | 0.5% | Stop-loss. Bullish: −0.5% below entry. Bearish: +0.5% above entry. Symmetric with TP — R:R = 1× |
 | `MIN_SAMPLES.ULTRA_HIGH` | 20 | Minimum decided signals before trusting results |
 | `MIN_SAMPLES.HIGH` | 50 | |
 | `MIN_SAMPLES.MEDIUM` | 100 | |
@@ -437,5 +439,5 @@ Then during market hours, check:
 - **Multi-day aggregation** — currently the dashboard shows one day at a time. Add a date range picker to compute cumulative bucket accuracy.
 - **Statistical significance** — add a p-value or chi-squared test to determine if the accuracy difference between buckets is statistically significant (not just random).
 - **Confidence formula tuning** — if the data shows that pressure matters more than momentum (or vice versa), adjust the 50/50 weights in the confidence formula.
-- **Dynamic thresholds** — TP/SL are currently fixed at +0.5% / −0.3% across all stocks. For very low-priced or very high-priced stocks, consider price-relative thresholds (e.g. ₹50 stocks need a wider % than ₹3000 stocks).
+- **Dynamic thresholds** — TP/SL are currently fixed at symmetric ±0.5% across all stocks. For very low-priced or very high-priced stocks, consider price-relative thresholds (e.g. ₹50 stocks need a wider % than ₹3000 stocks).
 - **Alerting** — if daily expectancy drops below zero for 3 consecutive days, log a warning.

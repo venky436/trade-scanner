@@ -70,7 +70,7 @@ signal-tracking.service.ts recordSignal()
    InitialTemplate renders at 1080×1080
    Admin screenshots, posts manually
        ↓
-   ... first-touch race runs (5-sec poll, lock the moment TP +0.5% or SL −0.3% is hit; NEUTRAL fallback if neither in 10 min) ...
+   ... first-touch race runs (5-sec poll, lock the moment either side of the symmetric ±0.5% TP/SL band is hit; NEUTRAL fallback if neither in 10 min) ...
        ↓
    Evaluator locks the row:
      UPDATE signal_tracking
@@ -355,7 +355,7 @@ This feature ships with the explicit understanding that **publicly posting scree
 | Area | Status |
 |---|---|
 | Existing `recordSignal()` dedup logic (NEUTRAL re-tracking, upgrade-only, 200/day cap, market hours, ₹50 floor, NO_CLEAR_EDGE skip) | UNCHANGED |
-| Existing `evaluate()` and `evaluateMarketClose()` logic | **UPDATED separately** in `fix(tracking): first-touch eval` — first-touch race against TP +0.5% / SL −0.3%, 5-sec poll. See `signal-tracking.md`. The social feature itself doesn't change eval logic; it just consumes the same row that the new evaluator writes |
+| Existing `evaluate()` and `evaluateMarketClose()` logic | **UPDATED separately** in `fix(tracking): first-touch eval` — first-touch race against symmetric ±0.5% TP/SL, 5-sec poll. See `signal-tracking.md`. The social feature itself doesn't change eval logic; it just consumes the same row that the new evaluator writes |
 | `/admin/tracking` page and metrics | UNCHANGED by social feature; **separately updated** to include NEUTRAL in the accuracy denominator |
 | `getMetrics`, `getRecentSignals`, `getTrackingMetricsFromDB`, `getTrackingSignalsFromDB` | UNCHANGED by social feature; `getMetrics` / `getTrackingMetricsFromDB` got an additive `neutral` field on `byOutlook` in the eval-fix PR |
 | WS server, broadcast service, signal worker, intelligence transformer | UNCHANGED |
