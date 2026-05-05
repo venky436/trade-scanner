@@ -14,7 +14,7 @@ const MAX_DAILY_SIGNALS = 200;
 const EVAL_INTERVAL_MS = 5_000;
 const EVAL_WINDOW_MS = 10 * 60_000;
 const TP_PERCENT = 0.5; // take-profit %, applied per outlook direction
-const SL_PERCENT = 0.3; // stop-loss %, applied per outlook direction
+const SL_PERCENT = 0.5; // stop-loss %, applied per outlook direction (symmetric ±0.5% — R:R 1×)
 
 // Social-template eligibility: confidence ≥ 0.75. Volatility filter dropped —
 // surfaces more signals so /admin/social has steady content even on calm days.
