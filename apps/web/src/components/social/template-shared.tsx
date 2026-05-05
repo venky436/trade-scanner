@@ -156,6 +156,21 @@ export function formatDateIST(iso: string | null | undefined): string {
   });
 }
 
+// Social-only display rule: NEUTRAL signals get reclassified into SUCCESS or
+// FAILED based on price direction. Even a 0.01% move toward the predicted
+// direction counts as PLAYED OUT — "NO CLEAR MOVEMENT" doesn't translate well
+// for a follower-facing template. The underlying signal_tracking row keeps its
+// true status (NEUTRAL) for the accuracy dashboard; this only affects social UI.
+export function socialDisplayStatus(
+  signal: Pick<SocialSignal, "status" | "outlook" | "changePercent">,
+): string {
+  if (signal.status !== "NEUTRAL") return signal.status;
+  const change = Number(signal.changePercent ?? 0);
+  const isBullish = signal.outlook === "BREAKOUT_LIKELY" || signal.outlook === "BOUNCE_EXPECTED";
+  if (isBullish) return change >= 0 ? "SUCCESS" : "FAILED";
+  return change <= 0 ? "SUCCESS" : "FAILED";
+}
+
 // Derive outcome verdict from status. SUCCESS → played out for the predicted
 // direction (price moved in expected direction by ≥ 0.3%). FAILED → moved
 // opposite. NEUTRAL → didn't move enough either way.
