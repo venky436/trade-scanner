@@ -93,8 +93,9 @@ export function AdminDashboard() {
 
     setLoading(true);
     fetchData();
-    // Only auto-refresh for today's data
-    const interval = isToday ? setInterval(fetchData, 30_000) : null;
+    // Only auto-refresh for today's data. 5s matches the backend first-touch
+    // eval cadence so accuracy/counts refresh within seconds of new lock-ins.
+    const interval = isToday ? setInterval(fetchData, 5_000) : null;
 
     // Refetch the moment the tab becomes visible again — covers the case
     // where the user returns after the browser HTTP cache has staled.

@@ -8,16 +8,26 @@ import {
   formatTimeIST,
   formatDateIST,
   outcomeVerdict,
+  socialDisplayStatus,
 } from "./template-shared";
 
 export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
-  const verdict = outcomeVerdict(signal.status);
+  // Social rule: every evaluated signal renders as WIN or LOSS — direction wins,
+  // even for tiny moves (0.05% counts). NEUTRAL never shows on the template.
+  const verdict = outcomeVerdict(socialDisplayStatus(signal));
   const points = Number(signal.changePoints ?? 0);
-  const DirectionIcon = points > 0.01 ? ArrowUp : points < -0.01 ? ArrowDown : Minus;
+  // No Minus case — every signal is win or loss on social, even for tiny moves.
+  const DirectionIcon = points >= 0 ? ArrowUp : ArrowDown;
   const VerdictIcon = verdict.iconKind === "check" ? Check : verdict.iconKind === "x" ? X : Minus;
 
   const triggerTime = formatTimeIST(signal.signalTime);
   const evalTime = formatTimeIST(signal.evaluatedAt);
+  // First-touch eval locks the verdict the moment price crosses TP or SL —
+  // most signals lock in 1-9 min, not always at 10. Show the actual elapsed
+  // duration so the timeline stays honest.
+  const lockMinutes = signal.evaluatedAt
+    ? Math.max(1, Math.round((new Date(signal.evaluatedAt).getTime() - new Date(signal.signalTime).getTime()) / 60_000))
+    : 10;
 
   return (
     <TemplateFrame>
@@ -33,7 +43,7 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
           <span className="font-mono text-slate-300">{triggerTime}</span>
           <ArrowRightIcon />
           <span className="font-mono text-slate-300">{evalTime}</span>
-          <span className="text-slate-500 text-[15px] tracking-wide ml-2">· 10 min later</span>
+          <span className="text-slate-500 text-[15px] tracking-wide ml-2">· {lockMinutes} min later</span>
         </div>
       </div>
 
