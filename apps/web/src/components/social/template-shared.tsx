@@ -126,6 +126,15 @@ export function formatSigned(value: string | null, suffix = "%"): string {
   return `${sign}${v.toFixed(2)}${suffix}`;
 }
 
+// Indian-locale rupee price for the templates. en-IN gives lakh-style grouping
+// for prices ≥ 1L (₹1,53,245.50) and standard for smaller (₹1,066.50).
+export function formatPrice(value: string | number | null | undefined): string {
+  if (value == null) return "—";
+  const v = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(v)) return "—";
+  return `₹${v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 // IST time formatters used in template headers.
 export function formatTimeIST(iso: string | null | undefined): string {
   if (!iso) return "—";

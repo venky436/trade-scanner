@@ -1,4 +1,4 @@
-import { ArrowUp, ArrowDown, Minus, Check, X, Clock } from "lucide-react";
+import { ArrowUp, ArrowDown, Minus, Check, X } from "lucide-react";
 import {
   type SocialSignal,
   TemplateFrame,
@@ -7,6 +7,7 @@ import {
   formatSigned,
   formatTimeIST,
   formatDateIST,
+  formatPrice,
   outcomeVerdict,
 } from "./template-shared";
 
@@ -18,50 +19,66 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
 
   const triggerTime = formatTimeIST(signal.signalTime);
   const evalTime = formatTimeIST(signal.evaluatedAt);
+  // Lock duration is the elapsed minutes between signal and evaluation. With
+  // the (separately shipped) first-touch eval this can be 1-9 min for a TP/SL
+  // touch, ~10 min for the NEUTRAL fallback. Pre-first-touch this is always 10.
+  const lockMinutes = signal.evaluatedAt
+    ? Math.max(1, Math.round((new Date(signal.evaluatedAt).getTime() - new Date(signal.signalTime).getTime()) / 60_000))
+    : 10;
 
   return (
     <TemplateFrame>
       <EducationalBanner timestamp={evalTime} dateText={formatDateIST(signal.signalTime)} />
 
-      {/* Hero — symbol + timeline caption */}
-      <div className="flex flex-col items-center pt-12 pb-6">
+      {/* Symbol */}
+      <div className="flex flex-col items-center pt-10 pb-4">
         <h1 className="text-[88px] font-extrabold tracking-tight text-white leading-none">
           {signal.symbol}
         </h1>
-        <div className="mt-5 flex items-center gap-3 text-slate-400 text-[18px] font-medium">
-          <Clock className="size-4 text-slate-500" />
-          <span className="font-mono text-slate-300">{triggerTime}</span>
-          <ArrowRightIcon />
-          <span className="font-mono text-slate-300">{evalTime}</span>
-          <span className="text-slate-500 text-[15px] tracking-wide ml-2">· 10 min later</span>
+      </div>
+
+      {/* Entry → Exit price card. Left/right symmetry mirrors the trade arc.
+          Center column carries the arrow + duration; clean read top-to-bottom. */}
+      <div className="px-16 mt-2">
+        <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-700/40 rounded-2xl py-8 px-10">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-6">
+            <PriceColumn label="ENTRY" price={signal.priceAtSignal} time={triggerTime} />
+            <div className="flex flex-col items-center gap-2">
+              <ChevronArrowRight />
+              <span className="text-slate-500 text-[11px] tracking-[0.3em] uppercase font-semibold">
+                {lockMinutes} min
+              </span>
+            </div>
+            <PriceColumn label="EXIT" price={signal.priceAfter} time={evalTime} alignRight />
+          </div>
         </div>
       </div>
 
-      {/* Big movement card */}
-      <div className="px-16">
+      {/* Big movement card — points moved + % subtitle */}
+      <div className="px-16 mt-5">
         <div
-          className={`bg-gradient-to-br from-slate-900/80 to-slate-900/40 backdrop-blur-xl border border-slate-700/50 rounded-3xl py-12 px-10 flex flex-col items-center ${verdict.bigGlow}`}
+          className={`bg-gradient-to-br from-slate-900/80 to-slate-900/40 backdrop-blur-xl border border-slate-700/50 rounded-3xl py-9 px-10 flex flex-col items-center ${verdict.bigGlow}`}
         >
           <div className="flex items-center gap-5">
-            <DirectionIcon className={`size-14 ${verdict.bigNumberColor}`} strokeWidth={3} />
+            <DirectionIcon className={`size-12 ${verdict.bigNumberColor}`} strokeWidth={3} />
             <span
-              className={`text-[128px] font-extrabold leading-none ${verdict.bigNumberColor}`}
+              className={`text-[112px] font-extrabold leading-none ${verdict.bigNumberColor}`}
               style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
             >
               {formatSigned(signal.changePoints, "")}
             </span>
           </div>
-          <p className="mt-5 text-slate-400 text-[16px] font-semibold tracking-[0.4em]">
+          <p className="mt-4 text-slate-400 text-[15px] font-semibold tracking-[0.4em]">
             POINTS MOVED
           </p>
-          <p className="mt-2 text-slate-500 text-[14px] tracking-wide">
+          <p className="mt-1.5 text-slate-500 text-[14px] tracking-wide">
             {formatSigned(signal.changePercent)}
           </p>
         </div>
       </div>
 
       {/* Status pill */}
-      <div className="flex justify-center mt-10">
+      <div className="flex justify-center mt-7">
         <div
           className={`inline-flex items-center gap-3.5 px-8 py-4 rounded-full border ${verdict.pillBg} ${verdict.pillBorder}`}
         >
@@ -72,7 +89,6 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
         </div>
       </div>
 
-      {/* Spacer */}
       <div className="flex-1" />
 
       <DisclaimerFooter />
@@ -80,10 +96,53 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
   );
 }
 
-// Inline arrow icon used between the two timestamps in the hero caption.
-function ArrowRightIcon() {
+// Single price column inside the entry→exit card. alignRight flips horizontal
+// alignment so the entry sits left-aligned (towards center arrow) and exit
+// right-aligned (also towards center arrow) — the two prices visually point at
+// each other across the arrow.
+function PriceColumn({
+  label,
+  price,
+  time,
+  alignRight = false,
+}: {
+  label: string;
+  price: string | null;
+  time: string;
+  alignRight?: boolean;
+}) {
+  const itemAlign = alignRight ? "items-end" : "items-start";
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-slate-600">
+    <div className={`flex flex-col ${itemAlign}`}>
+      <span className="text-slate-500 text-[12px] font-semibold tracking-[0.35em] uppercase">
+        {label}
+      </span>
+      <span
+        className="mt-2 text-white text-[36px] font-extrabold leading-none"
+        style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
+      >
+        {formatPrice(price)}
+      </span>
+      <span className="mt-2 text-slate-400 text-[13px] font-mono tracking-wide">
+        {time}
+      </span>
+    </div>
+  );
+}
+
+function ChevronArrowRight() {
+  return (
+    <svg
+      width="36"
+      height="36"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="text-slate-500"
+    >
       <path d="M5 12h14" />
       <path d="m13 6 6 6-6 6" />
     </svg>

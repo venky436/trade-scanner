@@ -14,6 +14,7 @@ import {
   directionAccent,
   formatTimeIST,
   formatDateIST,
+  formatPrice,
 } from "./template-shared";
 
 interface FactorRow {
@@ -83,7 +84,10 @@ export function InitialTemplate({ signal }: { signal: SocialSignal }) {
           {signal.symbol}
         </h1>
         <div className={`mt-5 h-[5px] w-28 rounded-full bg-gradient-to-r ${accent.grad}`} />
-        <p className="mt-5 text-[22px] font-medium text-slate-400 tracking-wide">
+        <p className="mt-4 text-[28px] font-bold text-slate-200 font-mono tracking-tight">
+          {formatPrice(signal.priceAtSignal)}
+        </p>
+        <p className="mt-3 text-[22px] font-medium text-slate-400 tracking-wide">
           Market Behavior Snapshot
         </p>
       </div>
