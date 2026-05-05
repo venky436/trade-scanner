@@ -1,6 +1,6 @@
 # Signal Tracking System
 
-> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a fixed 10-minute evaluation window with movement analytics and confidence buckets. Admin-only — not user-facing.
+> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a 10-minute evaluation window with **first-touch evaluation** — TP +0.5% / SL −0.3% race, locked the moment either is hit; falls back to NEUTRAL if neither is touched within the window. Admin-only — not user-facing.
 
 ## Why this exists
 
@@ -19,10 +19,10 @@ Two parallel systems run independently:
 | | Old: `signal_accuracy_log` | New: `signal_tracking` |
 |---|---|---|
 | **Trigger** | `score >= 9` (internal 1–10 scale) | `confidence >= 0.5` (intelligence layer 0–1 scale) |
-| **Evaluation** | Target / stop-loss hit (variable time, can run all day) | Fixed 15-minute window |
+| **Evaluation** | Target / stop-loss hit (variable time, can run all day) | First-touch TP +0.5% / SL −0.3% race within a 10-minute window |
 | **Metrics** | SUCCESS / FAILED / NEUTRAL | Same + change %, points, max profit, max drawdown, expectancy |
 | **Grouping** | By signal type (BREAKOUT / BOUNCE / etc.) | By confidence bucket (ULTRA_HIGH / HIGH / MEDIUM) × outlook type |
-| **Check cadence** | Every 1 second | Every 1 minute |
+| **Check cadence** | Every 1 second | Every 5 seconds |
 | **Daily cap** | 100 | 200 |
 | **Admin page** | `/admin` | `/admin/tracking` |
 
@@ -72,40 +72,49 @@ INSERT into signal_tracking table
   status = PENDING
   bucket = ULTRA_HIGH / HIGH / MEDIUM
     ↓
-... 10 minutes pass ...
+Evaluation timer (every 5 seconds, first-touch race)
+  For each PENDING row in activeMap:
+    quote = marketDataService.getQuote(symbol)   // in-memory, cheap
+    change_percent = ((quote.lastPrice - price_at_signal) / price_at_signal) * 100
+
+    Classification (asymmetric TP/SL — race, lock on first crossing):
+      BUY-side (BREAKOUT_LIKELY, BOUNCE_EXPECTED):
+        change ≥ +0.5%  → SUCCESS, lock now (TP touched)
+        change ≤ -0.3%  → FAILED, lock now  (SL touched)
+
+      SELL-side (REJECTION_POSSIBLE, BREAKDOWN_RISK):
+        change ≤ -0.5%  → SUCCESS, lock now (TP touched, price went down)
+        change ≥ +0.3%  → FAILED, lock now  (SL touched, price went up)
+
+      Neither touched AND now ≥ signal_time + 10 min  → NEUTRAL fallback
+      Neither touched AND within window                → leave PENDING, retry in 5s
     ↓
-Evaluation timer (every 60 seconds)
-  Find rows where status=PENDING AND now >= signal_time + 10 min
-    ↓
-For each:
-  price_after = marketDataService.getQuote(symbol).lastPrice
+On lock:
+  price_after = quote.lastPrice (locked at touch moment)
   max_price = quote.high (intraday)
   min_price = quote.low (intraday)
-  change_percent = ((price_after - price_at_signal) / price_at_signal) * 100
+  change_points = price_after - price_at_signal
   max_profit_percent = ((max_price - price_at_signal) / price_at_signal) * 100
   max_drawdown_percent = ((min_price - price_at_signal) / price_at_signal) * 100
-    ↓
-Classification (±0.3% threshold):
-  BUY-side (BREAKOUT_LIKELY, BOUNCE_EXPECTED):
-    change ≥ +0.3%  → SUCCESS
-    change ≤ -0.3%  → FAILED
-    else             → NEUTRAL
 
-  SELL-side (REJECTION_POSSIBLE, BREAKDOWN_RISK):
-    change ≤ -0.3%  → SUCCESS
-    change ≥ +0.3%  → FAILED
-    else             → NEUTRAL
-    ↓
-UPDATE row with all fields + evaluatedAt
-Remove from activeMap (evaluation lifecycle done)
-If status === NEUTRAL AND trackedToday[symbol] === this signal's bucket:
-    delete from trackedToday — stock becomes re-eligible same day
-    (SUCCESS / FAILED retain the dedup lock)
+  UPDATE row (status, evaluatedAt=now, all price fields)
+  Remove from activeMap (evaluation lifecycle done)
+  If status === NEUTRAL AND trackedToday[symbol] === this signal's bucket:
+      delete from trackedToday — stock becomes re-eligible same day
+      (SUCCESS / FAILED retain the dedup lock)
 ```
+
+### Why asymmetric thresholds (TP +0.5% / SL −0.3%)
+
+A real trader reads "BREAKOUT" as a buy with a take-profit and stop-loss. We model that explicitly: aim for +0.5%, risk −0.3%. Reward-to-risk = 1.67×. Even a 50% win-rate produces positive expectancy.
+
+### Why 5-second polling (was 60-second snapshot)
+
+The old eval looked at price exactly at the 10-minute mark. Prod data showed that ~50% of "FAILED" and "NEUTRAL" signals had actually tapped the (then-symmetric) ±0.3% target during the window before mean-reverting. A real trader with a take-profit order would have closed those as winners. First-touch fixes that gap. Polling every 5 seconds means we catch the touch within at most 5 seconds, which is well inside the noise floor of intraday price moves at the 0.5% scale. CPU impact is <0.1% (5–30 active signals × in-memory `Map.get` + 2 comparisons per cycle).
 
 ### Market close cleanup
 
-After 3:30 PM IST, any remaining PENDING signals are evaluated using the last known price and classified normally. They don't expire as NEUTRAL by default — they still get the full ±0.3% classification.
+After 3:30 PM IST, any remaining PENDING signals are evaluated using the last known price with the same TP/SL classification. They don't expire as NEUTRAL by default — they still get the full first-touch classification against the close price.
 
 ---
 
@@ -127,7 +136,7 @@ bias                VARCHAR(10)    NOT NULL   -- BULLISH / BEARISH / NEUTRAL
 
 status              VARCHAR(10)    NOT NULL DEFAULT 'PENDING'
 
--- Filled after 10 minutes
+-- Filled at lock-in moment (first TP/SL touch within 10 min, or NEUTRAL fallback at minute 10)
 price_after            NUMERIC(12,2)
 change_percent         NUMERIC(8,4)
 change_points          NUMERIC(12,2)
@@ -156,18 +165,25 @@ interface BucketMetrics {
   success: number;
   failed: number;
   neutral: number;
-  accuracy: number;        // success / (success + failed) * 100
+  accuracy: number;        // success / (success + failed + neutral) * 100 — NEUTRAL counted as miss
   avgGain: number;         // avg |change_percent| for SUCCESS signals (magnitude — direction-agnostic)
   avgLoss: number;         // avg |change_percent| for FAILED signals (magnitude — direction-agnostic)
   avgMaxProfit: number;    // avg max_profit_percent across all evaluated
   avgMaxDrawdown: number;  // avg max_drawdown_percent across all evaluated
-  expectancy: number;      // (winRate * avgGain) - (lossRate * avgLoss)
+  expectancy: number;      // (winRate * avgGain) - (lossRate * avgLoss) — NEUTRAL excluded (no realized P&L)
   riskReward: number;      // |avgGain / avgLoss|
   sampleSufficient: boolean;
   minSampleRequired: number;
-  byOutlook: Record<string, { total: number; wins: number; rate: number }>;
+  byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }>;
+  // total / rate include NEUTRAL in the denominator
 }
 ```
+
+### Why NEUTRAL is in the accuracy denominator
+
+A signal that triggered "BREAKOUT" but didn't move ±0.3% in 10 minutes is a miss from the trader's perspective — it never gave you a reason to act. The old metric `success / (success + failed)` silently dropped NEUTRAL, which inflated apparent accuracy on calm/sideways days (NEUTRAL share was 48–76% across outlooks on 2026-05-04). New denominator includes NEUTRAL so the headline number reflects what a follower actually experiences.
+
+`winRate` and `lossRate` (used to derive `expectancy` and `riskReward`) still use only `success / (success + failed)` — those metrics need realized-trade math, and NEUTRAL has no realized P&L.
 
 ### Expectancy (the key metric)
 
@@ -214,7 +230,7 @@ All endpoints require `authMiddleware + adminGuard`.
 ```
 ┌─ Header ──────────────────────────────────────────────────────┐
 │ Signal Tracking Analytics              X active signals       │
-│ 15-minute time-based evaluation                               │
+│ first-touch eval · TP +0.5% / SL −0.3% · 10-min window        │
 └───────────────────────────────────────────────────────────────┘
 
 ┌─ 3 Bucket Cards (clickable — filters the table below) ──────┐
@@ -253,7 +269,7 @@ All endpoints require `authMiddleware + adminGuard`.
 - **Expectancy**: +/- number with color
 - **Sample progress bar**: current/required ratio. Green check if sufficient, amber warning if not.
 - **Signals table**: color-coded STATUS column — green SUCCESS, red FAILED, zinc NEUTRAL, amber PENDING. Shows max profit ↑ and max drawdown ↓ columns.
-- **Auto-refresh**: polls every 30 seconds
+- **Auto-refresh**: polls every 5 seconds (matches the backend first-touch eval cadence so the dashboard reflects new lock-ins within seconds)
 - **Light + dark mode**: follows the same pattern as all other components
 
 ### Nav access
@@ -270,7 +286,7 @@ Admin users see a TrendingUp icon in the navbar (next to the existing Shield adm
 |---|---|
 | `apps/server/src/db/schema/signal-tracking.ts` | **NEW** — Drizzle schema for `signal_tracking` table |
 | `apps/server/src/db/schema/index.ts` | **UPDATE** — export `signalTracking` |
-| `apps/server/src/services/signal-tracking.service.ts` | **NEW** — `createSignalTrackingService()` factory: recordSignal, evaluate (60s timer), evaluateMarketClose, getMetrics, getRecentSignals |
+| `apps/server/src/services/signal-tracking.service.ts` | **NEW** — `createSignalTrackingService()` factory: recordSignal, evaluate (5s first-touch race against TP/SL), evaluateMarketClose, getMetrics, getRecentSignals |
 | `apps/server/src/services/broadcast.service.ts` | **UPDATE** — added `onIntelligenceComputed` callback to `BroadcastConfig`, called per dirty symbol after `toIntelligence()` |
 | `apps/server/src/routes/admin.route.ts` | **UPDATE** — 3 new `/api/admin/tracking/*` endpoints, `getTrackingService` in opts |
 | `apps/server/src/server.ts` | **UPDATE** — `getTrackingService` in `ServerDeps`, passed to `adminRoute` |
@@ -311,7 +327,7 @@ Admin users see a TrendingUp icon in the navbar (next to the existing Shield adm
 
 ## NEUTRAL re-tracking
 
-When a tracked signal evaluates to **NEUTRAL** (price stayed within ±0.3% during the 10-minute window), the call had no real outcome — it neither won nor lost. The dedup slot is released so the same stock can be picked up again the same day at the same or higher bucket.
+When a tracked signal evaluates to **NEUTRAL** (neither TP +0.5% nor SL −0.3% touched within the 10-minute window), the call had no real outcome — it neither won nor lost. The dedup slot is released so the same stock can be picked up again the same day at the same or higher bucket.
 
 `SUCCESS` and `FAILED` evaluations **do not** release the slot — once a stock has produced a decided outcome at a given bucket, it stays locked at that bucket for the rest of the IST day.
 
@@ -370,9 +386,10 @@ A stock can also appear in the same bucket twice if the first signal evaluated t
 | Constant | Value | Why |
 |---|---|---|
 | `MAX_DAILY_SIGNALS` | 200 | Higher than old system's 100 because we track 3 buckets |
-| `EVAL_INTERVAL_MS` | 60,000 (1 min) | Check timer cadence |
-| `EVAL_WINDOW_MS` | 600,000 (10 min) | Fixed evaluation window |
-| `SUCCESS_THRESHOLD` | 0.3% | Minimum move to classify as directional |
+| `EVAL_INTERVAL_MS` | 5,000 (5 sec) | First-touch poll cadence — every active signal checked against TP/SL on every cycle |
+| `EVAL_WINDOW_MS` | 600,000 (10 min) | First-touch race window. After this, NEUTRAL fallback fires |
+| `TP_PERCENT` | 0.5% | Take-profit target. Bullish: +0.5% above entry. Bearish: −0.5% below entry |
+| `SL_PERCENT` | 0.3% | Stop-loss. Bullish: −0.3% below entry. Bearish: +0.3% above entry. Asymmetric R:R = 1.67× |
 | `MIN_SAMPLES.ULTRA_HIGH` | 20 | Minimum decided signals before trusting results |
 | `MIN_SAMPLES.HIGH` | 50 | |
 | `MIN_SAMPLES.MEDIUM` | 100 | |
@@ -388,7 +405,7 @@ After a full trading session with this system running:
 3. **Is ULTRA_HIGH expectancy positive?** → the system is profitable at the top tier
 4. **Is MEDIUM expectancy near zero or negative?** → confirms that low confidence shouldn't be acted on
 5. **Which outlook type has the highest accuracy?** → tells you which setups are most reliable
-6. **Is avg max profit > avg gain?** → there's money left on the table (signals move more than the 15-min final price shows)
+6. **Is avg max profit > avg gain?** → there's money left on the table (signals move further after lock-in than the TP exit captures)
 7. **Are samples sufficient?** → if not, keep running for more days
 
 ---
@@ -410,7 +427,7 @@ cd apps/server && npx drizzle-kit push
 
 Then during market hours, check:
 - Server logs: `[Tracking] Recorded: SYMBOL outlook conf=X bucket=Y`
-- After 10 min: `[Tracking] SUCCESS/FAILED: SYMBOL change=+X%`
+- On lock-in (anywhere from minute 1 to 10): `[Tracking] SUCCESS/FAILED/NEUTRAL: SYMBOL change=+X% lock=Ns`
 - Admin page: `localhost:3000/admin/tracking`
 
 ---
@@ -420,5 +437,5 @@ Then during market hours, check:
 - **Multi-day aggregation** — currently the dashboard shows one day at a time. Add a date range picker to compute cumulative bucket accuracy.
 - **Statistical significance** — add a p-value or chi-squared test to determine if the accuracy difference between buckets is statistically significant (not just random).
 - **Confidence formula tuning** — if the data shows that pressure matters more than momentum (or vice versa), adjust the 50/50 weights in the confidence formula.
-- **Dynamic thresholds** — if 0.3% is too tight or too loose for certain price ranges, consider price-relative thresholds (e.g. ₹50 stocks need a wider % than ₹3000 stocks).
+- **Dynamic thresholds** — TP/SL are currently fixed at +0.5% / −0.3% across all stocks. For very low-priced or very high-priced stocks, consider price-relative thresholds (e.g. ₹50 stocks need a wider % than ₹3000 stocks).
 - **Alerting** — if daily expectancy drops below zero for 3 consecutive days, log a warning.

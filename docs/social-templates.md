@@ -35,12 +35,12 @@ The eligibility flag is computed once, at insert time, and persisted. We do **no
 
 | | InitialTemplate | OutcomeTemplate |
 |---|---|---|
-| **When** | At signal time | After 10-min eval (status decided) |
-| **Shows** | Symbol, zone, momentum, pressure, volatility, alignment | Symbol, % move, best/worst intraday, status verdict |
-| **Status required** | Any | `SUCCESS` / `FAILED` / `NEUTRAL` (not `PENDING`) |
+| **When** | At signal time | After first-touch lock (typically 1–9 min) or 10-min NEUTRAL fallback |
+| **Shows** | Symbol, zone, momentum, pressure, volatility, alignment | Symbol, points moved, status verdict, dynamic timeline (`X min later`) |
+| **Status required** | Any | `SUCCESS` / `FAILED` / `NEUTRAL` (not `PENDING`) — NEUTRAL gets reclassified into WIN/LOSS by direction (see below) |
 | **File** | `apps/web/src/components/social/initial-template.tsx` | `apps/web/src/components/social/outcome-template.tsx` |
 
-The outcome template **automatically** becomes available once the existing signal-tracking evaluator updates the row's status — no new timer, worker, or trigger needed.
+The outcome template **automatically** becomes available once the signal-tracking evaluator locks the row's status — no new timer, worker, or trigger needed. With first-touch eval the lock-in time varies: a TP/SL touch fires within seconds, a NEUTRAL fallback waits the full 10 minutes.
 
 ---
 
@@ -70,18 +70,20 @@ signal-tracking.service.ts recordSignal()
    InitialTemplate renders at 1080×1080
    Admin screenshots, posts manually
        ↓
-   ... 10 minutes pass ...
+   ... first-touch race runs (5-sec poll, lock the moment TP +0.5% or SL −0.3% is hit; NEUTRAL fallback if neither in 10 min) ...
        ↓
-   Existing evaluator runs:
+   Evaluator locks the row:
      UPDATE signal_tracking
        status = SUCCESS / FAILED / NEUTRAL
        price_after = 414.30
        change_percent = +0.55
        max_profit_percent = +0.78
        max_drawdown_percent = -0.12
+       evaluated_at = (lock-in time, anywhere from minute 1 to 10)
        ↓
-   /admin/social list page (auto-refreshes 30s):
-     row badge flips from "Outcome Pending" → "Played Out"
+   /admin/social list page (auto-refreshes every 5s):
+     row badge flips from "Outcome Pending" → "Played Out" / "Did Not Play Out"
+     (NEUTRAL never shows on this screen — see "Pure win/loss display" below)
        ↓
    Admin clicks → /admin/social/123?view=outcome
        ↓
@@ -89,7 +91,7 @@ signal-tracking.service.ts recordSignal()
    Admin screenshots, posts as follow-up
 ```
 
-The `view=outcome` page **polls every 30 seconds** while the underlying status is still `PENDING`. As soon as the evaluator commits, the outcome template appears on the next poll without a manual refresh.
+The `view=outcome` page **polls every 5 seconds** while the underlying status is still `PENDING`. As soon as the evaluator commits, the outcome template appears on the next poll without a manual refresh.
 
 ---
 
@@ -169,15 +171,19 @@ Shows the day's eligible signals as a table. Layout matches `/admin/tracking`:
   - Empty state with "No eligible signals" message
   - Error state with rose-tinted card
   - Signal table with columns: time · symbol · outlook · confidence · bucket · status pill · camera icon
-- Auto-refresh every 30 seconds when viewing today's date
+- Auto-refresh every 5 seconds when viewing today's date (matches backend first-touch poll cadence)
 
-Status pill semantics:
-| Backend status | Pill label | Color |
-|---|---|---|
-| `PENDING` | "Outcome Pending" | amber |
-| `SUCCESS` | "Played Out" | emerald |
-| `FAILED` | "Did Not Play Out" | rose |
-| `NEUTRAL` | "No Clear Movement" | zinc |
+Status pill semantics — **pure win/loss display, no NEUTRAL on this screen**:
+
+| Backend status | Display status | Pill label | Color |
+|---|---|---|---|
+| `PENDING` | `PENDING` | "Outcome Pending" | amber |
+| `SUCCESS` (TP touched) | `SUCCESS` | "Played Out" | emerald |
+| `FAILED` (SL touched) | `FAILED` | "Did Not Play Out" | rose |
+| `NEUTRAL` + price moved expected direction (even +0.01%) | `SUCCESS` | "Played Out" | emerald |
+| `NEUTRAL` + price moved opposite direction | `FAILED` | "Did Not Play Out" | rose |
+
+The reclassification happens in `socialDisplayStatus()` in `template-shared.tsx`. The DB row keeps its true `NEUTRAL` status — `/admin/tracking` still shows the honest 3-way breakdown for accuracy stats. This rule only applies on the social-facing surface where binary outcomes read better than "NO CLEAR MOVEMENT".
 
 Each row links to `/admin/social/[id]?view=initial` if the status is `PENDING`, or `?view=outcome` otherwise (smart default — admin usually wants to see whatever's most relevant first).
 
@@ -192,7 +198,7 @@ Each row links to `/admin/social/[id]?view=initial` if the status is `PENDING`, 
   - Title: symbol + view name + "1080×1080" hint
 - Below toolbar: the template card itself, centered
 - For `view=outcome` when status is still `PENDING`: shows a waiting card with spinner and ETA
-- Polls every 30 seconds while pending
+- Polls every 5 seconds while pending (matches backend first-touch poll)
 
 ### Nav
 
@@ -260,7 +266,7 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 │                                                               │
 │                       SBIN                                    │  88px white
 │                                                               │
-│           ⏱  10:42 AM  →  10:52 AM  · 10 min later            │  trigger → eval timeline
+│           ⏱  10:42 AM  →  10:48 AM  ·  6 min later            │  trigger → lock-in (dynamic; varies by lock-in time)
 │                                                               │
 │        ╭───────────────────────────────────╮                 │
 │        │           ↑  +1.50                │                 │  128px mono (POINTS)
@@ -279,18 +285,23 @@ Camera icon (Lucide `Camera`) added next to the existing `TrendingUp` link in `a
 
 **Status pill variants** (`outcomeVerdict()` in `template-shared.tsx`):
 
-| Status | Pill text | Pill color | Big number color |
+| Display status | Pill text | Pill color | Big number color |
 |---|---|---|---|
 | `SUCCESS` | `PLAYED OUT AS SYSTEM OBSERVED` | emerald | emerald |
 | `FAILED` | `DID NOT PLAY OUT THIS TIME` | rose | rose |
 | `NEUTRAL` | `NO CLEAR MOVEMENT` | amber | amber |
 
-**Direction icon on the big number:**
-- Move > +0.05% → `ArrowUp`
-- Move < −0.05% → `ArrowDown`
-- Otherwise → `Minus`
+The **NEUTRAL** variant is still implemented (defensive fallback) but **never actually rendered** on the social-facing template — `OutcomeTemplate` runs the row through `socialDisplayStatus()` first, which collapses any `NEUTRAL` into `SUCCESS` or `FAILED` based on price direction. Backend DB row keeps its true `NEUTRAL` for accuracy stats.
 
-**Honest by default.** All three outcome states get fully designed templates. Cherry-picking only SUCCESS posts is what shady channels do — and is one of the things SEBI cites in enforcement orders. Showing losses publicly builds genuine trust.
+**Direction icon on the big number:**
+- Move ≥ 0 → `ArrowUp`
+- Move < 0 → `ArrowDown`
+
+(No `Minus` case — every signal is a win or a loss on social, even for tiny moves.)
+
+**Dynamic timeline duration:** the "X min later" text is computed live from `evaluatedAt - signalTime`, so a TP-touch at minute 3 reads "3 min later" while a NEUTRAL fallback reads "10 min later". Honest about how quickly the verdict resolved.
+
+**Honest by default.** All evaluated outcomes get fully designed templates and the loss case is rendered as prominently as the win. Cherry-picking only SUCCESS posts is what shady channels do — and is one of the things SEBI cites in enforcement orders. Showing losses publicly builds genuine trust.
 
 ---
 
@@ -344,9 +355,9 @@ This feature ships with the explicit understanding that **publicly posting scree
 | Area | Status |
 |---|---|
 | Existing `recordSignal()` dedup logic (NEUTRAL re-tracking, upgrade-only, 200/day cap, market hours, ₹50 floor, NO_CLEAR_EDGE skip) | UNCHANGED |
-| Existing `evaluate()` and `evaluateMarketClose()` logic | UNCHANGED |
-| `/admin/tracking` page and metrics | UNCHANGED |
-| `getMetrics`, `getRecentSignals`, `getTrackingMetricsFromDB`, `getTrackingSignalsFromDB` | UNCHANGED |
+| Existing `evaluate()` and `evaluateMarketClose()` logic | **UPDATED separately** in `fix(tracking): first-touch eval` — first-touch race against TP +0.5% / SL −0.3%, 5-sec poll. See `signal-tracking.md`. The social feature itself doesn't change eval logic; it just consumes the same row that the new evaluator writes |
+| `/admin/tracking` page and metrics | UNCHANGED by social feature; **separately updated** to include NEUTRAL in the accuracy denominator |
+| `getMetrics`, `getRecentSignals`, `getTrackingMetricsFromDB`, `getTrackingSignalsFromDB` | UNCHANGED by social feature; `getMetrics` / `getTrackingMetricsFromDB` got an additive `neutral` field on `byOutlook` in the eval-fix PR |
 | WS server, broadcast service, signal worker, intelligence transformer | UNCHANGED |
 | User-facing UI (dashboard, stock detail, watch zone, options) | UNCHANGED |
 | Auth middleware, admin guard | REUSED (no change) |
@@ -371,7 +382,7 @@ The new columns on `signal_tracking` are additive; existing reads keep working b
 |---|---|
 | `apps/web/src/app/admin/social/page.tsx` | NEW — list page with date picker |
 | `apps/web/src/app/admin/social/[id]/page.tsx` | NEW — template renderer with view toggle |
-| `apps/web/src/components/social/template-shared.tsx` | NEW — types, label helpers, frame, banner, disclaimer |
+| `apps/web/src/components/social/template-shared.tsx` | NEW — types, label helpers, frame, banner, disclaimer; later UPDATED to add `socialDisplayStatus()` (NEUTRAL → WIN/LOSS reclassifier, social-only) |
 | `apps/web/src/components/social/initial-template.tsx` | NEW — InitialTemplate component (1080×1080) |
 | `apps/web/src/components/social/outcome-template.tsx` | NEW — OutcomeTemplate component (1080×1080) |
 | `apps/web/src/components/global-nav.tsx` | UPDATE — Camera icon link to `/admin/social` for admin users |
