@@ -22,6 +22,7 @@ import { apiFetch } from "@/lib/api";
 interface OutlookMetric {
   total: number;
   wins: number;
+  neutral: number;
   rate: number;
 }
 
@@ -426,9 +427,11 @@ export function TrackingDashboard() {
                 const totals = buckets.reduce(
                   (acc, b) => {
                     const o = b.byOutlook[outlook];
-                    return o ? { total: acc.total + o.total, wins: acc.wins + o.wins } : acc;
+                    return o
+                      ? { total: acc.total + o.total, wins: acc.wins + o.wins, neutral: acc.neutral + (o.neutral ?? 0) }
+                      : acc;
                   },
-                  { total: 0, wins: 0 },
+                  { total: 0, wins: 0, neutral: 0 },
                 );
                 const rate = totals.total > 0 ? Math.round((totals.wins / totals.total) * 100) : 0;
 
@@ -436,7 +439,9 @@ export function TrackingDashboard() {
                   <div key={outlook} className="flex items-center justify-between text-xs">
                     <span className="text-zinc-600 dark:text-zinc-400">{OUTLOOK_LABEL[outlook] ?? outlook}</span>
                     <div className="flex items-center gap-3">
-                      <span className="text-zinc-500 tabular-nums">{totals.total} signals</span>
+                      <span className="text-zinc-500 tabular-nums">
+                        {totals.total} signals{totals.neutral > 0 ? ` · ${totals.neutral} N` : ""}
+                      </span>
                       <span className={`font-bold tabular-nums ${totals.total > 0 ? accuracyColor(rate) : "text-zinc-400"}`}>
                         {totals.total > 0 ? `${rate}%` : "—"}
                       </span>
