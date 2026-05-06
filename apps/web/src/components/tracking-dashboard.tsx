@@ -22,7 +22,6 @@ import { apiFetch } from "@/lib/api";
 interface OutlookMetric {
   total: number;
   wins: number;
-  neutral: number;
   rate: number;
 }
 
@@ -32,7 +31,6 @@ interface BucketData {
   pending: number;
   success: number;
   failed: number;
-  neutral: number;
   accuracy: number;
   avgGain: number;
   avgLoss: number;
@@ -110,6 +108,7 @@ const OUTLOOK_LABEL: Record<string, string> = {
 const STATUS_STYLE: Record<string, { bg: string; text: string; icon: typeof CheckCircle }> = {
   SUCCESS: { bg: "bg-emerald-500/10", text: "text-emerald-600 dark:text-emerald-400", icon: CheckCircle },
   FAILED: { bg: "bg-rose-500/10", text: "text-rose-600 dark:text-rose-400", icon: XCircle },
+  // NEUTRAL kept defensively for any historical row that bypasses the server reclassifier.
   NEUTRAL: { bg: "bg-zinc-200 dark:bg-zinc-800/60", text: "text-zinc-600 dark:text-zinc-400", icon: Minus },
   PENDING: { bg: "bg-amber-500/10", text: "text-amber-600 dark:text-amber-400", icon: Clock },
 };
@@ -171,9 +170,9 @@ export function TrackingDashboard() {
     }
     setLoading(true);
     fetchData();
-    // 5s polling matches the backend first-touch eval cadence — bucket counts
-    // and per-outlook accuracy refresh within seconds of new lock-ins.
-    const interval = isToday ? setInterval(fetchData, 5_000) : null;
+    // 30s polling matches the backend snapshot cadence — bucket counts and
+    // per-outlook accuracy refresh within ~one cycle of a new lock-in at minute 10.
+    const interval = isToday ? setInterval(fetchData, 30_000) : null;
 
     // Refetch the moment the tab becomes visible again — guards against
     // stale data when the user returns to the page.
@@ -255,7 +254,7 @@ export function TrackingDashboard() {
           Signal Tracking Analytics
         </h1>
         <p className="mt-1 text-xs text-zinc-500">
-          15-minute time-based evaluation · confidence buckets · {metrics?.date ?? "today"}
+          10-minute direction snapshot · confidence buckets · {metrics?.date ?? "today"}
         </p>
       </div>
 
@@ -264,7 +263,7 @@ export function TrackingDashboard() {
         {(["ULTRA_HIGH", "HIGH", "MEDIUM"] as const).map((bucketKey) => {
           const b: BucketData = (metrics?.buckets ?? []).find((x) => x.bucket === bucketKey) ?? {
             bucket: bucketKey,
-            total: 0, pending: 0, success: 0, failed: 0, neutral: 0,
+            total: 0, pending: 0, success: 0, failed: 0,
             accuracy: 0, avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0,
             expectancy: 0, riskReward: 0,
             sampleSufficient: false,
@@ -338,11 +337,10 @@ export function TrackingDashboard() {
                 </div>
               </div>
 
-              {/* Win/Loss/Neutral counts */}
+              {/* Win/Loss counts */}
               <div className="mt-3 flex items-center gap-3 text-[10px]">
                 <span className="text-emerald-600 dark:text-emerald-400">{b.success} W</span>
                 <span className="text-rose-600 dark:text-rose-400">{b.failed} L</span>
-                <span className="text-zinc-500">{b.neutral} N</span>
                 {b.pending > 0 && (
                   <span className="text-amber-600 dark:text-amber-400">{b.pending} P</span>
                 )}
@@ -371,11 +369,11 @@ export function TrackingDashboard() {
                 (acc, b) => ({
                   avgGain: acc.avgGain + b.avgGain * b.success,
                   avgLoss: acc.avgLoss + b.avgLoss * b.failed,
-                  avgMaxProfit: acc.avgMaxProfit + b.avgMaxProfit * (b.success + b.failed + b.neutral),
-                  avgMaxDrawdown: acc.avgMaxDrawdown + b.avgMaxDrawdown * (b.success + b.failed + b.neutral),
+                  avgMaxProfit: acc.avgMaxProfit + b.avgMaxProfit * (b.success + b.failed),
+                  avgMaxDrawdown: acc.avgMaxDrawdown + b.avgMaxDrawdown * (b.success + b.failed),
                   successCount: acc.successCount + b.success,
                   failedCount: acc.failedCount + b.failed,
-                  evalCount: acc.evalCount + b.success + b.failed + b.neutral,
+                  evalCount: acc.evalCount + b.success + b.failed,
                 }),
                 { avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0, successCount: 0, failedCount: 0, evalCount: 0 },
               );
@@ -430,10 +428,10 @@ export function TrackingDashboard() {
                   (acc, b) => {
                     const o = b.byOutlook[outlook];
                     return o
-                      ? { total: acc.total + o.total, wins: acc.wins + o.wins, neutral: acc.neutral + (o.neutral ?? 0) }
+                      ? { total: acc.total + o.total, wins: acc.wins + o.wins }
                       : acc;
                   },
-                  { total: 0, wins: 0, neutral: 0 },
+                  { total: 0, wins: 0 },
                 );
                 const rate = totals.total > 0 ? Math.round((totals.wins / totals.total) * 100) : 0;
 
@@ -442,7 +440,7 @@ export function TrackingDashboard() {
                     <span className="text-zinc-600 dark:text-zinc-400">{OUTLOOK_LABEL[outlook] ?? outlook}</span>
                     <div className="flex items-center gap-3">
                       <span className="text-zinc-500 tabular-nums">
-                        {totals.total} signals{totals.neutral > 0 ? ` · ${totals.neutral} N` : ""}
+                        {totals.total} signals
                       </span>
                       <span className={`font-bold tabular-nums ${totals.total > 0 ? accuracyColor(rate) : "text-zinc-400"}`}>
                         {totals.total > 0 ? `${rate}%` : "—"}
