@@ -23,60 +23,60 @@ export function InitialTemplate({ signal }: { signal: SocialSignal }) {
     <TemplateFrame>
       <BrandHeader />
 
-      {/* Hero — symbol + price */}
-      <div className="px-12 pt-12">
-        <div className="flex items-baseline justify-between gap-8">
-          <h1 className="text-[88px] font-extrabold tracking-tight text-white leading-none">
-            {signal.symbol}
-          </h1>
-          <span
-            className="text-[56px] font-bold text-slate-200 leading-none tracking-tight"
-            style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
-          >
-            {formatPrice(signal.priceAtSignal)}
-          </span>
+      {/* Content — vertically centered in the canvas space between header and disclaimer */}
+      <div className="flex-1 flex flex-col justify-center px-12 py-10">
+        {/* Hero — symbol + price */}
+        <div>
+          <div className="flex items-baseline justify-between gap-8">
+            <h1 className="text-[96px] font-extrabold tracking-tight text-white leading-none">
+              {signal.symbol}
+            </h1>
+            <span
+              className="text-[60px] font-bold text-slate-200 leading-none tracking-tight"
+              style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
+            >
+              {formatPrice(signal.priceAtSignal)}
+            </span>
+          </div>
+          <div className={`mt-6 h-[2px] w-full bg-gradient-to-r ${accentGrad}`} />
         </div>
-        <div className={`mt-5 h-[2px] w-full bg-gradient-to-r ${accentGrad}`} />
-      </div>
 
-      {/* Section: Market Snapshot */}
-      <div className="px-12 mt-10">
-        <SectionHeader>Market Snapshot</SectionHeader>
+        {/* Section: Market Snapshot */}
+        <div className="mt-12">
+          <SectionHeader>Market Snapshot</SectionHeader>
+          <div className="mt-7 space-y-6">
+            <Row label="Momentum">
+              <span className="text-white text-[28px] font-semibold">{momentumLabel(signal)}</span>
+              <DirArrow className={`size-7 ${accentText}`} strokeWidth={3} />
+            </Row>
+            <Row label="Pressure">
+              <span className="text-white text-[28px] font-semibold">{pressurePhrase(signal)}</span>
+            </Row>
+            <Row label="Volatility">
+              <span className="text-white text-[28px] font-semibold">{volatilityPhrase(signal.volatilityScore)}</span>
+            </Row>
+          </div>
+        </div>
 
-        <div className="mt-6 space-y-5">
-          <Row label="Momentum">
-            <span className="text-white text-[26px] font-semibold">{momentumLabel(signal)}</span>
-            <DirArrow className={`size-7 ${accentText}`} strokeWidth={3} />
-          </Row>
-          <Row label="Pressure">
-            <span className="text-white text-[26px] font-semibold">{pressurePhrase(signal)}</span>
-          </Row>
-          <Row label="Volatility">
-            <span className="text-white text-[26px] font-semibold">{volatilityPhrase(signal.volatilityScore)}</span>
-          </Row>
+        {/* Section: Context */}
+        <div className="mt-11">
+          <SectionHeader>Context</SectionHeader>
+          <p className="mt-4 text-slate-200 text-[30px] font-medium leading-snug">
+            {contextPhrase(signal.zone)}
+          </p>
+        </div>
+
+        {/* Section: System Insight */}
+        <div className="mt-10">
+          <SectionHeader>System Insight</SectionHeader>
+          <p className="mt-4 text-slate-200 text-[30px] font-medium leading-snug max-w-[880px]">
+            {systemInsight(signal)}
+          </p>
         </div>
       </div>
-
-      {/* Section: Context */}
-      <div className="px-12 mt-10">
-        <SectionHeader>Context</SectionHeader>
-        <p className="mt-4 text-slate-200 text-[28px] font-medium leading-snug">
-          {contextPhrase(signal.zone)}
-        </p>
-      </div>
-
-      {/* Section: System Insight */}
-      <div className="px-12 mt-9">
-        <SectionHeader>System Insight</SectionHeader>
-        <p className="mt-4 text-slate-200 text-[28px] font-medium leading-snug max-w-[860px]">
-          {systemInsight(signal)}
-        </p>
-      </div>
-
-      <div className="flex-1" />
 
       {/* Educational disclaimer — centered footer */}
-      <div className="px-12 pb-12 flex justify-center">
+      <div className="px-12 pb-10 flex justify-center">
         <div className="inline-flex items-center gap-3 px-5 py-3 rounded-full border border-amber-400/30 bg-amber-500/[0.06]">
           <span className="text-amber-400/90 text-[18px]">⚠️</span>
           <span className="text-amber-300/90 text-[15px] font-medium tracking-wide">

@@ -1,4 +1,4 @@
-import { Check, X } from "lucide-react";
+import { Check, Clock, X } from "lucide-react";
 import {
   type SocialSignal,
   TemplateFrame,
@@ -31,47 +31,55 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
     <TemplateFrame>
       <BrandHeader />
 
-      {/* Hero — symbol */}
-      <div className="px-12 pt-12">
-        <h1 className="text-[88px] font-extrabold tracking-tight text-white leading-none">
-          {signal.symbol}
-        </h1>
-        <div className={`mt-5 h-[2px] w-full bg-gradient-to-r ${accentGrad}`} />
-      </div>
+      {/* Content — vertically centered between header and disclaimer */}
+      <div className="flex-1 flex flex-col justify-center px-12 py-10">
+        {/* Hero — symbol + prominent "after X min" stamp */}
+        <div>
+          <div className="flex items-end justify-between gap-8">
+            <h1 className="text-[96px] font-extrabold tracking-tight text-white leading-none">
+              {signal.symbol}
+            </h1>
+            <div className={`inline-flex items-center gap-3 px-5 py-3 rounded-2xl border ${succeeded ? "border-emerald-400/40 bg-emerald-500/[0.08]" : "border-rose-400/40 bg-rose-500/[0.08]"}`}>
+              <Clock className={`size-7 ${accentText}`} strokeWidth={2.5} />
+              <div className="flex flex-col leading-tight">
+                <span className="text-slate-400 text-[12px] font-bold tracking-[0.3em] uppercase">
+                  After
+                </span>
+                <span className={`${accentText} text-[36px] font-extrabold leading-none mt-0.5`}
+                  style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
+                >
+                  {lockMinutes} min
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className={`mt-6 h-[2px] w-full bg-gradient-to-r ${accentGrad}`} />
+          <p className="mt-4 text-slate-400 text-[22px] font-medium tracking-wide">
+            Market Follow-up
+          </p>
+        </div>
 
-      {/* Follow-up label */}
-      <div className="px-12 mt-9">
-        <p className="text-slate-400 text-[22px] font-medium tracking-wide">
-          Market Follow-up
-          <span className="ml-3 text-slate-500 text-[20px]">
-            (after {lockMinutes} min)
-          </span>
-        </p>
-      </div>
+        {/* Section: Observed Behavior */}
+        <div className="mt-12">
+          <SectionHeader>Observed Behavior</SectionHeader>
+          <div className="mt-7 space-y-6">
+            {observations.map((obs, i) => (
+              <ObservationRow key={i} observation={obs} accentText={accentText} />
+            ))}
+          </div>
+        </div>
 
-      {/* Section: Observed Behavior */}
-      <div className="px-12 mt-10">
-        <SectionHeader>Observed Behavior</SectionHeader>
-
-        <div className="mt-7 space-y-5">
-          {observations.map((obs, i) => (
-            <ObservationRow key={i} observation={obs} accentText={accentText} />
-          ))}
+        {/* Section: Insight */}
+        <div className="mt-11">
+          <SectionHeader>Insight</SectionHeader>
+          <p className="mt-4 text-slate-200 text-[28px] font-medium leading-snug max-w-[920px]">
+            {outcomeInsight(signal)}
+          </p>
         </div>
       </div>
 
-      {/* Section: Insight */}
-      <div className="px-12 mt-11">
-        <SectionHeader>Insight</SectionHeader>
-        <p className="mt-4 text-slate-200 text-[26px] font-medium leading-snug max-w-[880px]">
-          {outcomeInsight(signal)}
-        </p>
-      </div>
-
-      <div className="flex-1" />
-
       {/* Disclaimer — centered footer */}
-      <div className="px-12 pb-12 flex justify-center">
+      <div className="px-12 pb-10 flex justify-center">
         <div className="inline-flex items-center gap-3 px-5 py-3 rounded-full border border-cyan-400/25 bg-cyan-500/[0.05]">
           <span className="text-cyan-400/90 text-[18px]">📊</span>
           <span className="text-cyan-200/85 text-[15px] font-medium tracking-wide">

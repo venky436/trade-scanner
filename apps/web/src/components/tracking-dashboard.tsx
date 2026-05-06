@@ -105,6 +105,18 @@ const OUTLOOK_LABEL: Record<string, string> = {
   BREAKDOWN_RISK: "Breakdown",
 };
 
+// Mirrors the backend reclassifyForMetrics() — folds historical NEUTRAL rows
+// into SUCCESS/FAILED by direction so the table stays consistent with the
+// pure-direction model. New rows arrive as SUCCESS/FAILED already.
+const BULLISH_OUTLOOKS = new Set(["BREAKOUT_LIKELY", "BOUNCE_EXPECTED"]);
+function displayStatus(s: Pick<SignalRecord, "status" | "outlook" | "changePercent">): string {
+  if (s.status !== "NEUTRAL") return s.status;
+  const change = Number(s.changePercent ?? 0);
+  const isBullish = BULLISH_OUTLOOKS.has(s.outlook);
+  if (isBullish) return change >= 0 ? "SUCCESS" : "FAILED";
+  return change <= 0 ? "SUCCESS" : "FAILED";
+}
+
 const STATUS_STYLE: Record<string, { bg: string; text: string; icon: typeof CheckCircle }> = {
   SUCCESS: { bg: "bg-emerald-500/10", text: "text-emerald-600 dark:text-emerald-400", icon: CheckCircle },
   FAILED: { bg: "bg-rose-500/10", text: "text-rose-600 dark:text-rose-400", icon: XCircle },
@@ -498,7 +510,8 @@ export function TrackingDashboard() {
               </thead>
               <tbody>
                 {filteredSignals.map((s) => {
-                  const statusStyle = STATUS_STYLE[s.status] ?? STATUS_STYLE.PENDING;
+                  const shownStatus = displayStatus(s);
+                  const statusStyle = STATUS_STYLE[shownStatus] ?? STATUS_STYLE.PENDING;
                   const StatusIcon = statusStyle.icon;
                   const change = s.changePercent ? Number(s.changePercent) : null;
                   const maxProfit = s.maxProfitPercent ? Number(s.maxProfitPercent) : null;
@@ -544,7 +557,7 @@ export function TrackingDashboard() {
                       <td className="py-2">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusStyle.bg} ${statusStyle.text}`}>
                           <StatusIcon className="size-3" />
-                          {s.status}
+                          {shownStatus}
                         </span>
                       </td>
                     </tr>
