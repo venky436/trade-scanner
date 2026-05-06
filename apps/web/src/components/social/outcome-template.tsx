@@ -1,154 +1,113 @@
-import { ArrowUp, ArrowDown, Minus, Check, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import {
   type SocialSignal,
   TemplateFrame,
-  EducationalBanner,
-  DisclaimerFooter,
-  formatSigned,
-  formatTimeIST,
-  formatDateIST,
-  formatPrice,
-  outcomeVerdict,
+  BrandHeader,
+  observedBehavior,
+  outcomeInsight,
   socialDisplayStatus,
 } from "./template-shared";
 
 export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
-  // Social rule: every evaluated signal renders as WIN or LOSS — direction wins,
-  // even for tiny moves (0.05% counts). NEUTRAL never shows on the template.
-  const verdict = outcomeVerdict(socialDisplayStatus(signal));
-  const points = Number(signal.changePoints ?? 0);
-  // No Minus case — every signal is win or loss on social, even for tiny moves.
-  const DirectionIcon = points >= 0 ? ArrowUp : ArrowDown;
-  const VerdictIcon = verdict.iconKind === "check" ? Check : verdict.iconKind === "x" ? X : Minus;
+  // socialDisplayStatus collapses any historical NEUTRAL into SUCCESS/FAILED;
+  // new rows already arrive as SUCCESS/FAILED from the server.
+  const succeeded = socialDisplayStatus(signal) === "SUCCESS";
+  const accentText = succeeded ? "text-emerald-400" : "text-rose-400";
+  const accentGrad = succeeded
+    ? "from-emerald-400/0 via-emerald-400/60 to-emerald-400/0"
+    : "from-rose-400/0 via-rose-400/60 to-rose-400/0";
 
-  const triggerTime = formatTimeIST(signal.signalTime);
-  const evalTime = formatTimeIST(signal.evaluatedAt);
-  // First-touch eval locks the verdict the moment price crosses TP or SL —
-  // most signals lock in 1-9 min, not always at 10. Show the actual elapsed
-  // duration so the timeline stays honest.
+  // Lock-in is at minute 10 with the direction-snapshot model. Compute live so
+  // historical rows (locked at variable time under prior models) still read right.
   const lockMinutes = signal.evaluatedAt
-    ? Math.max(1, Math.round((new Date(signal.evaluatedAt).getTime() - new Date(signal.signalTime).getTime()) / 60_000))
+    ? Math.max(1, Math.round(
+        (new Date(signal.evaluatedAt).getTime() - new Date(signal.signalTime).getTime()) / 60_000,
+      ))
     : 10;
+
+  const observations = observedBehavior(signal);
 
   return (
     <TemplateFrame>
-      <EducationalBanner timestamp={evalTime} dateText={formatDateIST(signal.signalTime)} />
+      <BrandHeader />
 
-      {/* Symbol */}
-      <div className="flex flex-col items-center pt-10 pb-4">
+      {/* Hero — symbol */}
+      <div className="px-12 pt-12">
         <h1 className="text-[88px] font-extrabold tracking-tight text-white leading-none">
           {signal.symbol}
         </h1>
+        <div className={`mt-5 h-[2px] w-full bg-gradient-to-r ${accentGrad}`} />
       </div>
 
-      {/* Entry → Exit price card. Left/right symmetry mirrors the trade arc.
-          Center column carries the arrow + duration; clean read top-to-bottom. */}
-      <div className="px-16 mt-2">
-        <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-700/40 rounded-2xl py-8 px-10">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-6">
-            <PriceColumn label="ENTRY" price={signal.priceAtSignal} time={triggerTime} />
-            <div className="flex flex-col items-center gap-2">
-              <ChevronArrowRight />
-              <span className="text-slate-500 text-[11px] tracking-[0.3em] uppercase font-semibold">
-                {lockMinutes} min
-              </span>
-            </div>
-            <PriceColumn label="EXIT" price={signal.priceAfter} time={evalTime} alignRight />
-          </div>
-        </div>
-      </div>
-
-      {/* Big movement card — points moved + % subtitle */}
-      <div className="px-16 mt-5">
-        <div
-          className={`bg-gradient-to-br from-slate-900/80 to-slate-900/40 backdrop-blur-xl border border-slate-700/50 rounded-3xl py-9 px-10 flex flex-col items-center ${verdict.bigGlow}`}
-        >
-          <div className="flex items-center gap-5">
-            <DirectionIcon className={`size-12 ${verdict.bigNumberColor}`} strokeWidth={3} />
-            <span
-              className={`text-[112px] font-extrabold leading-none ${verdict.bigNumberColor}`}
-              style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
-            >
-              {formatSigned(signal.changePoints, "")}
-            </span>
-          </div>
-          <p className="mt-4 text-slate-400 text-[15px] font-semibold tracking-[0.4em]">
-            POINTS MOVED
-          </p>
-          <p className="mt-1.5 text-slate-500 text-[14px] tracking-wide">
-            {formatSigned(signal.changePercent)}
-          </p>
-        </div>
-      </div>
-
-      {/* Status pill */}
-      <div className="flex justify-center mt-7">
-        <div
-          className={`inline-flex items-center gap-3.5 px-8 py-4 rounded-full border ${verdict.pillBg} ${verdict.pillBorder}`}
-        >
-          <VerdictIcon className={`size-5 ${verdict.pillIconColor}`} strokeWidth={3} />
-          <span className={`text-[18px] font-bold tracking-[0.25em] ${verdict.pillText}`}>
-            {verdict.text}
+      {/* Follow-up label */}
+      <div className="px-12 mt-9">
+        <p className="text-slate-400 text-[22px] font-medium tracking-wide">
+          Market Follow-up
+          <span className="ml-3 text-slate-500 text-[20px]">
+            (after {lockMinutes} min)
           </span>
+        </p>
+      </div>
+
+      {/* Section: Observed Behavior */}
+      <div className="px-12 mt-10">
+        <SectionHeader>Observed Behavior</SectionHeader>
+
+        <div className="mt-7 space-y-5">
+          {observations.map((obs, i) => (
+            <ObservationRow key={i} observation={obs} accentText={accentText} />
+          ))}
         </div>
+      </div>
+
+      {/* Section: Insight */}
+      <div className="px-12 mt-11">
+        <SectionHeader>Insight</SectionHeader>
+        <p className="mt-4 text-slate-200 text-[26px] font-medium leading-snug max-w-[880px]">
+          {outcomeInsight(signal)}
+        </p>
       </div>
 
       <div className="flex-1" />
 
-      <DisclaimerFooter />
+      {/* Disclaimer — centered footer */}
+      <div className="px-12 pb-12 flex justify-center">
+        <div className="inline-flex items-center gap-3 px-5 py-3 rounded-full border border-cyan-400/25 bg-cyan-500/[0.05]">
+          <span className="text-cyan-400/90 text-[18px]">📊</span>
+          <span className="text-cyan-200/85 text-[15px] font-medium tracking-wide">
+            This illustrates market behavior
+          </span>
+        </div>
+      </div>
     </TemplateFrame>
   );
 }
 
-// Single price column inside the entry→exit card. alignRight flips horizontal
-// alignment so the entry sits left-aligned (towards center arrow) and exit
-// right-aligned (also towards center arrow) — the two prices visually point at
-// each other across the arrow.
-function PriceColumn({
-  label,
-  price,
-  time,
-  alignRight = false,
-}: {
-  label: string;
-  price: string | null;
-  time: string;
-  alignRight?: boolean;
-}) {
-  const itemAlign = alignRight ? "items-end" : "items-start";
+function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`flex flex-col ${itemAlign}`}>
-      <span className="text-slate-500 text-[12px] font-semibold tracking-[0.35em] uppercase">
-        {label}
+    <div className="flex items-center gap-4">
+      <span className="text-slate-500 text-[13px] font-bold tracking-[0.4em] uppercase">
+        {children}
       </span>
-      <span
-        className="mt-2 text-white text-[36px] font-extrabold leading-none"
-        style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
-      >
-        {formatPrice(price)}
-      </span>
-      <span className="mt-2 text-slate-400 text-[13px] font-mono tracking-wide">
-        {time}
-      </span>
+      <div className="flex-1 h-px bg-slate-800/80" />
     </div>
   );
 }
 
-function ChevronArrowRight() {
+function ObservationRow({
+  observation,
+  accentText,
+}: {
+  observation: { ok: boolean; text: string };
+  accentText: string;
+}) {
+  const Icon = observation.ok ? Check : X;
   return (
-    <svg
-      width="36"
-      height="36"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="text-slate-500"
-    >
-      <path d="M5 12h14" />
-      <path d="m13 6 6 6-6 6" />
-    </svg>
+    <div className="flex items-center gap-5">
+      <div className={`flex items-center justify-center size-10 rounded-full border ${observation.ok ? "border-emerald-400/30 bg-emerald-500/10" : "border-rose-400/30 bg-rose-500/10"}`}>
+        <Icon className={`size-5 ${accentText}`} strokeWidth={3} />
+      </div>
+      <span className="text-white text-[26px] font-medium">{observation.text}</span>
+    </div>
   );
 }

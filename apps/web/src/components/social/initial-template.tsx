@@ -1,150 +1,110 @@
-import { MapPin, TrendingUp, TrendingDown, Activity, Waves, Diamond, ArrowUp, ArrowDown, Minus } from "lucide-react";
+import { ArrowUp, ArrowDown } from "lucide-react";
 import {
   type SocialSignal,
   TemplateFrame,
-  EducationalBanner,
-  DisclaimerFooter,
-  zoneLabel,
+  BrandHeader,
   momentumLabel,
-  pressureLabel,
-  volatilityLabel,
-  alignmentLabel,
-  alignmentDots,
+  pressurePhrase,
+  volatilityPhrase,
+  contextPhrase,
+  systemInsight,
   getDirection,
-  directionAccent,
-  formatTimeIST,
-  formatDateIST,
   formatPrice,
 } from "./template-shared";
 
-interface FactorRow {
-  icon: React.ComponentType<{ className?: string; size?: number }>;
-  iconColor: string;
-  iconBg: string;
-  label: string;
-  value: string;
-}
-
 export function InitialTemplate({ signal }: { signal: SocialSignal }) {
   const direction = getDirection(signal);
-  const accent = directionAccent(direction);
-  const isBullish = direction === "BULLISH";
   const isBearish = direction === "BEARISH";
-
-  const DirArrow = accent.arrowKind === "up" ? ArrowUp : accent.arrowKind === "down" ? ArrowDown : Minus;
-  const momentumIcon = isBearish ? TrendingDown : TrendingUp;
-
-  const factors: FactorRow[] = [
-    {
-      icon: MapPin,
-      iconColor: "text-cyan-300",
-      iconBg: "bg-cyan-500/15 border-cyan-400/25",
-      label: "ZONE",
-      value: zoneLabel(signal.zone),
-    },
-    {
-      icon: momentumIcon,
-      iconColor: isBullish ? "text-emerald-300" : isBearish ? "text-rose-300" : "text-amber-300",
-      iconBg: isBullish ? "bg-emerald-500/15 border-emerald-400/25" : isBearish ? "bg-rose-500/15 border-rose-400/25" : "bg-amber-500/15 border-amber-400/25",
-      label: "MOMENTUM",
-      value: momentumLabel(signal),
-    },
-    {
-      icon: Activity,
-      iconColor: isBullish ? "text-emerald-300" : isBearish ? "text-rose-300" : "text-violet-300",
-      iconBg: isBullish ? "bg-emerald-500/15 border-emerald-400/25" : isBearish ? "bg-rose-500/15 border-rose-400/25" : "bg-violet-500/15 border-violet-400/25",
-      label: "PRESSURE",
-      value: pressureLabel(signal),
-    },
-    {
-      icon: Waves,
-      iconColor: "text-amber-300",
-      iconBg: "bg-amber-500/15 border-amber-400/25",
-      label: "VOLATILITY",
-      value: volatilityLabel(signal.volatilityScore),
-    },
-  ];
-
-  const alignment = alignmentLabel(signal.confidence);
-  const dots = alignmentDots(signal.confidence);
+  const accentText = isBearish ? "text-rose-400" : "text-emerald-400";
+  const accentGrad = isBearish ? "from-rose-400/0 via-rose-400/60 to-rose-400/0" : "from-emerald-400/0 via-emerald-400/60 to-emerald-400/0";
+  const DirArrow = isBearish ? ArrowDown : ArrowUp;
 
   return (
     <TemplateFrame>
-      <EducationalBanner timestamp={formatTimeIST(signal.signalTime)} dateText={formatDateIST(signal.signalTime)} />
+      <BrandHeader />
 
-      {/* Hero — direction chip + symbol */}
-      <div className="flex flex-col items-center pt-12 pb-8">
-        <div className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-full border ${accent.pillBg} ${accent.pillBorder} mb-6`}>
-          <DirArrow className={`size-5 ${accent.text}`} strokeWidth={3} />
-          <span className={`text-[12px] font-bold tracking-[0.35em] ${accent.text}`}>
-            {accent.arrowLabel}
+      {/* Hero — symbol + price */}
+      <div className="px-12 pt-12">
+        <div className="flex items-baseline justify-between gap-8">
+          <h1 className="text-[88px] font-extrabold tracking-tight text-white leading-none">
+            {signal.symbol}
+          </h1>
+          <span
+            className="text-[56px] font-bold text-slate-200 leading-none tracking-tight"
+            style={{ fontFamily: "var(--font-geist-mono, ui-monospace, monospace)" }}
+          >
+            {formatPrice(signal.priceAtSignal)}
           </span>
         </div>
-        <h1 className="text-[112px] font-extrabold tracking-tight text-white leading-none">
-          {signal.symbol}
-        </h1>
-        <div className={`mt-5 h-[5px] w-28 rounded-full bg-gradient-to-r ${accent.grad}`} />
-        <p className="mt-4 text-[28px] font-bold text-slate-200 font-mono tracking-tight">
-          {formatPrice(signal.priceAtSignal)}
-        </p>
-        <p className="mt-3 text-[22px] font-medium text-slate-400 tracking-wide">
-          Market Behavior Snapshot
-        </p>
+        <div className={`mt-5 h-[2px] w-full bg-gradient-to-r ${accentGrad}`} />
       </div>
 
-      {/* Factor card */}
-      <div className="px-16 mt-2">
-        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-700/50 rounded-3xl px-10 py-6 shadow-2xl shadow-black/40">
-          {factors.map((f, i) => {
-            const Icon = f.icon;
-            return (
-              <div
-                key={f.label}
-                className={`flex items-center justify-between py-4 ${
-                  i < factors.length - 1 ? "border-b border-slate-800/70" : ""
-                }`}
-              >
-                <div className="flex items-center gap-5">
-                  <div className={`flex items-center justify-center size-12 rounded-xl border ${f.iconBg}`}>
-                    <Icon className={`size-6 ${f.iconColor}`} />
-                  </div>
-                  <span className="text-slate-400 text-[13px] font-semibold tracking-[0.3em] uppercase">
-                    {f.label}
-                  </span>
-                </div>
-                <span className="text-white text-[26px] font-semibold">{f.value}</span>
-              </div>
-            );
-          })}
+      {/* Section: Market Snapshot */}
+      <div className="px-12 mt-10">
+        <SectionHeader>Market Snapshot</SectionHeader>
+
+        <div className="mt-6 space-y-5">
+          <Row label="Momentum">
+            <span className="text-white text-[26px] font-semibold">{momentumLabel(signal)}</span>
+            <DirArrow className={`size-7 ${accentText}`} strokeWidth={3} />
+          </Row>
+          <Row label="Pressure">
+            <span className="text-white text-[26px] font-semibold">{pressurePhrase(signal)}</span>
+          </Row>
+          <Row label="Volatility">
+            <span className="text-white text-[26px] font-semibold">{volatilityPhrase(signal.volatilityScore)}</span>
+          </Row>
         </div>
       </div>
 
-      {/* Alignment pill with confidence dots */}
-      <div className="flex justify-center mt-8">
-        <div
-          className={`inline-flex items-center gap-5 px-9 py-5 rounded-full border bg-gradient-to-r from-cyan-500/15 via-violet-500/15 to-cyan-500/15 border-cyan-400/30 ${accent.glow}`}
-        >
-          <Diamond className="size-5 text-cyan-400 fill-cyan-400/30" />
-          <span className="text-white text-[20px] font-bold tracking-[0.3em]">
-            FACTOR ALIGNMENT · {alignment}
-          </span>
-          <div className="flex items-center gap-1.5 ml-1">
-            {[1, 2, 3].map((d) => (
-              <div
-                key={d}
-                className={`size-2.5 rounded-full ${
-                  d <= dots ? "bg-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.6)]" : "bg-slate-700"
-                }`}
-              />
-            ))}
-          </div>
-        </div>
+      {/* Section: Context */}
+      <div className="px-12 mt-10">
+        <SectionHeader>Context</SectionHeader>
+        <p className="mt-4 text-slate-200 text-[28px] font-medium leading-snug">
+          {contextPhrase(signal.zone)}
+        </p>
       </div>
 
-      {/* Spacer */}
+      {/* Section: System Insight */}
+      <div className="px-12 mt-9">
+        <SectionHeader>System Insight</SectionHeader>
+        <p className="mt-4 text-slate-200 text-[28px] font-medium leading-snug max-w-[860px]">
+          {systemInsight(signal)}
+        </p>
+      </div>
+
       <div className="flex-1" />
 
-      <DisclaimerFooter />
+      {/* Educational disclaimer — centered footer */}
+      <div className="px-12 pb-12 flex justify-center">
+        <div className="inline-flex items-center gap-3 px-5 py-3 rounded-full border border-amber-400/30 bg-amber-500/[0.06]">
+          <span className="text-amber-400/90 text-[18px]">⚠️</span>
+          <span className="text-amber-300/90 text-[15px] font-medium tracking-wide">
+            For educational purposes only
+          </span>
+        </div>
+      </div>
     </TemplateFrame>
+  );
+}
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-4">
+      <span className="text-slate-500 text-[13px] font-bold tracking-[0.4em] uppercase">
+        {children}
+      </span>
+      <div className="flex-1 h-px bg-slate-800/80" />
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[160px_24px_1fr] items-center gap-4">
+      <span className="text-slate-400 text-[20px] font-medium tracking-wide">{label}</span>
+      <span className="text-slate-600 text-[24px] font-light">→</span>
+      <div className="flex items-center gap-3">{children}</div>
+    </div>
   );
 }

@@ -6,15 +6,12 @@ import { getMarketPhase } from "../lib/market-phase.js";
 import type { IntelligenceSnapshot } from "../lib/types.js";
 
 const MAX_DAILY_SIGNALS = 200;
-// First-touch eval: poll every 5s within the 10-min window. The moment price
-// crosses TP or SL we lock the verdict — matches what a real trader would see.
-// Old behavior was a single snapshot at minute 10, which mis-classified ~50% of
-// trades that hit target then mean-reverted. See plan
-// glimmering-meandering-star.md for data + rationale.
-const EVAL_INTERVAL_MS = 5_000;
+// Pure direction snapshot at minute 10. No TP/SL threshold race, no NEUTRAL —
+// every tracked signal is forced into SUCCESS or FAILED based on price direction
+// at the snapshot moment. Any movement matching the outlook direction (even
+// 0.01%) is a win; any opposite movement is a loss.
+const EVAL_INTERVAL_MS = 30_000;
 const EVAL_WINDOW_MS = 10 * 60_000;
-const TP_PERCENT = 0.5; // take-profit %, applied per outlook direction
-const SL_PERCENT = 0.5; // stop-loss %, applied per outlook direction (symmetric ±0.5% — R:R 1×)
 
 // Social-template eligibility: confidence ≥ 0.75. Volatility filter dropped —
 // surfaces more signals so /admin/social has steady content even on calm days.
@@ -30,6 +27,20 @@ const MIN_SAMPLES: Record<ConfidenceBucket, number> = {
 };
 
 const BUY_SIDE_OUTLOOKS = new Set(["BREAKOUT_LIKELY", "BOUNCE_EXPECTED"]);
+
+// Past NEUTRAL rows (pre-direction-snapshot deploy) get folded into W/L at
+// metric-compute time so historical dashboards stay consistent with the new
+// pure-direction model. New rows are always written as SUCCESS or FAILED.
+function reclassifyForMetrics(r: { status: string; outlook: string; changePercent: string | null }): "SUCCESS" | "FAILED" | "PENDING" {
+  if (r.status === "PENDING") return "PENDING";
+  if (r.status === "SUCCESS") return "SUCCESS";
+  if (r.status === "FAILED") return "FAILED";
+  // Historical NEUTRAL — reclassify by stored direction.
+  const change = Number(r.changePercent ?? 0);
+  const isBullish = BUY_SIDE_OUTLOOKS.has(r.outlook);
+  if (isBullish) return change >= 0 ? "SUCCESS" : "FAILED";
+  return change <= 0 ? "SUCCESS" : "FAILED";
+}
 
 interface ActiveTracking {
   symbol: string;
@@ -172,34 +183,30 @@ export function createSignalTrackingService() {
     const now = Date.now();
     const toLock: Array<{
       sig: ActiveTracking;
-      status: TrackingStatus;
+      status: "SUCCESS" | "FAILED";
       quote: { lastPrice: number; high: number; low: number };
     }> = [];
 
-    // First-touch race: every poll, check each PENDING signal against TP/SL.
-    // If neither crossed and 10-min window elapsed → NEUTRAL. Otherwise leave PENDING.
+    // Pure direction snapshot at minute 10. Wait the full window, then compare
+    // current price to entry — any matching-direction movement (even 0.01%) is
+    // a win, any opposite movement is a loss. Flat counts as a win (defensive
+    // tiebreaker; near-impossible at intraday paise resolution).
     for (const sig of activeMap.values()) {
+      if (now < sig.recordedAt + EVAL_WINDOW_MS) continue;
+
       const quote = marketDataService.getQuote(sig.symbol);
       if (!quote || quote.lastPrice <= 0) continue;
 
       const changePercent = ((quote.lastPrice - sig.entryPrice) / sig.entryPrice) * 100;
 
-      let status: TrackingStatus | null = null;
+      let status: "SUCCESS" | "FAILED";
       if (sig.isBuySide) {
-        if (changePercent >= TP_PERCENT) status = "SUCCESS";
-        else if (changePercent <= -SL_PERCENT) status = "FAILED";
+        status = changePercent >= 0 ? "SUCCESS" : "FAILED";
       } else {
-        if (changePercent <= -TP_PERCENT) status = "SUCCESS";
-        else if (changePercent >= SL_PERCENT) status = "FAILED";
+        status = changePercent <= 0 ? "SUCCESS" : "FAILED";
       }
 
-      if (status === null && now >= sig.recordedAt + EVAL_WINDOW_MS) {
-        status = "NEUTRAL";
-      }
-
-      if (status !== null) {
-        toLock.push({ sig, status, quote });
-      }
+      toLock.push({ sig, status, quote });
     }
 
     if (toLock.length === 0) return;
@@ -229,13 +236,6 @@ export function createSignalTrackingService() {
 
         activeMap.delete(sig.symbol);
 
-        // NEUTRAL outcomes free the stock for re-tracking same day. Same-bucket guard:
-        // only clear if THIS signal still owns the dedup slot — protects an active
-        // upgrade (e.g. MEDIUM tracked → HIGH tracked → MEDIUM evaluates NEUTRAL).
-        if (status === "NEUTRAL" && trackedToday.get(sig.symbol) === sig.confidenceBucket) {
-          trackedToday.delete(sig.symbol);
-        }
-
         const lockSec = Math.round((now - sig.recordedAt) / 1000);
         console.log(`[Tracking] ${status}: ${sig.symbol} change=${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}% lock=${lockSec}s [${activeMap.size} active]`);
       } catch (err: any) {
@@ -261,11 +261,13 @@ export function createSignalTrackingService() {
       const maxProfitPercent = ((maxPrice - sig.entryPrice) / sig.entryPrice) * 100;
       const maxDrawdownPercent = ((minPrice - sig.entryPrice) / sig.entryPrice) * 100;
 
-      let status: TrackingStatus;
+      // Force-resolve all PENDING signals at close — even ones that haven't
+      // reached minute 10. Same direction logic as evaluate(); never NEUTRAL.
+      let status: "SUCCESS" | "FAILED";
       if (sig.isBuySide) {
-        status = changePercent >= TP_PERCENT ? "SUCCESS" : changePercent <= -SL_PERCENT ? "FAILED" : "NEUTRAL";
+        status = changePercent >= 0 ? "SUCCESS" : "FAILED";
       } else {
-        status = changePercent <= -TP_PERCENT ? "SUCCESS" : changePercent >= SL_PERCENT ? "FAILED" : "NEUTRAL";
+        status = changePercent <= 0 ? "SUCCESS" : "FAILED";
       }
 
       try {
@@ -281,9 +283,6 @@ export function createSignalTrackingService() {
           evaluatedAt: new Date(),
         }).where(eq(signalTracking.id, sig.dbId));
         activeMap.delete(sig.symbol);
-        if (status === "NEUTRAL" && trackedToday.get(sig.symbol) === sig.confidenceBucket) {
-          trackedToday.delete(sig.symbol);
-        }
       } catch (err: any) {
         console.warn(`[Tracking] Market close eval failed for ${sig.symbol}:`, err.message);
       }
@@ -311,18 +310,14 @@ export function createSignalTrackingService() {
 
       for (const bucket of buckets) {
         const bucketRecords = records.filter((r) => r.confidenceBucket === bucket);
-        const evaluated = bucketRecords.filter((r) => r.status !== "PENDING");
-        const success = evaluated.filter((r) => r.status === "SUCCESS");
-        const failed = evaluated.filter((r) => r.status === "FAILED");
-        const neutral = evaluated.filter((r) => r.status === "NEUTRAL");
-        const pending = bucketRecords.filter((r) => r.status === "PENDING");
+        // reclassifyForMetrics folds historical NEUTRAL rows into W/L by direction.
+        const success = bucketRecords.filter((r) => reclassifyForMetrics(r) === "SUCCESS");
+        const failed = bucketRecords.filter((r) => reclassifyForMetrics(r) === "FAILED");
+        const pending = bucketRecords.filter((r) => reclassifyForMetrics(r) === "PENDING");
+        const evaluated = [...success, ...failed];
 
         const decided = success.length + failed.length;
-        // Accuracy includes NEUTRAL in the denominator: a signal that didn't move
-        // is a miss from the trader's perspective, even if it didn't fail outright.
-        // winRate/lossRate stay W/(W+L) since they're inputs to expectancy/R:R.
-        const totalEvaluated = decided + neutral.length;
-        const accuracy = totalEvaluated > 0 ? Math.round((success.length / totalEvaluated) * 100) : 0;
+        const accuracy = decided > 0 ? Math.round((success.length / decided) * 100) : 0;
         const winRate = decided > 0 ? success.length / decided : 0;
         const lossRate = decided > 0 ? failed.length / decided : 0;
 
@@ -342,15 +337,13 @@ export function createSignalTrackingService() {
         const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
 
         const outlooks = ["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"];
-        const byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }> = {};
+        const byOutlook: Record<string, { total: number; wins: number; rate: number }> = {};
         for (const outlook of outlooks) {
           const outlookEvaluated = evaluated.filter((r) => r.outlook === outlook);
-          const outlookWins = outlookEvaluated.filter((r) => r.status === "SUCCESS").length;
-          const outlookNeutral = outlookEvaluated.filter((r) => r.status === "NEUTRAL").length;
+          const outlookWins = outlookEvaluated.filter((r) => reclassifyForMetrics(r) === "SUCCESS").length;
           byOutlook[outlook] = {
             total: outlookEvaluated.length,
             wins: outlookWins,
-            neutral: outlookNeutral,
             rate: outlookEvaluated.length > 0 ? Math.round((outlookWins / outlookEvaluated.length) * 100) : 0,
           };
         }
@@ -361,7 +354,6 @@ export function createSignalTrackingService() {
           pending: pending.length,
           success: success.length,
           failed: failed.length,
-          neutral: neutral.length,
           accuracy,
           avgGain: Math.round(avgGain * 100) / 100,
           avgLoss: Math.round(avgLoss * 100) / 100,
@@ -464,7 +456,7 @@ export function createSignalTrackingService() {
       evalTimer.unref();
       closeTimer = setInterval(evaluateMarketClose, 5 * 60_000);
       closeTimer.unref();
-      console.log(`[Tracking] Started — first-touch eval (TP +${TP_PERCENT}% / SL -${SL_PERCENT}%, ${EVAL_INTERVAL_MS / 1000}s poll, ${EVAL_WINDOW_MS / 60_000}-min window)`);
+      console.log(`[Tracking] Started — direction snapshot at minute ${EVAL_WINDOW_MS / 60_000} (${EVAL_INTERVAL_MS / 1000}s poll)`);
     },
 
     stop() {
@@ -506,16 +498,14 @@ export async function getTrackingMetricsFromDB(date?: Date) {
 
     for (const bucket of buckets) {
       const bucketRecords = records.filter((r) => r.confidenceBucket === bucket);
-      const evaluated = bucketRecords.filter((r) => r.status !== "PENDING");
-      const success = evaluated.filter((r) => r.status === "SUCCESS");
-      const failed = evaluated.filter((r) => r.status === "FAILED");
-      const neutral = evaluated.filter((r) => r.status === "NEUTRAL");
-      const pending = bucketRecords.filter((r) => r.status === "PENDING");
+      // See note on the equivalent block in getMetrics.
+      const success = bucketRecords.filter((r) => reclassifyForMetrics(r) === "SUCCESS");
+      const failed = bucketRecords.filter((r) => reclassifyForMetrics(r) === "FAILED");
+      const pending = bucketRecords.filter((r) => reclassifyForMetrics(r) === "PENDING");
+      const evaluated = [...success, ...failed];
 
       const decided = success.length + failed.length;
-      // See note on the equivalent block in getMetrics.
-      const totalEvaluated = decided + neutral.length;
-      const accuracy = totalEvaluated > 0 ? Math.round((success.length / totalEvaluated) * 100) : 0;
+      const accuracy = decided > 0 ? Math.round((success.length / decided) * 100) : 0;
       const winRate = decided > 0 ? success.length / decided : 0;
       const lossRate = decided > 0 ? failed.length / decided : 0;
 
@@ -533,15 +523,13 @@ export async function getTrackingMetricsFromDB(date?: Date) {
       const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
 
       const outlooks = ["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"];
-      const byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }> = {};
+      const byOutlook: Record<string, { total: number; wins: number; rate: number }> = {};
       for (const outlook of outlooks) {
         const outlookEvaluated = evaluated.filter((r) => r.outlook === outlook);
-        const outlookWins = outlookEvaluated.filter((r) => r.status === "SUCCESS").length;
-        const outlookNeutral = outlookEvaluated.filter((r) => r.status === "NEUTRAL").length;
+        const outlookWins = outlookEvaluated.filter((r) => reclassifyForMetrics(r) === "SUCCESS").length;
         byOutlook[outlook] = {
           total: outlookEvaluated.length,
           wins: outlookWins,
-          neutral: outlookNeutral,
           rate: outlookEvaluated.length > 0 ? Math.round((outlookWins / outlookEvaluated.length) * 100) : 0,
         };
       }
@@ -552,7 +540,6 @@ export async function getTrackingMetricsFromDB(date?: Date) {
         pending: pending.length,
         success: success.length,
         failed: failed.length,
-        neutral: neutral.length,
         accuracy,
         avgGain: Math.round(avgGain * 100) / 100,
         avgLoss: Math.round(avgLoss * 100) / 100,

@@ -87,9 +87,9 @@ export default function SocialListPage() {
       }
     }
     fetchData();
-    // 5s polling matches the backend first-touch eval cadence — outcomes flip
-    // (Pending → Played Out / Did Not Play Out) within seconds of the lock-in.
-    const interval = isToday ? setInterval(fetchData, 5_000) : null;
+    // 30s polling matches the backend snapshot cadence — outcomes flip
+    // (Pending → Played Out / Did Not Play Out) within ~one cycle of lock-in.
+    const interval = isToday ? setInterval(fetchData, 30_000) : null;
 
     // Refetch when the tab becomes visible again — guards against stale data.
     function handleVisibility() {

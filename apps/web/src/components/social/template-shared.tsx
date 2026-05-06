@@ -61,11 +61,48 @@ export function pressureLabel(signal: Pick<SocialSignal, "bias" | "confidence">)
   return "Mixed";
 }
 
+// Sentence-form pressure phrasing for the new template layout.
+// e.g. "Buying pressure forming" — reads as a one-liner observation.
+export function pressurePhrase(signal: Pick<SocialSignal, "bias" | "confidence">): string {
+  const conf = Number(signal.confidence);
+  if (signal.bias === "BULLISH") return conf >= 0.9 ? "Strong buying pressure" : "Buying pressure forming";
+  if (signal.bias === "BEARISH") return conf >= 0.9 ? "Strong selling pressure" : "Selling pressure forming";
+  return "Mixed pressure";
+}
+
 export function volatilityLabel(score: string | null): string {
   const v = Number(score ?? 0);
   if (v >= 0.7) return "High";
   if (v >= 0.4) return "Medium";
   return "Low";
+}
+
+// Long-form volatility phrasing — reads "Moderate" instead of "Medium".
+export function volatilityPhrase(score: string | null): string {
+  const v = Number(score ?? 0);
+  if (v >= 0.7) return "High";
+  if (v >= 0.4) return "Moderate";
+  return "Low";
+}
+
+// One-line context describing where price sits relative to key levels.
+export function contextPhrase(zone: string): string {
+  if (zone === "NEAR_SUPPORT") return "Price near support zone";
+  if (zone === "NEAR_RESISTANCE") return "Price near resistance zone";
+  return "Price in mid-range";
+}
+
+// One-line system observation. Stays generic + non-prescriptive (SEBI-safe).
+// Slight variation by direction so a queue of templates doesn't feel repetitive.
+export function systemInsight(signal: Pick<SocialSignal, "outlook" | "confidence">): string {
+  const isBullish = BULLISH_OUTLOOKS.has(signal.outlook);
+  const isBearish = BEARISH_OUTLOOKS.has(signal.outlook);
+  const conf = Number(signal.confidence);
+  if (conf >= 0.85) {
+    if (isBullish) return "Conditions aligning for potential upside movement";
+    if (isBearish) return "Conditions aligning for potential downside movement";
+  }
+  return "Conditions aligning for potential movement";
 }
 
 export function alignmentLabel(confidence: string): string {
@@ -169,6 +206,45 @@ export function socialDisplayStatus(
   const isBullish = signal.outlook === "BREAKOUT_LIKELY" || signal.outlook === "BOUNCE_EXPECTED";
   if (isBullish) return change >= 0 ? "SUCCESS" : "FAILED";
   return change <= 0 ? "SUCCESS" : "FAILED";
+}
+
+// Three observation lines for the OutcomeTemplate, derived from outlook + status.
+// SUCCESS variant uses ✔ check tone; FAILED uses honest "did not sustain" framing.
+export interface Observation {
+  ok: boolean;
+  text: string;
+}
+
+export function observedBehavior(
+  signal: Pick<SocialSignal, "status" | "outlook" | "bias" | "changePercent">,
+): Observation[] {
+  const isBullish = BULLISH_OUTLOOKS.has(signal.outlook);
+  const display = socialDisplayStatus(signal);
+  const succeeded = display === "SUCCESS";
+
+  if (succeeded) {
+    return [
+      { ok: true, text: isBullish ? "Price moved upward" : "Price moved downward" },
+      { ok: true, text: isBullish ? "Buying pressure continued" : "Selling pressure continued" },
+      { ok: true, text: "Momentum sustained" },
+    ];
+  }
+  return [
+    { ok: false, text: isBullish ? "Price moved downward instead" : "Price moved upward instead" },
+    { ok: false, text: "Initial pressure did not continue" },
+    { ok: false, text: "Momentum did not sustain" },
+  ];
+}
+
+// One-line outcome insight — generic, non-prescriptive.
+export function outcomeInsight(
+  signal: Pick<SocialSignal, "status" | "outlook" | "changePercent">,
+): string {
+  const succeeded = socialDisplayStatus(signal) === "SUCCESS";
+  if (succeeded) {
+    return "When momentum + pressure align near key levels, short-term movements can occur";
+  }
+  return "Initial alignment doesn't always confirm — markets remain unpredictable";
 }
 
 // Derive outcome verdict from status. SUCCESS → played out for the predicted
@@ -286,6 +362,22 @@ export function DisclaimerFooter() {
       <p className="text-slate-500 text-[15px] tracking-wide leading-relaxed">
         For educational study only
       </p>
+    </div>
+  );
+}
+
+// Top brand header — channel name "Market Intelligence Lab" as a refined
+// masthead. Small glowing cyan dot anchors the wordmark; subtle bottom divider
+// separates it from the content hero. Used on both Initial and Outcome.
+export function BrandHeader() {
+  return (
+    <div className="px-12 pt-10 pb-6 flex items-center justify-between border-b border-slate-800/50">
+      <div className="flex items-center gap-3.5">
+        <span className="size-2.5 rounded-full bg-cyan-400 shadow-[0_0_14px_rgba(34,211,238,0.65)]" />
+        <span className="text-slate-100 text-[20px] font-bold tracking-[0.22em] uppercase">
+          Market Intelligence Lab
+        </span>
+      </div>
     </div>
   );
 }
