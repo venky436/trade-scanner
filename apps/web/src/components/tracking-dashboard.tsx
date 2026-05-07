@@ -8,12 +8,9 @@ import {
   AlertTriangle,
   CheckCircle,
   Clock,
-  Crown,
-  Flame,
+  Eye,
   Minus,
   Shield,
-  Target,
-  TrendingDown,
   TrendingUp,
   XCircle,
 } from "lucide-react";
@@ -73,39 +70,33 @@ interface SignalRecord {
   groupId: string;
 }
 
-const BUCKET_STYLE: Record<string, { accent: string; border: string; gradient: string; icon: typeof Crown; label: string; range: string }> = {
-  ULTRA_HIGH: {
-    accent: "text-amber-500 dark:text-amber-400",
-    border: "border-amber-500/30",
-    gradient: "from-amber-500/10 via-amber-500/5 to-transparent dark:from-amber-500/15",
-    icon: Crown,
-    label: "Ultra High",
-    range: "≥ 0.9",
-  },
-  HIGH: {
-    accent: "text-blue-500 dark:text-blue-400",
-    border: "border-blue-500/30",
-    gradient: "from-blue-500/10 via-blue-500/5 to-transparent dark:from-blue-500/15",
-    icon: Flame,
-    label: "High",
-    range: "0.7 – 0.9",
-  },
-  MEDIUM: {
-    accent: "text-zinc-500 dark:text-zinc-400",
-    border: "border-zinc-400/30 dark:border-zinc-600/30",
-    gradient: "from-zinc-300/20 via-zinc-200/10 to-transparent dark:from-zinc-700/20 dark:via-zinc-800/10",
-    icon: Target,
-    label: "Medium",
-    range: "0.5 – 0.7",
+// Single tracking pool. Three-bucket model (Ultra/High/Medium) was retired
+// 2026-05-07 — only conf ≥ 0.7 emits, written as "TRACKED". Legacy bucket
+// strings are mapped here for the Recent Signals badge column on historical rows.
+const BUCKET_STYLE: Record<string, { accent: string; border: string; gradient: string; icon: typeof Eye; label: string; range: string }> = {
+  TRACKED: {
+    accent: "text-cyan-500 dark:text-cyan-400",
+    border: "border-cyan-500/30",
+    gradient: "from-cyan-500/10 via-cyan-500/5 to-transparent dark:from-cyan-500/15",
+    icon: Eye,
+    label: "Tracked Signals",
+    range: "conf ≥ 0.7 · Bounce / Rejection only",
   },
 };
 
 const OUTLOOK_LABEL: Record<string, string> = {
-  BREAKOUT_LIKELY: "Breakout",
   BOUNCE_EXPECTED: "Bounce",
   REJECTION_POSSIBLE: "Rejection",
-  BREAKDOWN_RISK: "Breakdown",
+  // Kept defensively so Recent Signals on historical dates still renders a
+  // human-readable label for retired outlooks.
+  BREAKOUT_LIKELY: "Breakout (retired)",
+  BREAKDOWN_RISK: "Breakdown (retired)",
 };
+
+// Outlooks shown in the "By Outlook" rollup. Retired outlooks intentionally
+// excluded — they're filtered server-side too, but the frontend keeps its own
+// allowlist as a defensive guard.
+const TRACKED_OUTLOOKS = ["BOUNCE_EXPECTED", "REJECTION_POSSIBLE"];
 
 // Mirrors the backend reclassifyForMetrics() — applies the ±0.2% NEUTRAL
 // dead-zone so the Recent Signals table stays consistent with the bucket-card
@@ -157,7 +148,6 @@ export function TrackingDashboard() {
   const [metrics, setMetrics] = useState<TrackingMetrics | null>(null);
   const [signals, setSignals] = useState<SignalRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedBucket, setSelectedBucket] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(getTodayIST());
 
   const isToday = selectedDate === getTodayIST();
@@ -213,19 +203,17 @@ export function TrackingDashboard() {
     };
   }, [selectedDate, isToday]);
 
-  const filteredSignals = selectedBucket
-    ? signals.filter((s) => s.confidenceBucket === selectedBucket)
-    : signals;
+  // Single-pool model: bucket filter removed. Only show signals at conf ≥ 0.7
+  // (i.e. legacy HIGH/ULTRA_HIGH plus new TRACKED rows). Retired outlooks are
+  // intentionally still rendered when present in historical data.
+  const ABOVE_FLOOR_BUCKETS = new Set(["TRACKED", "HIGH", "ULTRA_HIGH"]);
+  const filteredSignals = signals.filter((s) => ABOVE_FLOOR_BUCKETS.has(s.confidenceBucket));
 
   if (loading) {
     return (
       <div className="max-w-[1400px] mx-auto px-4 py-8">
         <div className="h-8 w-64 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-56 animate-pulse rounded-2xl bg-zinc-200 dark:bg-zinc-800/60" />
-          ))}
-        </div>
+        <div className="mt-6 h-56 animate-pulse rounded-2xl bg-zinc-200 dark:bg-zinc-800/60" />
       </div>
     );
   }
@@ -273,121 +261,114 @@ export function TrackingDashboard() {
           Signal Tracking Analytics
         </h1>
         <p className="mt-1 text-xs text-zinc-500">
-          10-minute direction snapshot · confidence buckets · {metrics?.date ?? "today"}
+          10-minute direction snapshot · single tracked pool · {metrics?.date ?? "today"}
         </p>
       </div>
 
-      {/* 3 Bucket Cards — always render all 3, using zero defaults when no data */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {(["ULTRA_HIGH", "HIGH", "MEDIUM"] as const).map((bucketKey) => {
-          const b: BucketData = (metrics?.buckets ?? []).find((x) => x.bucket === bucketKey) ?? {
-            bucket: bucketKey,
-            total: 0, pending: 0, success: 0, failed: 0, neutral: 0,
-            accuracy: 0, avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0,
-            expectancy: 0, riskReward: 0,
-            sampleSufficient: false,
-            minSampleRequired: bucketKey === "ULTRA_HIGH" ? 20 : bucketKey === "HIGH" ? 50 : 100,
-            byOutlook: {},
-          };
-          const style = BUCKET_STYLE[b.bucket] ?? BUCKET_STYLE.MEDIUM;
-          const BucketIcon = style.icon;
-          const decided = b.success + b.failed;
-          const isSelected = selectedBucket === b.bucket;
+      {/* Single TRACKED bucket card. Replaces the prior Ultra/High/Medium row
+          following the 2026-05-07 model change (only conf ≥ 0.7 emits). */}
+      {(() => {
+        const b: BucketData = (metrics?.buckets ?? []).find((x) => x.bucket === "TRACKED") ?? {
+          bucket: "TRACKED",
+          total: 0, pending: 0, success: 0, failed: 0, neutral: 0,
+          accuracy: 0, avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0,
+          expectancy: 0, riskReward: 0,
+          sampleSufficient: false,
+          minSampleRequired: 250,
+          byOutlook: {},
+        };
+        const style = BUCKET_STYLE.TRACKED;
+        const BucketIcon = style.icon;
+        const decided = b.success + b.failed;
 
-          return (
-            <button
-              key={b.bucket}
-              onClick={() => setSelectedBucket(isSelected ? null : b.bucket)}
-              className={`relative overflow-hidden rounded-2xl border ${style.border} ${isSelected ? "ring-2 ring-offset-1 ring-offset-white dark:ring-offset-zinc-950" : ""} bg-gradient-to-br ${style.gradient} bg-white dark:bg-zinc-950/60 p-5 text-left transition-all hover:-translate-y-0.5 hover:shadow-lg`}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <BucketIcon className={`size-5 ${style.accent}`} />
-                  <div>
-                    <div className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                      {style.label}
-                    </div>
-                    <div className="text-[10px] text-zinc-500">conf {style.range}</div>
+        return (
+          <div className={`relative overflow-hidden rounded-2xl border ${style.border} bg-gradient-to-br ${style.gradient} bg-white dark:bg-zinc-950/60 p-6`}>
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <BucketIcon className={`size-6 ${style.accent}`} />
+                <div>
+                  <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    {style.label}
                   </div>
-                </div>
-                <div className="text-right text-[10px] text-zinc-500">
-                  {b.total} signals
+                  <div className="text-[11px] text-zinc-500">{style.range}</div>
                 </div>
               </div>
+              <div className="text-right text-xs text-zinc-500">
+                {b.total} signals
+              </div>
+            </div>
 
+            <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-6">
               {/* Big accuracy */}
-              <div className="mt-4">
-                <div className={`text-4xl font-bold tabular-nums ${decided > 0 ? accuracyColor(b.accuracy) : "text-zinc-400"}`}>
+              <div>
+                <div className={`text-5xl font-bold tabular-nums ${decided > 0 ? accuracyColor(b.accuracy) : "text-zinc-400"}`}>
                   {decided > 0 ? `${b.accuracy}%` : "—"}
                 </div>
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500">accuracy</div>
+                <div className="mt-1 text-[10px] uppercase tracking-wider text-zinc-500">accuracy</div>
+                <div className="mt-2 flex items-center gap-3 text-[11px]">
+                  <span className="text-emerald-600 dark:text-emerald-400">{b.success} W</span>
+                  <span className="text-rose-600 dark:text-rose-400">{b.failed} L</span>
+                  {b.neutral > 0 && <span className="text-zinc-500 dark:text-zinc-400">{b.neutral} N</span>}
+                  {b.pending > 0 && <span className="text-amber-600 dark:text-amber-400">{b.pending} P</span>}
+                </div>
               </div>
 
-              {/* Expectancy */}
-              <div className="mt-3 flex items-baseline gap-2">
-                <span className="text-xs font-medium text-zinc-500">Expectancy:</span>
-                <span className={`text-sm font-bold tabular-nums ${expectancyColor(b.expectancy)}`}>
+              {/* Expectancy + R:R */}
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500">Expectancy / Trade</div>
+                <div className={`mt-1 text-2xl font-bold tabular-nums ${expectancyColor(b.expectancy)}`}>
                   {b.expectancy > 0 ? "+" : ""}{b.expectancy.toFixed(3)}%
-                </span>
+                </div>
+                <div className="mt-3 text-[10px] uppercase tracking-wider text-zinc-500">Risk : Reward</div>
+                <div className="mt-1 text-base font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {b.riskReward.toFixed(2)}x
+                </div>
               </div>
 
               {/* Sample progress */}
-              <div className="mt-3">
-                <div className="mb-1 flex items-center justify-between text-[10px]">
-                  <span className="text-zinc-500">
-                    Samples: {decided} / {b.minSampleRequired}
-                  </span>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500">Sample</div>
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{decided}</span>
+                  <span className="text-xs text-zinc-500">/ {b.minSampleRequired}</span>
+                </div>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800/80">
+                  <div
+                    className={`h-full rounded-full transition-all ${b.sampleSufficient ? "bg-emerald-500" : "bg-amber-500"}`}
+                    style={{ width: `${Math.min(100, (decided / b.minSampleRequired) * 100)}%` }}
+                  />
+                </div>
+                <div className="mt-1.5 text-[11px]">
                   {b.sampleSufficient ? (
                     <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
                       <CheckCircle className="size-3" /> Sufficient
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                      <AlertTriangle className="size-3" /> Need {b.minSampleRequired - decided} more
+                      <AlertTriangle className="size-3" /> Need {Math.max(0, b.minSampleRequired - decided)} more
                     </span>
                   )}
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800/80">
-                  <div
-                    className={`h-full rounded-full transition-all ${b.sampleSufficient ? "bg-emerald-500" : "bg-amber-500"}`}
-                    style={{ width: `${Math.min(100, (decided / b.minSampleRequired) * 100)}%` }}
-                  />
-                </div>
               </div>
-
-              {/* Win/Loss/Neutral counts. Neutral = |change|<0.2% dead-zone,
-                  excluded from accuracy calc but shown here for context. */}
-              <div className="mt-3 flex items-center gap-3 text-[10px]">
-                <span className="text-emerald-600 dark:text-emerald-400">{b.success} W</span>
-                <span className="text-rose-600 dark:text-rose-400">{b.failed} L</span>
-                {b.neutral > 0 && (
-                  <span className="text-zinc-500 dark:text-zinc-400">{b.neutral} N</span>
-                )}
-                {b.pending > 0 && (
-                  <span className="text-amber-600 dark:text-amber-400">{b.pending} P</span>
-                )}
-              </div>
-            </button>
-          );
-        })}
-      </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Detailed Stats */}
       {metrics && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Movement Stats */}
+          {/* Movement Stats — single-pool, no bucket switcher */}
           <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/60 p-5">
             <div className="mb-4 flex items-center gap-2">
               <TrendingUp className="size-4 text-emerald-500" />
               <h2 className="text-[11px] font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
-                Movement Stats {selectedBucket ? `(${BUCKET_STYLE[selectedBucket]?.label ?? selectedBucket})` : "(All)"}
+                Movement Stats
               </h2>
             </div>
             {(() => {
-              const buckets = selectedBucket
-                ? (metrics.buckets ?? []).filter((b) => b.bucket === selectedBucket)
-                : (metrics.buckets ?? []);
+              const buckets = metrics.buckets ?? [];
               const totals = buckets.reduce(
                 (acc, b) => ({
                   avgGain: acc.avgGain + b.avgGain * b.success,
@@ -434,19 +415,17 @@ export function TrackingDashboard() {
             })()}
           </section>
 
-          {/* By Outlook */}
+          {/* By Outlook — only the two emitted outlooks */}
           <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/60 p-5">
             <div className="mb-4 flex items-center gap-2">
               <Shield className="size-4 text-purple-500" />
               <h2 className="text-[11px] font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
-                By Outlook {selectedBucket ? `(${BUCKET_STYLE[selectedBucket]?.label ?? selectedBucket})` : "(All)"}
+                By Outlook
               </h2>
             </div>
             <div className="space-y-2.5">
-              {["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"].map((outlook) => {
-                const buckets = selectedBucket
-                  ? (metrics.buckets ?? []).filter((b) => b.bucket === selectedBucket)
-                  : (metrics.buckets ?? []);
+              {TRACKED_OUTLOOKS.map((outlook) => {
+                const buckets = metrics.buckets ?? [];
                 const totals = buckets.reduce(
                   (acc, b) => {
                     const o = b.byOutlook[outlook];
@@ -484,7 +463,7 @@ export function TrackingDashboard() {
         </div>
       )}
 
-      {/* Signals Table */}
+      {/* Signals Table — single-pool: above-floor rows only (conf ≥ 0.7) */}
       <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/60 p-5">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -494,19 +473,11 @@ export function TrackingDashboard() {
             </h2>
             <span className="text-[10px] text-zinc-500">{filteredSignals.length} records</span>
           </div>
-          {selectedBucket && (
-            <button
-              onClick={() => setSelectedBucket(null)}
-              className="text-[10px] font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-            >
-              Clear filter
-            </button>
-          )}
         </div>
 
         {filteredSignals.length === 0 ? (
           <div className="py-12 text-center text-sm text-zinc-500">
-            No signals recorded yet. Tracking starts after 9:45 AM IST when confidence ≥ 0.5.
+            No signals recorded yet. Tracking starts after 9:30 AM IST for Bounce / Rejection at confidence ≥ 0.7.
           </div>
         ) : (
           <div className="overflow-x-auto">

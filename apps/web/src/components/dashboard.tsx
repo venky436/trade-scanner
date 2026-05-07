@@ -30,7 +30,13 @@ const ZONE_SECTION_CAP = 6;
 
 // Confidence threshold for "Strong Factor Alignment". Backend keeps producing
 // the score for ranking; UI never displays the % to the user.
+// Strict 0.85 floor on purpose: this card is the home-page elevator pitch
+// (best-of-the-best highlight), one tier above /social's 0.75 publishable feed
+// and the 0.70 tracking floor. Low volume is a feature.
 const STRONG_ALIGNMENT_FLOOR = 0.85;
+// Reactive plays only — Breakout / Breakdown were retired 2026-05-07. Defensive
+// guard at the UI layer; the transformer also no longer emits those outlooks.
+const STRONG_ALIGNMENT_OUTLOOKS = new Set(["BOUNCE_EXPECTED", "REJECTION_POSSIBLE"]);
 
 function SectionHeader({
   Icon,
@@ -186,9 +192,16 @@ export function Dashboard() {
     return list;
   }, [stockMap]);
 
-  // Section 1: Strong Factor Alignment — confidence ≥ 0.85
+  // Section 1: Strong Factor Alignment — confidence ≥ 0.75 AND outlook is one
+  // of the two emitted reactive plays (Bounce / Rejection). Predictive outlooks
+  // (Breakout / Breakdown) were retired 2026-05-07 — they no longer fire from
+  // the transformer, but we filter here too as a defensive guard in case any
+  // historical or in-flight snapshot still carries one.
   const strongAlignment = useMemo(
-    () => allStocks.filter((s) => s.confidence >= STRONG_ALIGNMENT_FLOOR).slice(0, STRONG_ALIGNMENT_CAP),
+    () =>
+      allStocks
+        .filter((s) => s.confidence >= STRONG_ALIGNMENT_FLOOR && STRONG_ALIGNMENT_OUTLOOKS.has(s.outlook))
+        .slice(0, STRONG_ALIGNMENT_CAP),
     [allStocks],
   );
 

@@ -186,26 +186,24 @@ function buildConfidence(
   return { confidence: round2(confidence), confidenceLabel };
 }
 
-// Outlook decision table (with NO_CLEAR_EDGE fallback for quiet/low-conf states).
+// Outlook decision table — only reactive plays at SR (Bounce + Rejection),
+// gated to HIGH confidence (>0.7). Predictive plays (Breakout/Breakdown) were
+// retired 2026-05-07 after 8-day prod analysis: HIGH Breakout 45.8% / 201 decided,
+// HIGH Breakdown 51.9% / 106 decided — both negative or coin-flip expectancy.
 function buildOutlook(
   zone: Zone,
   momentumLabel: IntelligenceMomentumLabel,
   confidenceLabel: ConfidenceLabel,
 ): Outlook {
   if (zone === "MID_RANGE") return "NO_CLEAR_EDGE";
+  if (confidenceLabel !== "HIGH") return "NO_CLEAR_EDGE";
 
   if (zone === "NEAR_RESISTANCE") {
-    if (momentumLabel === "STRONG_UP" && confidenceLabel === "HIGH") return "BREAKOUT_LIKELY";
-    // HIGH confidence floor mirrors BREAKOUT/BREAKDOWN gates. 3-day prod data showed
-    // MEDIUM-conf REJECTION at 41% accuracy (127 signals) vs HIGH at 50% (47 signals);
-    // gating to HIGH cuts the noise cohort and preserves the monotonic signal.
-    if ((momentumLabel === "STRONG_DOWN" || momentumLabel === "WEAK_DOWN")
-        && confidenceLabel === "HIGH") return "REJECTION_POSSIBLE";
+    if (momentumLabel === "STRONG_DOWN" || momentumLabel === "WEAK_DOWN") return "REJECTION_POSSIBLE";
     return "NO_CLEAR_EDGE";
   }
 
   // NEAR_SUPPORT
-  if (momentumLabel === "STRONG_DOWN" && confidenceLabel === "HIGH") return "BREAKDOWN_RISK";
   if (momentumLabel === "STRONG_UP" || momentumLabel === "WEAK_UP") return "BOUNCE_EXPECTED";
   return "NO_CLEAR_EDGE";
 }
