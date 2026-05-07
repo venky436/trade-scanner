@@ -1,4 +1,4 @@
-import { eq, isNull, and, gte, lte, sql } from "drizzle-orm";
+import { eq, isNull, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { signalTracking } from "../db/schema/signal-tracking.js";
 import { marketDataService } from "./market-data.service.js";
@@ -17,15 +17,29 @@ const EVAL_WINDOW_MS = 10 * 60_000;
 // surfaces more signals so /admin/social has steady content even on calm days.
 const SOCIAL_MIN_CONFIDENCE = 0.75;
 
-type ConfidenceBucket = "ULTRA_HIGH" | "HIGH" | "MEDIUM";
+// Single tracking pool — the 3-bucket model (Ultra/High/Medium) was retired
+// 2026-05-07. Only confidence ≥ 0.7 emits, written as "TRACKED". Historical
+// rows tagged "ULTRA_HIGH"/"HIGH" are folded into the same pool at metric time
+// (they were also conf ≥ 0.7); historical "MEDIUM" rows (conf 0.5–0.7) are
+// excluded from the new single-pool view since they're below the new floor.
+type ConfidenceBucket = "TRACKED";
 type TrackingStatus = "PENDING" | "SUCCESS" | "FAILED" | "NEUTRAL";
 
-const MIN_SAMPLES: Record<ConfidenceBucket, number> = {
-  ULTRA_HIGH: 20,
-  HIGH: 100,
-  MEDIUM: 100,
-};
+// Bumped 100 → 250 on 2026-05-07 along with the single-pool collapse: with
+// only Bounce + Rejection emitting at conf ≥ 0.7, we want a higher confidence
+// floor on the sample size before declaring the pool's accuracy stable.
+const MIN_SAMPLES_TRACKED = 250;
+// Single-pool view folds historical "HIGH"/"ULTRA_HIGH" rows in (they were also
+// conf ≥ 0.7) plus newly-written "TRACKED" rows. Excludes legacy MEDIUM (conf
+// 0.5–0.7) rows since they're below the new floor.
+const ABOVE_FLOOR_BUCKET_LABELS = new Set(["TRACKED", "HIGH", "ULTRA_HIGH"]);
+// Outlooks emitted under the new single-pool model.
+const TRACKED_OUTLOOKS = ["BOUNCE_EXPECTED", "REJECTION_POSSIBLE"];
 
+// BUY_SIDE includes the retired BREAKOUT_LIKELY for backward compatibility:
+// historical pending rows with that outlook still need correct direction
+// classification at evaluation + metric time. Going forward, only BOUNCE_EXPECTED
+// is emitted on the buy side (Breakout was retired 2026-05-07).
 const BUY_SIDE_OUTLOOKS = new Set(["BREAKOUT_LIKELY", "BOUNCE_EXPECTED"]);
 
 // Metric-time NEUTRAL dead-zone. Rows where |change| < this threshold are
@@ -65,22 +79,89 @@ interface ActiveTracking {
   confidenceBucket: ConfidenceBucket;
 }
 
+interface BucketRecord {
+  status: string;
+  outlook: string;
+  changePercent: string | null;
+  maxProfitPercent: string | null;
+  maxDrawdownPercent: string | null;
+}
+
+// Single-pool stats reducer, shared by the live `getMetrics` and standalone
+// `getTrackingMetricsFromDB`. Keeps the response shape (bucket + accuracy +
+// movement stats + per-outlook breakdown) identical to the previous 3-bucket
+// model so the frontend just renders one card instead of three.
+function computeBucketStats(bucketRecords: BucketRecord[]) {
+  const success = bucketRecords.filter((r) => reclassifyForMetrics(r) === "SUCCESS");
+  const failed = bucketRecords.filter((r) => reclassifyForMetrics(r) === "FAILED");
+  const neutral = bucketRecords.filter((r) => reclassifyForMetrics(r) === "NEUTRAL");
+  const pending = bucketRecords.filter((r) => reclassifyForMetrics(r) === "PENDING");
+  const evaluated = [...success, ...failed];
+
+  const decided = success.length + failed.length;
+  const accuracy = decided > 0 ? Math.round((success.length / decided) * 100) : 0;
+  const winRate = decided > 0 ? success.length / decided : 0;
+  const lossRate = decided > 0 ? failed.length / decided : 0;
+
+  // Math.abs on gains: changePercent is signed, so SELL-side SUCCESS (price down → success)
+  // is negative. Without abs, BUY/SELL successes cancel in the average and tank expectancy
+  // even when accuracy is high.
+  const gains = success.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
+  const losses = failed.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
+  const maxProfits = evaluated.map((r) => Number(r.maxProfitPercent)).filter((v) => !isNaN(v));
+  const maxDrawdowns = evaluated.map((r) => Number(r.maxDrawdownPercent)).filter((v) => !isNaN(v));
+
+  const avgGain = gains.length > 0 ? gains.reduce((a, b) => a + b, 0) / gains.length : 0;
+  const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+  const avgMaxProfit = maxProfits.length > 0 ? maxProfits.reduce((a, b) => a + b, 0) / maxProfits.length : 0;
+  const avgMaxDrawdown = maxDrawdowns.length > 0 ? maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length : 0;
+  const expectancy = (winRate * avgGain) - (lossRate * avgLoss);
+  const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
+
+  // Only the two surviving outlooks under the new model. Historical Breakout /
+  // Breakdown rows are still in the records (excluded here) so dashboard
+  // doesn't render rows for retired outlooks.
+  const byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }> = {};
+  for (const outlook of TRACKED_OUTLOOKS) {
+    const outlookEvaluated = evaluated.filter((r) => r.outlook === outlook);
+    const outlookWins = outlookEvaluated.filter((r) => reclassifyForMetrics(r) === "SUCCESS").length;
+    const outlookNeutral = neutral.filter((r) => r.outlook === outlook).length;
+    byOutlook[outlook] = {
+      total: outlookEvaluated.length,
+      wins: outlookWins,
+      neutral: outlookNeutral,
+      rate: outlookEvaluated.length > 0 ? Math.round((outlookWins / outlookEvaluated.length) * 100) : 0,
+    };
+  }
+
+  return {
+    bucket: "TRACKED" as const,
+    total: bucketRecords.length,
+    pending: pending.length,
+    success: success.length,
+    failed: failed.length,
+    neutral: neutral.length,
+    accuracy,
+    avgGain: Math.round(avgGain * 100) / 100,
+    avgLoss: Math.round(avgLoss * 100) / 100,
+    avgMaxProfit: Math.round(avgMaxProfit * 100) / 100,
+    avgMaxDrawdown: Math.round(avgMaxDrawdown * 100) / 100,
+    expectancy: Math.round(expectancy * 1000) / 1000,
+    riskReward: Math.round(riskReward * 100) / 100,
+    sampleSufficient: decided >= MIN_SAMPLES_TRACKED,
+    minSampleRequired: MIN_SAMPLES_TRACKED,
+    byOutlook,
+  };
+}
+
 function getISTDate(): string {
   return new Date().toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
 }
 
 function getBucket(confidence: number): ConfidenceBucket | null {
-  if (confidence >= 0.9) return "ULTRA_HIGH";
-  if (confidence >= 0.7) return "HIGH";
-  if (confidence >= 0.5) return "MEDIUM";
+  if (confidence >= 0.7) return "TRACKED";
   return null;
 }
-
-const BUCKET_RANK: Record<ConfidenceBucket, number> = {
-  MEDIUM: 1,
-  HIGH: 2,
-  ULTRA_HIGH: 3,
-};
 
 export function createSignalTrackingService() {
   const activeMap = new Map<string, ActiveTracking>();
@@ -147,9 +228,8 @@ export function createSignalTrackingService() {
     if (price < 50) return;
     if (activeMap.has(symbol)) return; // still pending evaluation
 
-    // Dedup: only allow if bucket is higher than previously tracked today
-    const previousBucket = trackedToday.get(symbol);
-    if (previousBucket && BUCKET_RANK[bucket] <= BUCKET_RANK[previousBucket]) return;
+    // Dedup: one signal per symbol per day (single-pool model — no bucket promotion).
+    if (trackedToday.has(symbol)) return;
 
     checkDailyReset();
     if (dailyCount >= MAX_DAILY_SIGNALS) return;
@@ -250,8 +330,18 @@ export function createSignalTrackingService() {
 
         activeMap.delete(sig.symbol);
 
+        // NEUTRAL re-eligibility: if the lock landed inside the ±0.2% dead-zone
+        // (no real outcome), free this symbol from today's dedup so it can fire
+        // again. The DB row is still stored as SUCCESS/FAILED per the direction
+        // snapshot — only the in-memory dedup is cleared. Without this, a
+        // symbol that drifts <0.2% over 10 min would burn its one daily slot
+        // on a non-event.
+        const isNeutral = Math.abs(changePercent) < NEUTRAL_METRIC_THRESHOLD_PERCENT;
+        if (isNeutral) trackedToday.delete(sig.symbol);
+
         const lockSec = Math.round((now - sig.recordedAt) / 1000);
-        console.log(`[Tracking] ${status}: ${sig.symbol} change=${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}% lock=${lockSec}s [${activeMap.size} active]`);
+        const tag = isNeutral ? `${status}/NEUTRAL re-eligible` : status;
+        console.log(`[Tracking] ${tag}: ${sig.symbol} change=${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}% lock=${lockSec}s [${activeMap.size} active]`);
       } catch (err: any) {
         console.warn(`[Tracking] Failed to evaluate ${sig.symbol}:`, err.message);
       }
@@ -319,73 +409,11 @@ export function createSignalTrackingService() {
           lte(signalTracking.signalTime, dayEnd),
         ));
 
-      const buckets: ConfidenceBucket[] = ["ULTRA_HIGH", "HIGH", "MEDIUM"];
-      const result: Record<string, any>[] = [];
-
-      for (const bucket of buckets) {
-        const bucketRecords = records.filter((r) => r.confidenceBucket === bucket);
-        // reclassifyForMetrics applies the ±0.2% NEUTRAL dead-zone — rows
-        // inside the band are flagged NEUTRAL and excluded from wins+losses
-        // so accuracy is a clean wins/(wins+losses) figure.
-        const success = bucketRecords.filter((r) => reclassifyForMetrics(r) === "SUCCESS");
-        const failed = bucketRecords.filter((r) => reclassifyForMetrics(r) === "FAILED");
-        const neutral = bucketRecords.filter((r) => reclassifyForMetrics(r) === "NEUTRAL");
-        const pending = bucketRecords.filter((r) => reclassifyForMetrics(r) === "PENDING");
-        const evaluated = [...success, ...failed];
-
-        const decided = success.length + failed.length;
-        const accuracy = decided > 0 ? Math.round((success.length / decided) * 100) : 0;
-        const winRate = decided > 0 ? success.length / decided : 0;
-        const lossRate = decided > 0 ? failed.length / decided : 0;
-
-        // Math.abs on gains: changePercent is signed, so SELL-side SUCCESS (price down → success)
-        // is negative. Without abs, BUY/SELL successes cancel in the average and tank expectancy
-        // even when accuracy is high.
-        const gains = success.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
-        const losses = failed.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
-        const maxProfits = evaluated.map((r) => Number(r.maxProfitPercent)).filter((v) => !isNaN(v));
-        const maxDrawdowns = evaluated.map((r) => Number(r.maxDrawdownPercent)).filter((v) => !isNaN(v));
-
-        const avgGain = gains.length > 0 ? gains.reduce((a, b) => a + b, 0) / gains.length : 0;
-        const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
-        const avgMaxProfit = maxProfits.length > 0 ? maxProfits.reduce((a, b) => a + b, 0) / maxProfits.length : 0;
-        const avgMaxDrawdown = maxDrawdowns.length > 0 ? maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length : 0;
-        const expectancy = (winRate * avgGain) - (lossRate * avgLoss);
-        const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
-
-        const outlooks = ["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"];
-        const byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }> = {};
-        for (const outlook of outlooks) {
-          const outlookEvaluated = evaluated.filter((r) => r.outlook === outlook);
-          const outlookWins = outlookEvaluated.filter((r) => reclassifyForMetrics(r) === "SUCCESS").length;
-          const outlookNeutral = neutral.filter((r) => r.outlook === outlook).length;
-          byOutlook[outlook] = {
-            total: outlookEvaluated.length,
-            wins: outlookWins,
-            neutral: outlookNeutral,
-            rate: outlookEvaluated.length > 0 ? Math.round((outlookWins / outlookEvaluated.length) * 100) : 0,
-          };
-        }
-
-        result.push({
-          bucket,
-          total: bucketRecords.length,
-          pending: pending.length,
-          success: success.length,
-          failed: failed.length,
-          neutral: neutral.length,
-          accuracy,
-          avgGain: Math.round(avgGain * 100) / 100,
-          avgLoss: Math.round(avgLoss * 100) / 100,
-          avgMaxProfit: Math.round(avgMaxProfit * 100) / 100,
-          avgMaxDrawdown: Math.round(avgMaxDrawdown * 100) / 100,
-          expectancy: Math.round(expectancy * 1000) / 1000,
-          riskReward: Math.round(riskReward * 100) / 100,
-          sampleSufficient: decided >= MIN_SAMPLES[bucket],
-          minSampleRequired: MIN_SAMPLES[bucket],
-          byOutlook,
-        });
-      }
+      // Single tracking pool — fold historical "HIGH"/"ULTRA_HIGH" rows in with
+      // newly-written "TRACKED" rows (all conf ≥ 0.7). Legacy "MEDIUM" rows
+      // (conf 0.5–0.7) are excluded since they're below the new floor.
+      const bucketRecords = records.filter((r) => ABOVE_FLOOR_BUCKET_LABELS.has(r.confidenceBucket));
+      const result = [computeBucketStats(bucketRecords)];
 
       return {
         date: dayStart.toISOString().split("T")[0],
@@ -435,11 +463,15 @@ export function createSignalTrackingService() {
       const dayEnd = new Date(targetDate);
       dayEnd.setHours(23, 59, 59, 999);
 
+      // Single-pool /social: only the two emitted outlooks. Historical
+      // Breakout / Breakdown rows are filtered out so the public-facing feed
+      // matches the new model even for past dates.
       const rows = await db
         .select()
         .from(signalTracking)
         .where(and(
           eq(signalTracking.socialEligible, true),
+          inArray(signalTracking.outlook, TRACKED_OUTLOOKS),
           gte(signalTracking.signalTime, dayStart),
           lte(signalTracking.signalTime, dayEnd),
         ))
@@ -511,72 +543,10 @@ export async function getTrackingMetricsFromDB(date?: Date) {
         lte(signalTracking.signalTime, dayEnd),
       ));
 
-    type ConfBucket = "ULTRA_HIGH" | "HIGH" | "MEDIUM";
-    const minSamples: Record<ConfBucket, number> = { ULTRA_HIGH: 20, HIGH: 100, MEDIUM: 100 };
-    const buckets: ConfBucket[] = ["ULTRA_HIGH", "HIGH", "MEDIUM"];
-    const result: Record<string, any>[] = [];
-
-    for (const bucket of buckets) {
-      const bucketRecords = records.filter((r) => r.confidenceBucket === bucket);
-      // See note on the equivalent block in getMetrics — NEUTRAL dead-zone
-      // excludes |change|<0.2% rows from wins/losses for clean accuracy calc.
-      const success = bucketRecords.filter((r) => reclassifyForMetrics(r) === "SUCCESS");
-      const failed = bucketRecords.filter((r) => reclassifyForMetrics(r) === "FAILED");
-      const neutral = bucketRecords.filter((r) => reclassifyForMetrics(r) === "NEUTRAL");
-      const pending = bucketRecords.filter((r) => reclassifyForMetrics(r) === "PENDING");
-      const evaluated = [...success, ...failed];
-
-      const decided = success.length + failed.length;
-      const accuracy = decided > 0 ? Math.round((success.length / decided) * 100) : 0;
-      const winRate = decided > 0 ? success.length / decided : 0;
-      const lossRate = decided > 0 ? failed.length / decided : 0;
-
-      // See note on the equivalent block in getMetrics — magnitude only, never signed.
-      const gains = success.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
-      const losses = failed.map((r) => Math.abs(Number(r.changePercent))).filter((v) => !isNaN(v));
-      const maxProfits = evaluated.map((r) => Number(r.maxProfitPercent)).filter((v) => !isNaN(v));
-      const maxDrawdowns = evaluated.map((r) => Number(r.maxDrawdownPercent)).filter((v) => !isNaN(v));
-
-      const avgGain = gains.length > 0 ? gains.reduce((a, b) => a + b, 0) / gains.length : 0;
-      const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
-      const avgMaxProfit = maxProfits.length > 0 ? maxProfits.reduce((a, b) => a + b, 0) / maxProfits.length : 0;
-      const avgMaxDrawdown = maxDrawdowns.length > 0 ? maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length : 0;
-      const expectancy = (winRate * avgGain) - (lossRate * avgLoss);
-      const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
-
-      const outlooks = ["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"];
-      const byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }> = {};
-      for (const outlook of outlooks) {
-        const outlookEvaluated = evaluated.filter((r) => r.outlook === outlook);
-        const outlookWins = outlookEvaluated.filter((r) => reclassifyForMetrics(r) === "SUCCESS").length;
-        const outlookNeutral = neutral.filter((r) => r.outlook === outlook).length;
-        byOutlook[outlook] = {
-          total: outlookEvaluated.length,
-          wins: outlookWins,
-          neutral: outlookNeutral,
-          rate: outlookEvaluated.length > 0 ? Math.round((outlookWins / outlookEvaluated.length) * 100) : 0,
-        };
-      }
-
-      result.push({
-        bucket,
-        total: bucketRecords.length,
-        pending: pending.length,
-        success: success.length,
-        failed: failed.length,
-        neutral: neutral.length,
-        accuracy,
-        avgGain: Math.round(avgGain * 100) / 100,
-        avgLoss: Math.round(avgLoss * 100) / 100,
-        avgMaxProfit: Math.round(avgMaxProfit * 100) / 100,
-        avgMaxDrawdown: Math.round(avgMaxDrawdown * 100) / 100,
-        expectancy: Math.round(expectancy * 1000) / 1000,
-        riskReward: Math.round(riskReward * 100) / 100,
-        sampleSufficient: decided >= minSamples[bucket],
-        minSampleRequired: minSamples[bucket],
-        byOutlook,
-      });
-    }
+    // Single-pool view — same shape as getMetrics, shared reducer. Folds
+    // historical HIGH/ULTRA_HIGH rows in with newly-written TRACKED rows.
+    const bucketRecords = records.filter((r) => ABOVE_FLOOR_BUCKET_LABELS.has(r.confidenceBucket));
+    const result = [computeBucketStats(bucketRecords)];
 
     return { date: dayStart.toISOString().split("T")[0], buckets: result, activeCount: 0 };
   } catch (err: any) {

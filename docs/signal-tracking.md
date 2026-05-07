@@ -1,6 +1,6 @@
 # Signal Tracking System
 
-> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a **direction snapshot at minute 10 with a ±0.2% NEUTRAL dead-zone**. Each signal is classified at metric time:
+> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a **single tracking pool** (confidence ≥ 0.7, Bounce + Rejection only) and a **direction snapshot at minute 10 with a ±0.2% NEUTRAL dead-zone**. Each signal is classified at metric time:
 >
 > - `|change| ≥ 0.2%` in the expected direction → **SUCCESS**
 > - `|change| ≥ 0.2%` in the opposite direction → **FAILED**
@@ -15,8 +15,16 @@ The intelligence layer produces a confidence score (0–1) for every stock. But 
 - Are high-confidence signals actually working?
 - How much do they move in 10 minutes?
 - Is the system profitable in terms of expectancy?
-- Which outlook types (Breakout / Bounce / Rejection / Breakdown) perform best?
-- Does ULTRA_HIGH confidence outperform HIGH, which outperforms MEDIUM?
+- Are the **reactive** outlooks (Bounce at support, Rejection at resistance) holding their edge over time?
+
+## 2026-05-07 model change — single pool, reactive plays only
+
+After 8 days of production data, the 3-bucket × 4-outlook model collapsed into a single tracking pool:
+
+- **Predictive plays retired**: BREAKOUT_LIKELY (45.8% on 201 decided) and BREAKDOWN_RISK (51.9% on 106 decided, R:R 0.80 → negative expectancy) no longer emit. The intelligence transformer returns `NO_CLEAR_EDGE` for those zone+momentum combinations.
+- **Reactive plays retained**: BOUNCE_EXPECTED (54.3% on 70, R:R 1.57) and REJECTION_POSSIBLE (60.8% on 51) are the only outlooks that publish.
+- **Single confidence floor**: emission requires `confidence ≥ 0.7` (i.e. the legacy `HIGH` label). Below that, `NO_CLEAR_EDGE`.
+- **Single bucket label**: new rows are written with `confidence_bucket = "TRACKED"`. Historical `HIGH` and `ULTRA_HIGH` rows are folded into the same single-pool view at metric time (they're also conf ≥ 0.7); historical `MEDIUM` rows (conf 0.5–0.7) fall below the new floor and are excluded.
 
 ## Relationship to the existing accuracy tracker
 
@@ -36,17 +44,15 @@ Both coexist. The old one validates the internal engines; this one validates the
 
 ---
 
-## Confidence buckets
+## Single tracking pool
 
-Every tracked signal is assigned a bucket based on its confidence at the time of recording:
+Every emitted signal lands in the same pool. The 3-bucket model (Ultra/High/Medium) was retired 2026-05-07.
 
-| Bucket | Range | Expected volume | Min samples before trusting |
+| Pool | Range | Outlooks | Min samples before trusting |
 |---|---|---|---|
-| **ULTRA_HIGH** | confidence ≥ 0.9 | 0–5/day | 20 |
-| **HIGH** | 0.7 – 0.9 | 10–20/day | 50 |
-| **MEDIUM** | 0.5 – 0.7 | 20–40/day | 100 |
+| **TRACKED** | confidence ≥ 0.7 | BOUNCE_EXPECTED, REJECTION_POSSIBLE | 250 |
 
-The minimum sample rule prevents random luck from fooling us. Until a bucket has enough decided signals (SUCCESS + FAILED ≥ min), results are flagged as insufficient.
+Below 0.7 → no signal. Above 0.7 with a non-reactive outlook (Breakout / Breakdown) → no signal. The minimum sample rule prevents random luck from fooling us; until 250 decided signals (SUCCESS + FAILED) exist, results are flagged insufficient.
 
 ---
 
@@ -64,19 +70,21 @@ onIntelligenceComputed(symbol, intel, price)
 signal-tracking.service.ts recordSignal()
     ↓
 Guards:
-  ✗ confidence < 0.5      → skip
-  ✗ outlook = NO_CLEAR_EDGE → skip (no directional bet)
+  ✗ confidence < 0.7      → skip (single floor)
+  ✗ outlook = NO_CLEAR_EDGE → skip (no directional bet — covers retired Breakout/Breakdown)
   ✗ phase ≠ NORMAL         → skip (OPENING/STABILIZING)
   ✗ before 9:30 AM IST     → skip (NORMAL phase begins at 9:30)
   ✗ after 3:10 PM IST      → skip (stop before close)
   ✗ price < ₹50            → skip
   ✗ already pending eval     → skip (activeMap has symbol)
-  ✗ already tracked today at same or higher bucket → skip (trackedToday dedup)
-  ✗ daily cap (200) hit     → skip
+  ✗ already tracked today    → skip (trackedToday dedup — one signal per symbol per day,
+                                   freed back to eligible if a prior lock landed NEUTRAL
+                                   inside the ±0.2% dead-zone)
+  ✗ daily cap (200) hit      → skip
     ↓
 INSERT into signal_tracking table
   status = PENDING
-  bucket = ULTRA_HIGH / HIGH / MEDIUM
+  bucket = TRACKED
     ↓
 Evaluation timer (every 30 seconds, direction snapshot)
   For each PENDING row in activeMap:
@@ -135,9 +143,10 @@ symbol              VARCHAR(50)    NOT NULL
 signal_time         TIMESTAMP      NOT NULL
 price_at_signal     NUMERIC(12,2)  NOT NULL
 
-outlook             VARCHAR(30)    NOT NULL   -- BREAKOUT_LIKELY / BOUNCE_EXPECTED / etc.
-confidence          NUMERIC(5,4)   NOT NULL   -- 0.5000 – 1.0000
-confidence_bucket   VARCHAR(15)    NOT NULL   -- ULTRA_HIGH / HIGH / MEDIUM
+outlook             VARCHAR(30)    NOT NULL   -- BOUNCE_EXPECTED / REJECTION_POSSIBLE
+                                              -- (legacy rows: BREAKOUT_LIKELY / BREAKDOWN_RISK)
+confidence          NUMERIC(5,4)   NOT NULL   -- 0.7000 – 1.0000 (new floor)
+confidence_bucket   VARCHAR(15)    NOT NULL   -- TRACKED (new); HIGH/ULTRA_HIGH/MEDIUM on legacy rows
 zone                VARCHAR(20)    NOT NULL   -- NEAR_RESISTANCE / NEAR_SUPPORT
 bias                VARCHAR(10)    NOT NULL   -- BULLISH / BEARISH / NEUTRAL
 

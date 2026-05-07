@@ -186,10 +186,12 @@ export function StockDetail({ symbol }: StockDetailProps) {
   // end up above the live price, or a "resistance" below it. Drop those at
   // render time so we never draw an inverted line. Only validates when we have
   // a live price to compare against; otherwise pass the raw cached value
-  // through unchanged (preserves loading/empty behavior).
+  // through unchanged (preserves loading/empty behavior). The deeper `?.` on
+  // `levels` guards against backend payloads that omit it (defensive — type
+  // says required but runtime can occasionally drift).
   const livePriceForSR = intel?.price ?? null;
-  const rawSupport = snapshot?.levels.support ?? null;
-  const rawResistance = snapshot?.levels.resistance ?? null;
+  const rawSupport = snapshot?.levels?.support ?? null;
+  const rawResistance = snapshot?.levels?.resistance ?? null;
   const supportLevel =
     livePriceForSR !== null && rawSupport !== null && rawSupport >= livePriceForSR
       ? null
@@ -202,6 +204,19 @@ export function StockDetail({ symbol }: StockDetailProps) {
   const chartTick: ChartTick | null = intel
     ? { price: intel.price, timestamp: intel.timestamp }
     : null;
+
+  // Hooks must run in the same order every render (Rules of Hooks). Keep
+  // `usePriceFlash` UP HERE — calling it after the early-return blocks below
+  // caused intermittent "Rendered more hooks than during the previous render"
+  // crashes on cold reload (when `intel` was null on render 1, then non-null
+  // on render 2 once the snapshot fetch resolved). Pass 0 when intel isn't
+  // ready yet — usePriceFlash handles it (no flash on identical prices).
+  const flash = usePriceFlash(intel?.price ?? 0);
+  const priceFlashColor = flash === "up"
+    ? "text-emerald-600 dark:text-emerald-400"
+    : flash === "down"
+    ? "text-rose-600 dark:text-rose-400"
+    : "text-zinc-900 dark:text-zinc-50";
 
   if (loading && !intel) {
     return (
@@ -242,14 +257,7 @@ export function StockDetail({ symbol }: StockDetailProps) {
     ? "text-rose-600 dark:text-rose-400"
     : "text-zinc-500";
 
-  const flash = usePriceFlash(intel.price);
-  // Price-text-only flash — color shifts emerald/rose for ~1.2s on tick.
-  // No surrounding ring or background tint.
-  const priceFlashColor = flash === "up"
-    ? "text-emerald-600 dark:text-emerald-400"
-    : flash === "down"
-    ? "text-rose-600 dark:text-rose-400"
-    : "text-zinc-900 dark:text-zinc-50";
+  // Price-flash hook + color resolved above the early returns (see comment).
 
   return (
     <main className="max-w-[1400px] mx-auto px-4 py-6 space-y-6">

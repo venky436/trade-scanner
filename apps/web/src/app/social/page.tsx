@@ -2,7 +2,18 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Camera, Clock, Eye, Minus, AlertCircle } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowDownRight,
+  ArrowLeft,
+  ArrowUpRight,
+  Camera,
+  Clock,
+  Eye,
+  Minus,
+  Sparkles,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import {
   outlookCategoryDisplay,
@@ -23,10 +34,67 @@ function formatTime(iso: string): string {
   });
 }
 
+interface ZoneVisual {
+  Icon: LucideIcon;
+  iconColor: string;
+  iconBg: string;
+  iconRing: string;
+  strip: string;
+  hoverBorder: string;
+  hoverShadow: string;
+  cardTint: string;
+  activityText: string;
+}
+
+// Zone visuals — colored accent strip + icon container per outlook. Bounce
+// (near support) reads as emerald upward; Rejection (near resistance) reads
+// as rose downward. Legacy Breakout/Breakdown rows fall back to a neutral
+// slate look so they still render legibly on historical dates without
+// implying a directional call.
+function zoneVisual(outlook: string): ZoneVisual {
+  if (outlook === "BOUNCE_EXPECTED") {
+    return {
+      Icon: ArrowUpRight,
+      iconColor: "text-emerald-500 dark:text-emerald-400",
+      iconBg: "bg-emerald-500/10",
+      iconRing: "ring-emerald-400/40",
+      strip: "bg-gradient-to-b from-emerald-400/0 via-emerald-400/80 to-emerald-400/0",
+      hoverBorder: "hover:border-emerald-400/40",
+      hoverShadow: "hover:shadow-emerald-500/[0.06]",
+      cardTint: "bg-gradient-to-br from-emerald-500/[0.04] via-transparent to-transparent dark:from-emerald-500/[0.05]",
+      activityText: "text-emerald-600 dark:text-emerald-300/90",
+    };
+  }
+  if (outlook === "REJECTION_POSSIBLE") {
+    return {
+      Icon: ArrowDownRight,
+      iconColor: "text-rose-500 dark:text-rose-400",
+      iconBg: "bg-rose-500/10",
+      iconRing: "ring-rose-400/40",
+      strip: "bg-gradient-to-b from-rose-400/0 via-rose-400/80 to-rose-400/0",
+      hoverBorder: "hover:border-rose-400/40",
+      hoverShadow: "hover:shadow-rose-500/[0.06]",
+      cardTint: "bg-gradient-to-br from-rose-500/[0.04] via-transparent to-transparent dark:from-rose-500/[0.05]",
+      activityText: "text-rose-600 dark:text-rose-300/90",
+    };
+  }
+  return {
+    Icon: Sparkles,
+    iconColor: "text-zinc-500 dark:text-zinc-400",
+    iconBg: "bg-zinc-500/10",
+    iconRing: "ring-zinc-400/30",
+    strip: "bg-gradient-to-b from-zinc-400/0 via-zinc-400/50 to-zinc-400/0",
+    hoverBorder: "hover:border-zinc-300 dark:hover:border-zinc-700",
+    hoverShadow: "hover:shadow-zinc-500/[0.04]",
+    cardTint: "",
+    activityText: "text-zinc-500 dark:text-zinc-400",
+  };
+}
+
 // Status visual treatment — three states, neutral vocabulary, no win/loss tone:
 //   PENDING                                 → amber Clock "Outcome Pending"
 //   NEUTRAL (|change| < 0.2% dead-zone)     → slate Minus "Limited Movement"
-//   SUCCESS / FAILED                        → emerald Eye  "Follow-up Available"
+//   SUCCESS / FAILED                        → cyan  Eye   "Follow-up Available"
 // Takes the full signal so socialDisplayStatus can apply the dead-zone rule.
 function statusVisual(signal: SocialSignal) {
   const display = socialDisplayStatus(signal);
@@ -34,32 +102,21 @@ function statusVisual(signal: SocialSignal) {
     return {
       label: socialOutcomeStatusDisplay(signal),
       Icon: Clock,
-      pill: "border-amber-400/30 bg-amber-500/[0.08] text-amber-700 dark:text-amber-300",
+      pill: "border-amber-400/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
     };
   }
   if (display === "NEUTRAL") {
     return {
       label: socialOutcomeStatusDisplay(signal),
       Icon: Minus,
-      pill: "border-slate-400/30 bg-slate-500/[0.08] text-slate-600 dark:text-slate-300",
+      pill: "border-slate-400/30 bg-slate-500/10 text-slate-600 dark:text-slate-300",
     };
   }
   return {
     label: socialOutcomeStatusDisplay(signal),
     Icon: Eye,
-    pill: "border-emerald-400/30 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-300",
+    pill: "border-cyan-400/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
   };
-}
-
-// Category visual — soft tint based on activity zone (neutral, not directional).
-function categoryVisual(outlook: string) {
-  if (outlook === "BREAKOUT_LIKELY" || outlook === "REJECTION_POSSIBLE") {
-    return "text-rose-600 dark:text-rose-300/90";
-  }
-  if (outlook === "BOUNCE_EXPECTED" || outlook === "BREAKDOWN_RISK") {
-    return "text-emerald-600 dark:text-emerald-300/90";
-  }
-  return "text-zinc-500 dark:text-zinc-400";
 }
 
 export default function SocialListPage() {
@@ -201,36 +258,52 @@ export default function SocialListPage() {
             {signals.map((s) => {
               const status = statusVisual(s);
               const StatusIcon = status.Icon;
+              const zone = zoneVisual(s.outlook);
+              const ZoneIcon = zone.Icon;
               const defaultView = s.status === "PENDING" ? "initial" : "outcome";
 
               return (
                 <Link
                   key={s.id}
                   href={`/social/${s.id}?view=${defaultView}`}
-                  className="group relative flex flex-col gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/40 px-4 py-3.5 transition-all hover:-translate-y-0.5 hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-md"
+                  className={`group relative overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/40 transition-all hover:-translate-y-0.5 hover:shadow-lg ${zone.hoverBorder} ${zone.hoverShadow}`}
                 >
-                  {/* Top row: time + symbol + camera */}
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex items-baseline gap-2.5">
-                      <span className="text-[11px] font-mono tabular-nums text-zinc-500 dark:text-zinc-500 shrink-0">
-                        {formatTime(s.signalTime)}
-                      </span>
-                      <span className="truncate text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                        {s.symbol}
+                  {/* Subtle zone-tinted background gradient */}
+                  <div className={`absolute inset-0 pointer-events-none ${zone.cardTint}`} />
+                  {/* Left accent strip — vertical gradient matching the zone */}
+                  <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${zone.strip}`} />
+
+                  <div className="relative px-4 py-3.5">
+                    {/* Top row — icon + symbol/time + camera */}
+                    <div className="flex items-center gap-3">
+                      <div className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${zone.iconBg} ring-1 ${zone.iconRing} shadow-sm`}>
+                        <ZoneIcon className={`size-4 ${zone.iconColor}`} strokeWidth={2.5} />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-[15px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+                            {s.symbol}
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums uppercase tracking-wide text-zinc-500">
+                            {formatTime(s.signalTime)}
+                          </span>
+                        </div>
+                        <div className={`mt-0.5 truncate text-[11px] font-medium ${zone.activityText}`}>
+                          {outlookCategoryDisplay(s.outlook)}
+                        </div>
+                      </div>
+
+                      <Camera className="size-3.5 shrink-0 text-zinc-300 dark:text-zinc-700 transition-colors group-hover:text-zinc-500" />
+                    </div>
+
+                    {/* Status pill — right-aligned, separated by hairline */}
+                    <div className="mt-3 flex items-center justify-end border-t border-zinc-100 dark:border-zinc-800/60 pt-2.5">
+                      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${status.pill}`}>
+                        <StatusIcon className="size-3" strokeWidth={2.5} />
+                        {status.label}
                       </span>
                     </div>
-                    <Camera className="size-3.5 shrink-0 text-zinc-300 dark:text-zinc-700 group-hover:text-zinc-500 transition-colors" />
-                  </div>
-
-                  {/* Bottom row: category + status pill */}
-                  <div className="flex items-center justify-between gap-2.5">
-                    <span className={`text-[11px] font-medium truncate ${categoryVisual(s.outlook)}`}>
-                      {outlookCategoryDisplay(s.outlook)}
-                    </span>
-                    <span className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${status.pill}`}>
-                      <StatusIcon className="size-2.5" />
-                      {status.label}
-                    </span>
                   </div>
                 </Link>
               );

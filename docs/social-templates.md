@@ -15,13 +15,16 @@ The feature is intentionally **scoped down**:
 
 ## Trigger criteria
 
-A signal becomes a "social-eligible" template candidate when **both** are true at the moment `recordSignal()` fires:
+A signal becomes a "social-eligible" template candidate when **all** are true at the moment `recordSignal()` fires:
 
 ```
-intel.confidence >= 0.75    (HIGH bucket lower bound)
+intel.confidence >= 0.75    (stricter than the 0.7 tracking floor)
+intel.outlook   in (BOUNCE_EXPECTED, REJECTION_POSSIBLE)
 ```
 
-The volatility filter (`>= 0.7`) was dropped — it was producing too few templates on calm/sideways days, leaving `/admin/social` empty for stretches. Confidence alone is the gate now. `volatility_score` still gets persisted on every row for future analysis but no longer affects eligibility.
+The volatility filter (`>= 0.7`) was dropped — it was producing too few templates on calm/sideways days, leaving `/admin/social` empty for stretches. Confidence + reactive-outlook are the gates now. `volatility_score` still gets persisted on every row for future analysis but no longer affects eligibility.
+
+**Outlook restriction (2026-05-07):** the `/social` list page server-filters to `BOUNCE_EXPECTED` and `REJECTION_POSSIBLE` only. Historical `BREAKOUT_LIKELY` / `BREAKDOWN_RISK` rows still exist in the DB but are excluded from the list. Direct deep-links (`/social/[id]`) to those legacy rows still render via the templates — only the discovery surface is filtered.
 
 The eligibility flag is computed once, at insert time, and persisted. We do **not** re-evaluate eligibility later.
 
