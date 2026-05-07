@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Sun, Moon, LogOut, TrendingUp, Search, X, Shield, BookOpen, Camera } from "lucide-react";
+import { Sun, Moon, LogOut, TrendingUp, Search, X, Shield, BookOpen, Telescope } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMarketData } from "@/hooks/use-market-data";
@@ -261,7 +261,15 @@ export function GlobalNav() {
             </a>
           )}
 
-          {/* Admin only: Re-login + Admin icon */}
+          {/* Visible to all authenticated users — System Observation Stocks feed.
+              Telescope distinguishes it from the personal Watch Zone (Eye icon). */}
+          <Link href="/social">
+            <Button variant="ghost" size="icon-sm" aria-label="System Observations" className="text-muted-foreground hover:text-foreground">
+              <Telescope className="size-4" />
+            </Button>
+          </Link>
+
+          {/* Admin only: Re-login + admin tools */}
           {user?.role === "ADMIN" && (
             <>
               {kiteConnected && (
@@ -284,11 +292,6 @@ export function GlobalNav() {
               <Link href="/admin/tracking">
                 <Button variant="ghost" size="icon-sm" aria-label="Signal Tracking" className="text-muted-foreground hover:text-foreground">
                   <TrendingUp className="size-4" />
-                </Button>
-              </Link>
-              <Link href="/admin/social">
-                <Button variant="ghost" size="icon-sm" aria-label="Social Templates" className="text-muted-foreground hover:text-foreground">
-                  <Camera className="size-4" />
                 </Button>
               </Link>
             </>

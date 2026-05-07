@@ -4,10 +4,10 @@ import {
   TemplateFrame,
   BrandHeader,
   momentumLabel,
-  pressurePhrase,
+  pressureParticipation,
   volatilityPhrase,
   contextPhrase,
-  systemInsight,
+  systemInsightObservational,
   getDirection,
   formatPrice,
 } from "./template-shared";
@@ -50,7 +50,7 @@ export function InitialTemplate({ signal }: { signal: SocialSignal }) {
               <DirArrow className={`size-7 ${accentText}`} strokeWidth={3} />
             </Row>
             <Row label="Pressure">
-              <span className="text-white text-[28px] font-semibold">{pressurePhrase(signal)}</span>
+              <span className="text-white text-[28px] font-semibold">{pressureParticipation(signal)}</span>
             </Row>
             <Row label="Volatility">
               <span className="text-white text-[28px] font-semibold">{volatilityPhrase(signal.volatilityScore)}</span>
@@ -70,7 +70,7 @@ export function InitialTemplate({ signal }: { signal: SocialSignal }) {
         <div className="mt-10">
           <SectionHeader>System Insight</SectionHeader>
           <p className="mt-4 text-slate-200 text-[30px] font-medium leading-snug max-w-[880px]">
-            {systemInsight(signal)}
+            {systemInsightObservational()}
           </p>
         </div>
       </div>

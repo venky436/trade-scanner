@@ -70,9 +70,12 @@ export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts)
     return { signals, count: signals.length };
   });
 
-  // ── Social templates feed (subset of tracking — high-conf + high-volatility signals) ──
+  // ── System Observation Stocks feed (subset of tracking — high-conf + high-volatility) ──
+  // Open to ALL authenticated users (not admin-only). Backend route still
+  // sits under /api/admin/social for path stability with the existing frontend
+  // and DB rows; only the auth requirement is relaxed to authMiddleware-only.
 
-  fastify.get("/api/admin/social", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+  fastify.get("/api/admin/social", { preHandler: [authMiddleware] }, async (req, reply) => {
     const service = opts.getTrackingService?.();
     if (!service) return { signals: [], count: 0 };
     const { date } = req.query as { date?: string };
@@ -81,7 +84,7 @@ export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts)
     return { signals, count: signals.length };
   });
 
-  fastify.get("/api/admin/social/:id", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+  fastify.get("/api/admin/social/:id", { preHandler: [authMiddleware] }, async (req, reply) => {
     const service = opts.getTrackingService?.();
     if (!service) return reply.code(404).send({ error: "Service unavailable" });
     const { id } = req.params as { id: string };

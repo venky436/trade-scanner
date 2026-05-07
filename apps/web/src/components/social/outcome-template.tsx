@@ -1,22 +1,14 @@
-import { Check, Clock, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock, Minus } from "lucide-react";
 import {
   type SocialSignal,
   TemplateFrame,
   BrandHeader,
-  observedBehavior,
-  outcomeInsight,
-  socialDisplayStatus,
+  observedActivity,
+  outcomeInsightObservational,
+  type ObservedActivity,
 } from "./template-shared";
 
 export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
-  // socialDisplayStatus collapses any historical NEUTRAL into SUCCESS/FAILED;
-  // new rows already arrive as SUCCESS/FAILED from the server.
-  const succeeded = socialDisplayStatus(signal) === "SUCCESS";
-  const accentText = succeeded ? "text-emerald-400" : "text-rose-400";
-  const accentGrad = succeeded
-    ? "from-emerald-400/0 via-emerald-400/60 to-emerald-400/0"
-    : "from-rose-400/0 via-rose-400/60 to-rose-400/0";
-
   // Lock-in is at minute 10 with the direction-snapshot model. Compute live so
   // historical rows (locked at variable time under prior models) still read right.
   const lockMinutes = signal.evaluatedAt
@@ -25,7 +17,34 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
       ))
     : 10;
 
-  const observations = observedBehavior(signal);
+  const activities = observedActivity(signal);
+
+  // Direction colour for the hero stamp & accent — uses the actual price-change
+  // direction (factual). This is NOT a "win/loss" indicator; it's just a
+  // descriptive observation of which way price moved.
+  const change = Number(signal.changePercent ?? 0);
+  const movedUp = change > 0;
+  const movedDown = change < 0;
+  const accentText = movedUp
+    ? "text-emerald-400"
+    : movedDown
+    ? "text-rose-400"
+    : "text-slate-400";
+  const accentBorder = movedUp
+    ? "border-emerald-400/40"
+    : movedDown
+    ? "border-rose-400/40"
+    : "border-slate-400/40";
+  const accentBg = movedUp
+    ? "bg-emerald-500/[0.08]"
+    : movedDown
+    ? "bg-rose-500/[0.08]"
+    : "bg-slate-500/[0.08]";
+  const accentGrad = movedUp
+    ? "from-emerald-400/0 via-emerald-400/60 to-emerald-400/0"
+    : movedDown
+    ? "from-rose-400/0 via-rose-400/60 to-rose-400/0"
+    : "from-slate-400/0 via-slate-400/60 to-slate-400/0";
 
   return (
     <TemplateFrame>
@@ -39,7 +58,7 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
             <h1 className="text-[96px] font-extrabold tracking-tight text-white leading-none">
               {signal.symbol}
             </h1>
-            <div className={`inline-flex items-center gap-3 px-5 py-3 rounded-2xl border ${succeeded ? "border-emerald-400/40 bg-emerald-500/[0.08]" : "border-rose-400/40 bg-rose-500/[0.08]"}`}>
+            <div className={`inline-flex items-center gap-3 px-5 py-3 rounded-2xl border ${accentBorder} ${accentBg}`}>
               <Clock className={`size-7 ${accentText}`} strokeWidth={2.5} />
               <div className="flex flex-col leading-tight">
                 <span className="text-slate-400 text-[12px] font-bold tracking-[0.3em] uppercase">
@@ -59,12 +78,12 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
           </p>
         </div>
 
-        {/* Section: Observed Behavior */}
+        {/* Section: Observed Activity (no win/loss framing) */}
         <div className="mt-12">
-          <SectionHeader>Observed Behavior</SectionHeader>
+          <SectionHeader>Observed Activity</SectionHeader>
           <div className="mt-7 space-y-6">
-            {observations.map((obs, i) => (
-              <ObservationRow key={i} observation={obs} accentText={accentText} />
+            {activities.map((a, i) => (
+              <ActivityRow key={i} activity={a} />
             ))}
           </div>
         </div>
@@ -73,7 +92,7 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
         <div className="mt-11">
           <SectionHeader>Insight</SectionHeader>
           <p className="mt-4 text-slate-200 text-[28px] font-medium leading-snug max-w-[920px]">
-            {outcomeInsight(signal)}
+            {outcomeInsightObservational()}
           </p>
         </div>
       </div>
@@ -83,7 +102,7 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
         <div className="inline-flex items-center gap-3 px-5 py-3 rounded-full border border-cyan-400/25 bg-cyan-500/[0.05]">
           <span className="text-cyan-400/90 text-[18px]">📊</span>
           <span className="text-cyan-200/85 text-[15px] font-medium tracking-wide">
-            This illustrates market behavior
+            Market observation — not financial advice
           </span>
         </div>
       </div>
@@ -102,20 +121,30 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ObservationRow({
-  observation,
-  accentText,
-}: {
-  observation: { ok: boolean; text: string };
-  accentText: string;
-}) {
-  const Icon = observation.ok ? Check : X;
+// Neutral activity row — directional arrow indicator (up / down / flat) instead
+// of check/X icons. Communicates *direction of observation*, never success/fail.
+function ActivityRow({ activity }: { activity: ObservedActivity }) {
+  const Icon =
+    activity.dir === "up" ? ArrowUp : activity.dir === "down" ? ArrowDown : Minus;
+  const iconColor =
+    activity.dir === "up"
+      ? "text-emerald-400"
+      : activity.dir === "down"
+      ? "text-rose-400"
+      : "text-slate-400";
+  const iconBg =
+    activity.dir === "up"
+      ? "border-emerald-400/30 bg-emerald-500/10"
+      : activity.dir === "down"
+      ? "border-rose-400/30 bg-rose-500/10"
+      : "border-slate-400/30 bg-slate-500/10";
+
   return (
     <div className="flex items-center gap-5">
-      <div className={`flex items-center justify-center size-10 rounded-full border ${observation.ok ? "border-emerald-400/30 bg-emerald-500/10" : "border-rose-400/30 bg-rose-500/10"}`}>
-        <Icon className={`size-5 ${accentText}`} strokeWidth={3} />
+      <div className={`flex items-center justify-center size-10 rounded-full border ${iconBg}`}>
+        <Icon className={`size-5 ${iconColor}`} strokeWidth={3} />
       </div>
-      <span className="text-white text-[26px] font-medium">{observation.text}</span>
+      <span className="text-white text-[26px] font-medium">{activity.text}</span>
     </div>
   );
 }

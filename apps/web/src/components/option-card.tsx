@@ -50,7 +50,7 @@ interface OutlookStyle {
 const OUTLOOK_STYLES: Record<Outlook, OutlookStyle> = {
   BREAKOUT_LIKELY: {
     icon: Flame,
-    label: "Breakout Likely",
+    label: "Buying activity near resistance",
     bg: "bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent dark:from-emerald-500/15",
     border: "border-emerald-500/40",
     iconBg: "bg-emerald-500/15 dark:bg-emerald-500/20",
@@ -59,7 +59,7 @@ const OUTLOOK_STYLES: Record<Outlook, OutlookStyle> = {
   },
   BOUNCE_EXPECTED: {
     icon: ArrowUpRight,
-    label: "Bounce Expected",
+    label: "Reactive activity near support",
     bg: "bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent dark:from-emerald-500/15",
     border: "border-emerald-500/40",
     iconBg: "bg-emerald-500/15 dark:bg-emerald-500/20",
@@ -68,7 +68,7 @@ const OUTLOOK_STYLES: Record<Outlook, OutlookStyle> = {
   },
   REJECTION_POSSIBLE: {
     icon: ArrowDownRight,
-    label: "Rejection Possible",
+    label: "Selling activity near resistance",
     bg: "bg-gradient-to-br from-rose-500/10 via-rose-500/5 to-transparent dark:from-rose-500/15",
     border: "border-rose-500/40",
     iconBg: "bg-rose-500/15 dark:bg-rose-500/20",
@@ -77,7 +77,7 @@ const OUTLOOK_STYLES: Record<Outlook, OutlookStyle> = {
   },
   BREAKDOWN_RISK: {
     icon: TrendingDown,
-    label: "Breakdown Risk",
+    label: "Selling activity near support",
     bg: "bg-gradient-to-br from-rose-500/10 via-rose-500/5 to-transparent dark:from-rose-500/15",
     border: "border-rose-500/40",
     iconBg: "bg-rose-500/15 dark:bg-rose-500/20",
@@ -86,7 +86,7 @@ const OUTLOOK_STYLES: Record<Outlook, OutlookStyle> = {
   },
   NO_CLEAR_EDGE: {
     icon: Pause,
-    label: "No Clear Edge",
+    label: "No clear alignment",
     bg: "bg-gradient-to-br from-zinc-200/60 via-zinc-100/30 to-transparent dark:from-zinc-700/30 dark:via-zinc-800/20",
     border: "border-zinc-300 dark:border-zinc-700/60",
     iconBg: "bg-zinc-200 dark:bg-zinc-700/50",

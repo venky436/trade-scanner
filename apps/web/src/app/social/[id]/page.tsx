@@ -89,7 +89,7 @@ export default function SocialTemplatePage() {
     return (
       <main className="max-w-[1400px] mx-auto px-4 py-6 space-y-4">
         <Link
-          href="/admin/social"
+          href="/social"
           className="group inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/40 px-3 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-700"
         >
           <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" />
@@ -110,7 +110,7 @@ export default function SocialTemplatePage() {
       {/* Header (NOT included in screenshot) */}
       <div className="flex items-center justify-between">
         <Link
-          href="/admin/social"
+          href="/social"
           className="group inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/40 px-3 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-700"
         >
           <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" />

@@ -70,6 +70,15 @@ export function pressurePhrase(signal: Pick<SocialSignal, "bias" | "confidence">
   return "Mixed pressure";
 }
 
+// Pure-participation phrasing — neutral observational tone for the public
+// social templates. Uses "participation" instead of "pressure" so the template
+// reads as market behaviour rather than buy/sell instruction.
+export function pressureParticipation(signal: Pick<SocialSignal, "bias">): string {
+  if (signal.bias === "BULLISH") return "Buying participation increasing";
+  if (signal.bias === "BEARISH") return "Selling participation increasing";
+  return "Neutral participation";
+}
+
 export function volatilityLabel(score: string | null): string {
   const v = Number(score ?? 0);
   if (v >= 0.7) return "High";
@@ -103,6 +112,15 @@ export function systemInsight(signal: Pick<SocialSignal, "outlook" | "confidence
     if (isBearish) return "Conditions aligning for potential downside movement";
   }
   return "Conditions aligning for potential movement";
+}
+
+// Pure-observational system insight — no predictive language, no "expected"
+// or "likely". Used on the public initial template after the SEBI scrub.
+export function systemInsightObservational(): string {
+  // Pick deterministically from a small pool based on outlook, so a queue of
+  // templates doesn't read identically. (Kept simple — no real randomness so
+  // the same signal always produces the same string for repeatable screenshots.)
+  return "Multiple market factors currently active";
 }
 
 export function alignmentLabel(confidence: string): string {
@@ -236,6 +254,48 @@ export function observedBehavior(
   ];
 }
 
+// Pure-observational follow-up — no win/loss framing, no ok/fail flag, just
+// neutral activity statements. Three lines describing what was observed in the
+// window. Used on the public outcome template after the SEBI scrub.
+export interface ObservedActivity {
+  text: string;
+  // direction: "up" / "down" / "flat" — used for a small directional indicator
+  // (arrow / dot) on the row. NOT framed as success/failure.
+  dir: "up" | "down" | "flat";
+}
+
+export function observedActivity(
+  signal: Pick<SocialSignal, "status" | "outlook" | "bias" | "changePercent">,
+): ObservedActivity[] {
+  const change = Number(signal.changePercent ?? 0);
+  const movedUp = change > 0;
+  const movedDown = change < 0;
+  const dir: "up" | "down" | "flat" = movedUp ? "up" : movedDown ? "down" : "flat";
+
+  const priceLine: ObservedActivity = movedUp
+    ? { text: "Price moved upward", dir: "up" }
+    : movedDown
+    ? { text: "Price moved downward", dir: "down" }
+    : { text: "Price showed limited movement", dir: "flat" };
+
+  // Pressure framing as participation — neutral observation, never "succeeded".
+  const isBullishBias = signal.bias === "BULLISH";
+  const isBearishBias = signal.bias === "BEARISH";
+  const participationLine: ObservedActivity = isBullishBias
+    ? { text: "Buying participation observed", dir: "up" }
+    : isBearishBias
+    ? { text: "Selling participation observed", dir: "down" }
+    : { text: "Mixed participation observed", dir: "flat" };
+
+  // Third line — momentum descriptor based on whether direction matched movement.
+  const momentumLine: ObservedActivity =
+    dir === "flat"
+      ? { text: "Momentum remained range-bound", dir: "flat" }
+      : { text: "Momentum remained active", dir };
+
+  return [priceLine, participationLine, momentumLine];
+}
+
 // One-line outcome insight — generic, non-prescriptive.
 export function outcomeInsight(
   signal: Pick<SocialSignal, "status" | "outlook" | "changePercent">,
@@ -245,6 +305,35 @@ export function outcomeInsight(
     return "When momentum + pressure align near key levels, short-term movements can occur";
   }
   return "Initial alignment doesn't always confirm — markets remain unpredictable";
+}
+
+// Pure-observational outcome insight — no "succeeded" / "did not work" framing.
+// One sentence describing the educational value of the observation.
+export function outcomeInsightObservational(): string {
+  return "Illustrates short-term market behavior across momentum and participation";
+}
+
+// Category descriptor used on the /social observation table — replaces the
+// raw outlook label (Breakout Likely / Bounce Expected / etc.) with a neutral
+// SEBI-safe activity zone descriptor.
+export function outlookCategoryDisplay(outlook: string): string {
+  if (outlook === "BREAKOUT_LIKELY" || outlook === "REJECTION_POSSIBLE") {
+    return "Near Resistance Activity";
+  }
+  if (outlook === "BOUNCE_EXPECTED" || outlook === "BREAKDOWN_RISK") {
+    return "Near Support Activity";
+  }
+  return "Market Observation";
+}
+
+// Status pill for the /social observation table. Replaces "Played Out" /
+// "Did Not Play Out" with neutral observation language. PENDING stays "Outcome
+// Pending"; SUCCESS and FAILED both collapse to "Follow-up Available" because
+// at the table level, the distinction (W/L) is shown when the admin opens the
+// template — the list view doesn't need win/loss prominence.
+export function socialOutcomeStatusDisplay(status: string): string {
+  if (status === "PENDING") return "Outcome Pending";
+  return "Follow-up Available";
 }
 
 // Derive outcome verdict from status. SUCCESS → played out for the predicted
