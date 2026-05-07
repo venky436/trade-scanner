@@ -1,5 +1,10 @@
+import { RequireAdmin } from "@/components/require-admin";
 import { TrackingDashboard } from "@/components/tracking-dashboard";
 
 export default function TrackingPage() {
-  return <TrackingDashboard />;
+  return (
+    <RequireAdmin>
+      <TrackingDashboard />
+    </RequireAdmin>
+  );
 }

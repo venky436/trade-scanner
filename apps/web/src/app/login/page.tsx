@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TrendingUp, Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import { useAuth } from "@/context/auth-context";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginPage() {
   const router = useRouter();
@@ -25,14 +28,23 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
 
-    if (!email || !password) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
       setError("Please fill in all fields");
+      return;
+    }
+    if (!EMAIL_RE.test(trimmedEmail)) {
+      setError("Please enter a valid email address");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
       return;
     }
 
     setLoading(true);
 
-    const result = await login(email, password);
+    const result = await login(trimmedEmail, password);
 
     if (result.success) {
       router.push("/");
@@ -124,6 +136,14 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+
+          {/* Sign-up cross-link */}
+          <p className="mt-6 text-center text-sm text-muted-foreground">
+            Don&apos;t have an account?{" "}
+            <Link href="/signup" className="font-semibold text-green-600 dark:text-green-400 hover:underline">
+              Create one
+            </Link>
+          </p>
         </div>
 
         {/* Footer */}

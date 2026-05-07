@@ -1,9 +1,25 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { ArrowDown, ArrowUp, Minus } from "lucide-react";
 import type { IntelligenceSnapshot } from "@/lib/types";
+
+// Same price-flash pattern as MarketCard so a tick on indices is visually
+// obvious — emerald/rose tint for ~1.2s after price changes.
+function usePriceFlash(price: number): "up" | "down" | null {
+  const prev = useRef<number>(price);
+  const [flash, setFlash] = useState<"up" | "down" | null>(null);
+  useEffect(() => {
+    if (price === prev.current) return;
+    setFlash(price > prev.current ? "up" : "down");
+    prev.current = price;
+    const id = window.setTimeout(() => setFlash(null), 1200);
+    return () => window.clearTimeout(id);
+  }, [price]);
+  return flash;
+}
 
 type Accent = "blue" | "purple" | "amber";
 
@@ -63,6 +79,19 @@ export function IndexCard({ name, symbol, data, accent, Icon }: IndexCardProps) 
   const change = data?.change ?? 0;
   const positive = change > 0;
   const negative = change < 0;
+  const flash = usePriceFlash(price);
+
+  const flashTone = flash === "up"
+    ? "ring-2 ring-emerald-400/60 bg-emerald-500/10"
+    : flash === "down"
+    ? "ring-2 ring-rose-400/60 bg-rose-500/10"
+    : "ring-0 bg-transparent";
+
+  const priceFlashColor = flash === "up"
+    ? "text-emerald-600 dark:text-emerald-400"
+    : flash === "down"
+    ? "text-rose-600 dark:text-rose-400"
+    : "text-zinc-900 dark:text-zinc-50";
 
   const ChangeIcon = positive ? ArrowUp : negative ? ArrowDown : Minus;
   const changeColor = positive
@@ -99,18 +128,28 @@ export function IndexCard({ name, symbol, data, accent, Icon }: IndexCardProps) 
           </div>
         </div>
         {data && (
-          <div className="size-2 animate-pulse rounded-full bg-emerald-500 dark:bg-emerald-400/60" />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/[0.08] px-2 py-0.5">
+            <span className="relative flex size-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-700 dark:text-emerald-300">
+              Live
+            </span>
+          </span>
         )}
       </div>
 
-      {/* Price */}
+      {/* Price — wrapped in flash tile so a tick is visually obvious */}
       <div className="mt-5">
         {data ? (
-          <div className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
-            {price.toLocaleString("en-IN", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
+          <div className={`inline-block rounded-xl px-2.5 py-1 transition-all duration-700 ${flashTone}`}>
+            <div className={`text-3xl font-bold tabular-nums transition-colors duration-700 ${priceFlashColor}`}>
+              {price.toLocaleString("en-IN", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
+            </div>
           </div>
         ) : (
           <div className="h-8 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800/60" />

@@ -10,6 +10,7 @@ import { detectPattern } from "../lib/pattern-engine.js";
 import { getMomentum } from "../lib/momentum-engine.js";
 import { pressureFromCandles } from "../lib/pressure-from-candles.js";
 import { toIntelligence } from "../lib/intelligence-transformer.js";
+import { authMiddleware, adminGuard } from "../modules/auth/auth.middleware.js";
 
 const VALID_INTERVALS = [
   "minute",
@@ -485,8 +486,8 @@ export async function stocksRoute(
     return result;
   });
 
-  // --- EOD Precomputation ---
-  fastify.post("/api/eod/run", async (_req, reply) => {
+  // --- EOD Precomputation (admin only — expensive job) ---
+  fastify.post("/api/eod/run", { preHandler: [authMiddleware, adminGuard] }, async (_req, reply) => {
     const eodJob = opts.getEodJob?.();
     if (!eodJob) {
       return reply.status(503).send({ error: "EOD job not initialized" });

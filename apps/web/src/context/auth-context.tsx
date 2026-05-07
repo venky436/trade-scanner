@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { SESSION_EXPIRED_EVENT } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4002";
 
@@ -51,11 +52,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Redirect to login if not authenticated
+  // Redirect to login if not authenticated, but allow public routes through.
+  // Public routes: "/" (landing page), "/login", "/signup".
   useEffect(() => {
-    if (!isLoading && !user && pathname !== "/login") {
-      router.push("/login");
-    }
+    if (isLoading || user) return;
+    const PUBLIC_ROUTES = ["/", "/login", "/signup"];
+    if (PUBLIC_ROUTES.includes(pathname)) return;
+    router.push("/login");
   }, [isLoading, user, pathname, router]);
 
   async function fetchUser(token: string) {
@@ -143,6 +146,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
+
+  // Force-logout listener — apiFetch dispatches SESSION_EXPIRED_EVENT when any
+  // API call returns 401 from a non-auth endpoint. We try a refresh once; if
+  // that also fails, we kick the user back to /login so they can re-auth
+  // instead of staring at a silently failing UI.
+  useEffect(() => {
+    function handleSessionExpired() {
+      // Best-effort refresh; if the refresh cookie is also expired, this will
+      // null out the user and the redirect effect above will send them to /login.
+      tryRefresh();
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, logout }}>
