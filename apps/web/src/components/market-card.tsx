@@ -113,17 +113,8 @@ export function MarketCard({ data }: MarketCardProps) {
     ? "text-rose-600 dark:text-rose-400"
     : "text-zinc-500";
 
-  // Three-layer visual when a tick lands: (1) ring around the price tile,
-  // (2) background tint behind the price, (3) brief text-color shift on the
-  // price digits themselves. All fade together over 1.2s so the tick reads as
-  // one cohesive pulse.
-  const flashRing =
-    flash === "up"
-      ? "ring-2 ring-emerald-400/70 bg-emerald-500/10"
-      : flash === "down"
-      ? "ring-2 ring-rose-400/70 bg-rose-500/10"
-      : "ring-0 bg-transparent";
-
+  // Price-text-only flash — color shifts emerald/rose for ~1.2s on tick.
+  // No surrounding ring or background tint (kept the card itself clean).
   const priceColor = flash === "up"
     ? "text-emerald-600 dark:text-emerald-400"
     : flash === "down"
@@ -149,7 +140,7 @@ export function MarketCard({ data }: MarketCardProps) {
             {zoneDisplay(zone)}
           </div>
         </div>
-        <div className={`shrink-0 rounded-xl px-2.5 py-1 transition-all duration-700 ${flashRing}`}>
+        <div className="shrink-0">
           <div
             className={`text-right text-2xl font-bold tabular-nums transition-colors duration-700 ${priceColor}`}
             style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)" }}

@@ -228,11 +228,8 @@ export function StockDetail({ symbol }: StockDetailProps) {
     : "text-zinc-500";
 
   const flash = usePriceFlash(intel.price);
-  const flashTone = flash === "up"
-    ? "ring-2 ring-emerald-400/60 bg-emerald-500/10"
-    : flash === "down"
-    ? "ring-2 ring-rose-400/60 bg-rose-500/10"
-    : "ring-0 bg-transparent";
+  // Price-text-only flash — color shifts emerald/rose for ~1.2s on tick.
+  // No surrounding ring or background tint.
   const priceFlashColor = flash === "up"
     ? "text-emerald-600 dark:text-emerald-400"
     : flash === "down"
@@ -270,13 +267,11 @@ export function StockDetail({ symbol }: StockDetailProps) {
             </div>
           </div>
           <div className="text-right">
-            <div className={`inline-block rounded-xl px-3 py-1 transition-all duration-700 ${flashTone}`}>
-              <div
-                className={`text-4xl font-bold tabular-nums transition-colors duration-700 ${priceFlashColor}`}
-                style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)" }}
-              >
-                ₹{intel.price.toFixed(2)}
-              </div>
+            <div
+              className={`text-4xl font-bold tabular-nums transition-colors duration-700 ${priceFlashColor}`}
+              style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)" }}
+            >
+              ₹{intel.price.toFixed(2)}
             </div>
             <div className={`mt-1 inline-flex items-center gap-1 text-sm font-semibold tabular-nums ${changeColor}`}>
               <ChangeIcon className="size-3.5" />
