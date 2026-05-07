@@ -25,8 +25,8 @@ import type { IntelligenceSnapshot } from "@/lib/types";
 type ScannerMode = "stocks" | "options";
 
 // Section caps — keep each list digestible at a glance.
-const STRONG_ALIGNMENT_CAP = 8;
-const ZONE_SECTION_CAP = 12;
+const STRONG_ALIGNMENT_CAP = 6;
+const ZONE_SECTION_CAP = 6;
 
 // Confidence threshold for "Strong Factor Alignment". Backend keeps producing
 // the score for ranking; UI never displays the % to the user.
@@ -37,27 +37,33 @@ function SectionHeader({
   title,
   subtitle,
   count,
+  iconBg = "bg-zinc-100 dark:bg-zinc-900/60",
+  iconRing = "ring-zinc-200 dark:ring-zinc-800/80",
+  iconColor = "text-zinc-600 dark:text-zinc-400",
 }: {
   Icon: LucideIcon;
   title: string;
   subtitle: string;
   count?: number;
+  iconBg?: string;
+  iconRing?: string;
+  iconColor?: string;
 }) {
   return (
     <div className="mb-5 flex items-end justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <div className="flex size-9 items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-900/60 ring-1 ring-zinc-200 dark:ring-zinc-800/80">
-          <Icon className="size-4 text-zinc-600 dark:text-zinc-400" />
+      <div className="flex items-center gap-3.5">
+        <div className={`flex size-11 items-center justify-center rounded-2xl ${iconBg} ring-1 ${iconRing} shadow-sm`}>
+          <Icon className={`size-5 ${iconColor}`} strokeWidth={2.4} />
         </div>
         <div>
-          <h2 className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+          <h2 className="text-xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50">
             {title}
           </h2>
-          <p className="mt-0.5 text-xs text-zinc-500">{subtitle}</p>
+          <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">{subtitle}</p>
         </div>
       </div>
       {typeof count === "number" && (
-        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 tabular-nums">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500 tabular-nums">
           {count} {count === 1 ? "stock" : "stocks"}
         </span>
       )}
@@ -192,6 +198,9 @@ export function Dashboard() {
                 Icon={Activity}
                 title="Market Overview"
                 subtitle="Real-time market activity across major indices"
+                iconBg="bg-gradient-to-br from-cyan-500/20 to-blue-500/20"
+                iconRing="ring-cyan-400/30"
+                iconColor="text-cyan-600 dark:text-cyan-300"
               />
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <IndexCard
@@ -232,6 +241,9 @@ export function Dashboard() {
                     title="Strong Factor Alignment"
                     subtitle="Stocks showing alignment across momentum, pressure & volatility"
                     count={strongAlignment.length}
+                    iconBg="bg-gradient-to-br from-amber-500/25 to-orange-500/20"
+                    iconRing="ring-amber-400/40"
+                    iconColor="text-amber-600 dark:text-amber-300"
                   />
                   {strongAlignment.length === 0 ? (
                     <EmptyState message="No stocks currently showing strong factor alignment." />
@@ -251,6 +263,9 @@ export function Dashboard() {
                     title="Near Support Zones"
                     subtitle="Stocks trading close to historically reactive support areas"
                     count={nearSupport.length}
+                    iconBg="bg-gradient-to-br from-emerald-500/25 to-green-500/20"
+                    iconRing="ring-emerald-400/40"
+                    iconColor="text-emerald-600 dark:text-emerald-300"
                   />
                   {nearSupport.length === 0 ? (
                     <EmptyState message="No stocks currently near support zones." />
@@ -270,6 +285,9 @@ export function Dashboard() {
                     title="Near Resistance Zones"
                     subtitle="Stocks approaching historically reactive resistance areas"
                     count={nearResistance.length}
+                    iconBg="bg-gradient-to-br from-rose-500/25 to-red-500/20"
+                    iconRing="ring-rose-400/40"
+                    iconColor="text-rose-600 dark:text-rose-300"
                   />
                   {nearResistance.length === 0 ? (
                     <EmptyState message="No stocks currently near resistance zones." />
