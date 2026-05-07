@@ -1,6 +1,12 @@
 # Signal Tracking System
 
-> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a **pure direction snapshot at minute 10** — no TP/SL thresholds, no NEUTRAL. Every tracked signal is forced into SUCCESS or FAILED based on price direction at the snapshot moment: any movement matching the outlook direction (even 0.01%) is a win; any opposite movement is a loss. Admin-only — not user-facing.
+> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a **direction snapshot at minute 10 with a ±0.2% NEUTRAL dead-zone**. Each signal is classified at metric time:
+>
+> - `|change| ≥ 0.2%` in the expected direction → **SUCCESS**
+> - `|change| ≥ 0.2%` in the opposite direction → **FAILED**
+> - `|change| <  0.2%` (either side) → **NEUTRAL** (excluded from accuracy)
+>
+> Accuracy is `wins / (wins + losses)` — NEUTRAL rows are never in the denominator. The DB still stores raw `SUCCESS` / `FAILED` from the direction snapshot; the dead-zone is applied at metric-compute time. Admin-only — not user-facing.
 
 ## Why this exists
 
@@ -80,16 +86,18 @@ Evaluation timer (every 30 seconds, direction snapshot)
       quote = marketDataService.getQuote(symbol)   // in-memory, cheap
       change_percent = ((quote.lastPrice - price_at_signal) / price_at_signal) * 100
 
-      Classification (pure direction — no thresholds):
+      Classification at WRITE time (direction snapshot):
         BUY-side (BREAKOUT_LIKELY, BOUNCE_EXPECTED):
-          change ≥ 0%   → SUCCESS  (any movement up, even 0.01%)
-          change <  0%   → FAILED  (any movement down)
+          change ≥ 0%   → SUCCESS
+          change <  0%   → FAILED
 
         SELL-side (REJECTION_POSSIBLE, BREAKDOWN_RISK):
-          change ≤ 0%   → SUCCESS  (any movement down, even 0.01%)
-          change >  0%   → FAILED  (any movement up)
+          change ≤ 0%   → SUCCESS
+          change >  0%   → FAILED
 
-      No NEUTRAL — every snapshot is a forced WIN or LOSS.
+      The ±0.2% NEUTRAL dead-zone is applied later, at metric-compute time
+      (see "NEUTRAL dead-zone" below). The DB row stores the raw
+      direction-snapshot SUCCESS / FAILED.
     ↓
 On lock:
   price_after = quote.lastPrice (snapshot at minute 10)
@@ -161,24 +169,43 @@ interface BucketMetrics {
   bucket: "ULTRA_HIGH" | "HIGH" | "MEDIUM";
   total: number;           // all signals in the bucket today
   pending: number;         // not yet evaluated
-  success: number;
-  failed: number;
-  accuracy: number;        // success / (success + failed) * 100 — pure W/L, no NEUTRAL
-  avgGain: number;         // avg |change_percent| for SUCCESS signals (magnitude — direction-agnostic)
-  avgLoss: number;         // avg |change_percent| for FAILED signals (magnitude — direction-agnostic)
+  success: number;         // post-dead-zone wins
+  failed: number;          // post-dead-zone losses
+  neutral: number;         // |change| < 0.2% — excluded from accuracy
+  accuracy: number;        // wins / (wins + losses) * 100  — NEUTRAL excluded
+  avgGain: number;         // avg |change_percent| for SUCCESS signals
+  avgLoss: number;         // avg |change_percent| for FAILED signals
   avgMaxProfit: number;    // avg max_profit_percent across all evaluated
   avgMaxDrawdown: number;  // avg max_drawdown_percent across all evaluated
   expectancy: number;      // (winRate * avgGain) - (lossRate * avgLoss)
   riskReward: number;      // |avgGain / avgLoss|
   sampleSufficient: boolean;
   minSampleRequired: number;
-  byOutlook: Record<string, { total: number; wins: number; rate: number }>;
+  byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }>;
 }
 ```
 
+### NEUTRAL dead-zone (±0.2%)
+
+`reclassifyForMetrics()` in `signal-tracking.service.ts` applies a **±0.2% dead-zone** at metric-compute time:
+
+- `|change_percent| < 0.2%` → metric-class **NEUTRAL** (excluded from wins+losses)
+- `|change_percent| ≥ 0.2%` AND direction matches outlook → **SUCCESS**
+- `|change_percent| ≥ 0.2%` AND direction opposite → **FAILED**
+- `status = PENDING` → **PENDING**
+
+The DB row's stored `status` is **overridden** by this rule — `change_percent` is the source of truth at metric time. So a row stored as `SUCCESS` with `change_percent = 0.05%` becomes a metric-NEUTRAL and is excluded from accuracy. This filters intraday wiggles that aren't a meaningful directional outcome.
+
+The constant is `NEUTRAL_METRIC_THRESHOLD_PERCENT = 0.2` in `apps/server/src/services/signal-tracking.service.ts`. The frontend mirrors this in:
+
+- `apps/web/src/components/tracking-dashboard.tsx` — the Recent Signals table's `displayStatus()` helper (so table pills match the bucket-card accuracy)
+- `apps/web/src/components/social/template-shared.tsx` — `NEUTRAL_THRESHOLD_PERCENT` exported constant used by the public Social templates
+
+**These three constants must stay in sync.** If you tune the threshold, change all three.
+
 ### Historical NEUTRAL rows
 
-Rows from before the direction-snapshot deploy (2026-05-06) still have `status = NEUTRAL` in the DB. Metric functions (`getMetrics`, `getTrackingMetricsFromDB`) reclassify them on read by direction — folding each NEUTRAL row into SUCCESS or FAILED based on its stored `change_percent` + outlook. No DB writes; past-date dashboards stay consistent with the new pure-direction model.
+Pre-direction-snapshot DB rows had `status = NEUTRAL` written directly. The dead-zone reclassifier handles them transparently: their `change_percent` is checked against the same ±0.2% rule, so they end up in NEUTRAL / SUCCESS / FAILED based on actual movement, not the legacy stored label. No DB writes; past-date dashboards stay consistent with the new model.
 
 ### Expectancy (the key metric)
 

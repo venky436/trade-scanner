@@ -37,7 +37,7 @@ The eligibility flag is computed once, at insert time, and persisted. We do **no
 |---|---|---|
 | **When** | At signal time | After 10-minute direction snapshot |
 | **Shows** | Symbol, zone, momentum, pressure, volatility, alignment | Symbol, points moved, status verdict, dynamic timeline (`X min later`) |
-| **Status required** | Any | `SUCCESS` / `FAILED` (not `PENDING`) — pure win/loss, no NEUTRAL |
+| **Status required** | Any | `SUCCESS` / `FAILED` / NEUTRAL (display) — see "NEUTRAL dead-zone" below |
 | **File** | `apps/web/src/components/social/initial-template.tsx` | `apps/web/src/components/social/outcome-template.tsx` |
 
 The outcome template **automatically** becomes available once the signal-tracking evaluator locks the row's status — no new timer, worker, or trigger needed. Lock-in fires at the 10-minute mark for every tracked signal (within a 30s polling cycle).
@@ -172,15 +172,26 @@ Shows the day's eligible signals as a table. Layout matches `/admin/tracking`:
   - Signal table with columns: time · symbol · outlook · confidence · bucket · status pill · camera icon
 - Auto-refresh every 30 seconds when viewing today's date (matches backend snapshot cadence)
 
-Status pill semantics — **pure win/loss display**:
+Status pill semantics on the `/social` list page — three states:
 
-| Backend status | Pill label | Color |
-|---|---|---|
-| `PENDING` | "Outcome Pending" | amber |
-| `SUCCESS` | "Played Out" | emerald |
-| `FAILED` | "Did Not Play Out" | rose |
+| Display class | Pill label | Color | When |
+|---|---|---|---|
+| `PENDING` | "Outcome Pending" | amber | Before minute 10 lock-in |
+| `NEUTRAL` | "Limited Movement" | slate | `|change_percent|` < 0.2% (dead-zone) |
+| `SUCCESS` / `FAILED` | "Follow-up Available" | emerald | `|change_percent|` ≥ 0.2% in either direction |
 
-Backend now writes only SUCCESS/FAILED for new signals (direction snapshot at minute 10). `socialDisplayStatus()` in `template-shared.tsx` is kept as a defensive layer — historical NEUTRAL rows from before the direction-snapshot deploy still get reclassified into SUCCESS/FAILED on display by direction.
+The list view doesn't expose WIN vs LOSS in the pill — that distinction shows when the user opens the actual template card (where the hero stamp turns emerald / rose / slate based on direction). Keeps the list view neutral and observation-focused.
+
+Backend writes pure `SUCCESS` / `FAILED` from the direction snapshot. `socialDisplayStatus()` in `template-shared.tsx` then applies a **±0.2% NEUTRAL dead-zone** at display time:
+
+- `PENDING` → `PENDING`
+- `|change_percent| < 0.2%` → `NEUTRAL` ("Limited Movement" pill on the list, slate accent on the outcome template)
+- `|change_percent| ≥ 0.2%` and direction matches outlook → `SUCCESS`
+- `|change_percent| ≥ 0.2%` and direction opposite → `FAILED`
+
+The constant is `NEUTRAL_THRESHOLD_PERCENT = 0.2` (exported from `template-shared.tsx`). It must stay in sync with the backend constant `NEUTRAL_METRIC_THRESHOLD_PERCENT` in `apps/server/src/services/signal-tracking.service.ts` — same threshold powers `/admin/tracking` accuracy calc.
+
+Why a dead-zone here too: a stock that drifted 0.05% in the predicted direction isn't a meaningful "Played Out" outcome for a follower-facing template. Showing those as a green WIN inflates the success narrative; hiding them as a clean NEUTRAL keeps the templates honest.
 
 Each row links to `/admin/social/[id]?view=initial` if the status is `PENDING`, or `?view=outcome` otherwise (smart default — admin usually wants to see whatever's most relevant first).
 
