@@ -81,12 +81,8 @@ export function IndexCard({ name, symbol, data, accent, Icon }: IndexCardProps) 
   const negative = change < 0;
   const flash = usePriceFlash(price);
 
-  const flashTone = flash === "up"
-    ? "ring-2 ring-emerald-400/60 bg-emerald-500/10"
-    : flash === "down"
-    ? "ring-2 ring-rose-400/60 bg-rose-500/10"
-    : "ring-0 bg-transparent";
-
+  // Price-text-only flash — color shifts emerald/rose for ~1.2s on tick.
+  // No surrounding ring or background tint.
   const priceFlashColor = flash === "up"
     ? "text-emerald-600 dark:text-emerald-400"
     : flash === "down"
@@ -140,16 +136,14 @@ export function IndexCard({ name, symbol, data, accent, Icon }: IndexCardProps) 
         )}
       </div>
 
-      {/* Price — wrapped in flash tile so a tick is visually obvious */}
+      {/* Price — text-only color flash on tick */}
       <div className="mt-5">
         {data ? (
-          <div className={`inline-block rounded-xl px-2.5 py-1 transition-all duration-700 ${flashTone}`}>
-            <div className={`text-3xl font-bold tabular-nums transition-colors duration-700 ${priceFlashColor}`}>
-              {price.toLocaleString("en-IN", {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-            </div>
+          <div className={`text-3xl font-bold tabular-nums transition-colors duration-700 ${priceFlashColor}`}>
+            {price.toLocaleString("en-IN", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
           </div>
         ) : (
           <div className="h-8 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800/60" />
