@@ -197,7 +197,11 @@ export function CandlestickChart({
     });
   }, [resolvedTheme, getThemeColors]);
 
-  // Draw S/R price lines
+  // Draw S/R price lines.
+  // Belt-and-suspenders inversion guard: even if a caller forgets to pre-validate,
+  // never draw a "support" line above the live price (or "resistance" below).
+  // Compares against tick.price (live), falling back to nothing if no tick has
+  // arrived yet (then we just trust the caller).
   useEffect(() => {
     if (!chartReady || !candleSeriesRef.current) return;
     const series = candleSeriesRef.current;
@@ -205,10 +209,20 @@ export function CandlestickChart({
     if (supportLineRef.current) { series.removePriceLine(supportLineRef.current); supportLineRef.current = null; }
     if (resistanceLineRef.current) { series.removePriceLine(resistanceLineRef.current); resistanceLineRef.current = null; }
 
-    if (supportLevel != null) {
+    const livePrice = tick?.price ?? null;
+    const safeSupport =
+      livePrice !== null && supportLevel != null && supportLevel >= livePrice
+        ? null
+        : supportLevel;
+    const safeResistance =
+      livePrice !== null && resistanceLevel != null && resistanceLevel <= livePrice
+        ? null
+        : resistanceLevel;
+
+    if (safeSupport != null) {
       const label = supportTouches ? `S (${supportTouches}t)` : "S";
       supportLineRef.current = series.createPriceLine({
-        price: supportLevel,
+        price: safeSupport,
         color: "#22c55e",
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
@@ -217,10 +231,10 @@ export function CandlestickChart({
       });
     }
 
-    if (resistanceLevel != null) {
+    if (safeResistance != null) {
       const label = resistanceTouches ? `R (${resistanceTouches}t)` : "R";
       resistanceLineRef.current = series.createPriceLine({
-        price: resistanceLevel,
+        price: safeResistance,
         color: "#ef4444",
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
@@ -228,7 +242,8 @@ export function CandlestickChart({
         title: label,
       });
     }
-  }, [supportLevel, resistanceLevel, supportTouches, resistanceTouches, chartReady]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supportLevel, resistanceLevel, supportTouches, resistanceTouches, chartReady, tick?.price]);
 
   // Fetch candle data + compute MAs
   const fetchCandles = useCallback(async () => {

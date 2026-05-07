@@ -22,7 +22,7 @@ type TrackingStatus = "PENDING" | "SUCCESS" | "FAILED" | "NEUTRAL";
 
 const MIN_SAMPLES: Record<ConfidenceBucket, number> = {
   ULTRA_HIGH: 20,
-  HIGH: 50,
+  HIGH: 100,
   MEDIUM: 100,
 };
 
@@ -492,7 +492,7 @@ export async function getTrackingMetricsFromDB(date?: Date) {
       ));
 
     type ConfBucket = "ULTRA_HIGH" | "HIGH" | "MEDIUM";
-    const minSamples: Record<ConfBucket, number> = { ULTRA_HIGH: 20, HIGH: 50, MEDIUM: 100 };
+    const minSamples: Record<ConfBucket, number> = { ULTRA_HIGH: 20, HIGH: 100, MEDIUM: 100 };
     const buckets: ConfBucket[] = ["ULTRA_HIGH", "HIGH", "MEDIUM"];
     const result: Record<string, any>[] = [];
 
