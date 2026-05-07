@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Camera, Clock, Eye, AlertCircle } from "lucide-react";
+import { ArrowLeft, Camera, Clock, Eye, Minus, AlertCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import {
   outlookCategoryDisplay,
+  socialDisplayStatus,
   socialOutcomeStatusDisplay,
   type SocialSignal,
 } from "@/components/social/template-shared";
@@ -22,22 +23,31 @@ function formatTime(iso: string): string {
   });
 }
 
-// Status visual treatment — neutral vocabulary, no win/loss tone.
-// PENDING → amber waiting; everything else → emerald "follow-up available".
-function statusVisual(status: string) {
-  if (status === "PENDING") {
+// Status visual treatment — three states, neutral vocabulary, no win/loss tone:
+//   PENDING                                 → amber Clock "Outcome Pending"
+//   NEUTRAL (|change| < 0.2% dead-zone)     → slate Minus "Limited Movement"
+//   SUCCESS / FAILED                        → emerald Eye  "Follow-up Available"
+// Takes the full signal so socialDisplayStatus can apply the dead-zone rule.
+function statusVisual(signal: SocialSignal) {
+  const display = socialDisplayStatus(signal);
+  if (display === "PENDING") {
     return {
-      label: socialOutcomeStatusDisplay(status),
+      label: socialOutcomeStatusDisplay(signal),
       Icon: Clock,
       pill: "border-amber-400/30 bg-amber-500/[0.08] text-amber-700 dark:text-amber-300",
-      dotColor: "bg-amber-500",
+    };
+  }
+  if (display === "NEUTRAL") {
+    return {
+      label: socialOutcomeStatusDisplay(signal),
+      Icon: Minus,
+      pill: "border-slate-400/30 bg-slate-500/[0.08] text-slate-600 dark:text-slate-300",
     };
   }
   return {
-    label: socialOutcomeStatusDisplay(status),
+    label: socialOutcomeStatusDisplay(signal),
     Icon: Eye,
     pill: "border-emerald-400/30 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-300",
-    dotColor: "bg-emerald-500",
   };
 }
 
@@ -189,7 +199,7 @@ export default function SocialListPage() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {signals.map((s) => {
-              const status = statusVisual(s.status);
+              const status = statusVisual(s);
               const StatusIcon = status.Icon;
               const defaultView = s.status === "PENDING" ? "initial" : "outcome";
 

@@ -211,19 +211,32 @@ export function formatDateIST(iso: string | null | undefined): string {
   });
 }
 
-// Social-only display rule: NEUTRAL signals get reclassified into SUCCESS or
-// FAILED based on price direction. Even a 0.01% move toward the predicted
-// direction counts as PLAYED OUT — "NO CLEAR MOVEMENT" doesn't translate well
-// for a follower-facing template. The underlying signal_tracking row keeps its
-// true status (NEUTRAL) for the accuracy dashboard; this only affects social UI.
+// NEUTRAL dead-zone for the social templates. Display-only rule — backend
+// status is unchanged. If a stock moved less than this percent in either
+// direction at the snapshot moment, the template renders as NEUTRAL (limited
+// movement) instead of forcing it into a SUCCESS/FAILED bucket. Filters out
+// noisy ±0.05% wiggles that aren't a meaningful outcome for a follower.
+export const NEUTRAL_THRESHOLD_PERCENT = 0.2;
+
+// Social-only display rule:
+//   PENDING                              → PENDING
+//   |change| <  NEUTRAL_THRESHOLD        → NEUTRAL  (limited movement)
+//   change in expected direction (else)  → SUCCESS
+//   change in opposite direction (else)  → FAILED
+//
+// Backend keeps writing pure SUCCESS/FAILED based on direction; this helper
+// re-classifies at render time so the templates never label a 0.05% move as
+// a clean WIN or LOSS. Historical NEUTRAL rows from prior eval models also
+// pass through this same logic.
 export function socialDisplayStatus(
   signal: Pick<SocialSignal, "status" | "outlook" | "changePercent">,
 ): string {
-  if (signal.status !== "NEUTRAL") return signal.status;
+  if (signal.status === "PENDING") return "PENDING";
   const change = Number(signal.changePercent ?? 0);
+  if (Math.abs(change) < NEUTRAL_THRESHOLD_PERCENT) return "NEUTRAL";
   const isBullish = signal.outlook === "BREAKOUT_LIKELY" || signal.outlook === "BOUNCE_EXPECTED";
-  if (isBullish) return change >= 0 ? "SUCCESS" : "FAILED";
-  return change <= 0 ? "SUCCESS" : "FAILED";
+  if (isBullish) return change > 0 ? "SUCCESS" : "FAILED";
+  return change < 0 ? "SUCCESS" : "FAILED";
 }
 
 // Three observation lines for the OutcomeTemplate, derived from outlook + status.
@@ -268,8 +281,12 @@ export function observedActivity(
   signal: Pick<SocialSignal, "status" | "outlook" | "bias" | "changePercent">,
 ): ObservedActivity[] {
   const change = Number(signal.changePercent ?? 0);
-  const movedUp = change > 0;
-  const movedDown = change < 0;
+  // Treat anything inside the NEUTRAL dead-zone as flat for display purposes.
+  // A 0.05% drift isn't a directional move worth labelling on a follower-facing
+  // template — it reads as "Price showed limited movement" instead.
+  const isNeutral = Math.abs(change) < NEUTRAL_THRESHOLD_PERCENT;
+  const movedUp = !isNeutral && change > 0;
+  const movedDown = !isNeutral && change < 0;
   const dir: "up" | "down" | "flat" = movedUp ? "up" : movedDown ? "down" : "flat";
 
   const priceLine: ObservedActivity = movedUp
@@ -326,13 +343,22 @@ export function outlookCategoryDisplay(outlook: string): string {
   return "Market Observation";
 }
 
-// Status pill for the /social observation table. Replaces "Played Out" /
-// "Did Not Play Out" with neutral observation language. PENDING stays "Outcome
-// Pending"; SUCCESS and FAILED both collapse to "Follow-up Available" because
-// at the table level, the distinction (W/L) is shown when the admin opens the
-// template — the list view doesn't need win/loss prominence.
-export function socialOutcomeStatusDisplay(status: string): string {
-  if (status === "PENDING") return "Outcome Pending";
+// Status pill for the /social observation table. Three states:
+//   PENDING  → "Outcome Pending"
+//   NEUTRAL  → "Limited Movement"  (|change| < NEUTRAL_THRESHOLD_PERCENT)
+//   else     → "Follow-up Available"
+// Pass the full signal so we can apply the dead-zone threshold; callers that
+// only have a raw status string can pass it as-is and we'll skip the NEUTRAL
+// classification.
+export function socialOutcomeStatusDisplay(
+  signalOrStatus: string | Pick<SocialSignal, "status" | "outlook" | "changePercent">,
+): string {
+  if (typeof signalOrStatus === "string") {
+    return signalOrStatus === "PENDING" ? "Outcome Pending" : "Follow-up Available";
+  }
+  const display = socialDisplayStatus(signalOrStatus);
+  if (display === "PENDING") return "Outcome Pending";
+  if (display === "NEUTRAL") return "Limited Movement";
   return "Follow-up Available";
 }
 

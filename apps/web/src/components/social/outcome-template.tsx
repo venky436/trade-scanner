@@ -3,6 +3,7 @@ import {
   type SocialSignal,
   TemplateFrame,
   BrandHeader,
+  NEUTRAL_THRESHOLD_PERCENT,
   observedActivity,
   outcomeInsightObservational,
   type ObservedActivity,
@@ -20,11 +21,14 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
   const activities = observedActivity(signal);
 
   // Direction colour for the hero stamp & accent — uses the actual price-change
-  // direction (factual). This is NOT a "win/loss" indicator; it's just a
-  // descriptive observation of which way price moved.
+  // direction (factual). NOT a "win/loss" indicator; just a descriptive
+  // observation of which way price moved. Anything inside the ±0.2% NEUTRAL
+  // dead-zone collapses to slate (limited-movement) regardless of micro
+  // direction so we don't paint a 0.05% wiggle as a green "up" outcome.
   const change = Number(signal.changePercent ?? 0);
-  const movedUp = change > 0;
-  const movedDown = change < 0;
+  const isNeutral = Math.abs(change) < NEUTRAL_THRESHOLD_PERCENT;
+  const movedUp = !isNeutral && change > 0;
+  const movedDown = !isNeutral && change < 0;
   const accentText = movedUp
     ? "text-emerald-400"
     : movedDown
@@ -75,6 +79,9 @@ export function OutcomeTemplate({ signal }: { signal: SocialSignal }) {
           <div className={`mt-6 h-[2px] w-full bg-gradient-to-r ${accentGrad}`} />
           <p className="mt-4 text-slate-400 text-[22px] font-medium tracking-wide">
             Market Follow-up
+            {isNeutral && (
+              <span className="ml-3 text-slate-500 text-[20px]">· Limited movement</span>
+            )}
           </p>
         </div>
 

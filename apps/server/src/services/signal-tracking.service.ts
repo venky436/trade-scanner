@@ -28,18 +28,32 @@ const MIN_SAMPLES: Record<ConfidenceBucket, number> = {
 
 const BUY_SIDE_OUTLOOKS = new Set(["BREAKOUT_LIKELY", "BOUNCE_EXPECTED"]);
 
-// Past NEUTRAL rows (pre-direction-snapshot deploy) get folded into W/L at
-// metric-compute time so historical dashboards stay consistent with the new
-// pure-direction model. New rows are always written as SUCCESS or FAILED.
-function reclassifyForMetrics(r: { status: string; outlook: string; changePercent: string | null }): "SUCCESS" | "FAILED" | "PENDING" {
+// Metric-time NEUTRAL dead-zone. Rows where |change| < this threshold are
+// considered "no real outcome" — excluded from the accuracy denominator on
+// /admin/tracking and shown as a separate count. Backend still WRITES pure
+// SUCCESS/FAILED for new signals; this is a metric-compute-time reclassification
+// only. Must stay in sync with NEUTRAL_THRESHOLD_PERCENT in template-shared.tsx
+// (the social-template display rule uses the same 0.2% band).
+const NEUTRAL_METRIC_THRESHOLD_PERCENT = 0.2;
+
+// Reclassify a row for metric purposes:
+//   PENDING                                  → PENDING
+//   |change| < NEUTRAL_METRIC_THRESHOLD      → NEUTRAL (excluded from accuracy)
+//   matches outlook direction (else)         → SUCCESS
+//   opposite direction (else)                → FAILED
+//
+// Backend stored status (SUCCESS / FAILED / NEUTRAL legacy) is overridden by
+// the threshold rule — the actual change% is the source of truth at metric time.
+// Keeps historical NEUTRAL rows + recent direction-snapshot rows consistent.
+function reclassifyForMetrics(
+  r: { status: string; outlook: string; changePercent: string | null },
+): "SUCCESS" | "FAILED" | "PENDING" | "NEUTRAL" {
   if (r.status === "PENDING") return "PENDING";
-  if (r.status === "SUCCESS") return "SUCCESS";
-  if (r.status === "FAILED") return "FAILED";
-  // Historical NEUTRAL — reclassify by stored direction.
   const change = Number(r.changePercent ?? 0);
+  if (Math.abs(change) < NEUTRAL_METRIC_THRESHOLD_PERCENT) return "NEUTRAL";
   const isBullish = BUY_SIDE_OUTLOOKS.has(r.outlook);
-  if (isBullish) return change >= 0 ? "SUCCESS" : "FAILED";
-  return change <= 0 ? "SUCCESS" : "FAILED";
+  if (isBullish) return change > 0 ? "SUCCESS" : "FAILED";
+  return change < 0 ? "SUCCESS" : "FAILED";
 }
 
 interface ActiveTracking {
@@ -310,9 +324,12 @@ export function createSignalTrackingService() {
 
       for (const bucket of buckets) {
         const bucketRecords = records.filter((r) => r.confidenceBucket === bucket);
-        // reclassifyForMetrics folds historical NEUTRAL rows into W/L by direction.
+        // reclassifyForMetrics applies the ±0.2% NEUTRAL dead-zone — rows
+        // inside the band are flagged NEUTRAL and excluded from wins+losses
+        // so accuracy is a clean wins/(wins+losses) figure.
         const success = bucketRecords.filter((r) => reclassifyForMetrics(r) === "SUCCESS");
         const failed = bucketRecords.filter((r) => reclassifyForMetrics(r) === "FAILED");
+        const neutral = bucketRecords.filter((r) => reclassifyForMetrics(r) === "NEUTRAL");
         const pending = bucketRecords.filter((r) => reclassifyForMetrics(r) === "PENDING");
         const evaluated = [...success, ...failed];
 
@@ -337,13 +354,15 @@ export function createSignalTrackingService() {
         const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
 
         const outlooks = ["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"];
-        const byOutlook: Record<string, { total: number; wins: number; rate: number }> = {};
+        const byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }> = {};
         for (const outlook of outlooks) {
           const outlookEvaluated = evaluated.filter((r) => r.outlook === outlook);
           const outlookWins = outlookEvaluated.filter((r) => reclassifyForMetrics(r) === "SUCCESS").length;
+          const outlookNeutral = neutral.filter((r) => r.outlook === outlook).length;
           byOutlook[outlook] = {
             total: outlookEvaluated.length,
             wins: outlookWins,
+            neutral: outlookNeutral,
             rate: outlookEvaluated.length > 0 ? Math.round((outlookWins / outlookEvaluated.length) * 100) : 0,
           };
         }
@@ -354,6 +373,7 @@ export function createSignalTrackingService() {
           pending: pending.length,
           success: success.length,
           failed: failed.length,
+          neutral: neutral.length,
           accuracy,
           avgGain: Math.round(avgGain * 100) / 100,
           avgLoss: Math.round(avgLoss * 100) / 100,
@@ -498,9 +518,11 @@ export async function getTrackingMetricsFromDB(date?: Date) {
 
     for (const bucket of buckets) {
       const bucketRecords = records.filter((r) => r.confidenceBucket === bucket);
-      // See note on the equivalent block in getMetrics.
+      // See note on the equivalent block in getMetrics — NEUTRAL dead-zone
+      // excludes |change|<0.2% rows from wins/losses for clean accuracy calc.
       const success = bucketRecords.filter((r) => reclassifyForMetrics(r) === "SUCCESS");
       const failed = bucketRecords.filter((r) => reclassifyForMetrics(r) === "FAILED");
+      const neutral = bucketRecords.filter((r) => reclassifyForMetrics(r) === "NEUTRAL");
       const pending = bucketRecords.filter((r) => reclassifyForMetrics(r) === "PENDING");
       const evaluated = [...success, ...failed];
 
@@ -523,13 +545,15 @@ export async function getTrackingMetricsFromDB(date?: Date) {
       const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
 
       const outlooks = ["BREAKOUT_LIKELY", "BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKDOWN_RISK"];
-      const byOutlook: Record<string, { total: number; wins: number; rate: number }> = {};
+      const byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }> = {};
       for (const outlook of outlooks) {
         const outlookEvaluated = evaluated.filter((r) => r.outlook === outlook);
         const outlookWins = outlookEvaluated.filter((r) => reclassifyForMetrics(r) === "SUCCESS").length;
+        const outlookNeutral = neutral.filter((r) => r.outlook === outlook).length;
         byOutlook[outlook] = {
           total: outlookEvaluated.length,
           wins: outlookWins,
+          neutral: outlookNeutral,
           rate: outlookEvaluated.length > 0 ? Math.round((outlookWins / outlookEvaluated.length) * 100) : 0,
         };
       }
@@ -540,6 +564,7 @@ export async function getTrackingMetricsFromDB(date?: Date) {
         pending: pending.length,
         success: success.length,
         failed: failed.length,
+        neutral: neutral.length,
         accuracy,
         avgGain: Math.round(avgGain * 100) / 100,
         avgLoss: Math.round(avgLoss * 100) / 100,

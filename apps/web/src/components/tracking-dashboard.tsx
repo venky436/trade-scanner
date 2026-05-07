@@ -22,6 +22,7 @@ import { apiFetch } from "@/lib/api";
 interface OutlookMetric {
   total: number;
   wins: number;
+  neutral: number;
   rate: number;
 }
 
@@ -31,6 +32,7 @@ interface BucketData {
   pending: number;
   success: number;
   failed: number;
+  neutral: number;
   accuracy: number;
   avgGain: number;
   avgLoss: number;
@@ -105,16 +107,21 @@ const OUTLOOK_LABEL: Record<string, string> = {
   BREAKDOWN_RISK: "Breakdown",
 };
 
-// Mirrors the backend reclassifyForMetrics() — folds historical NEUTRAL rows
-// into SUCCESS/FAILED by direction so the table stays consistent with the
-// pure-direction model. New rows arrive as SUCCESS/FAILED already.
+// Mirrors the backend reclassifyForMetrics() — applies the ±0.2% NEUTRAL
+// dead-zone so the Recent Signals table stays consistent with the bucket-card
+// accuracy. Without this, a row with |change| < 0.2% would render "SUCCESS"
+// in the table but be excluded from the accuracy denominator on the card,
+// which is confusing. Threshold must stay in sync with the backend constant
+// (NEUTRAL_METRIC_THRESHOLD_PERCENT in signal-tracking.service.ts).
+const NEUTRAL_THRESHOLD_PERCENT = 0.2;
 const BULLISH_OUTLOOKS = new Set(["BREAKOUT_LIKELY", "BOUNCE_EXPECTED"]);
 function displayStatus(s: Pick<SignalRecord, "status" | "outlook" | "changePercent">): string {
-  if (s.status !== "NEUTRAL") return s.status;
+  if (s.status === "PENDING") return "PENDING";
   const change = Number(s.changePercent ?? 0);
+  if (Math.abs(change) < NEUTRAL_THRESHOLD_PERCENT) return "NEUTRAL";
   const isBullish = BULLISH_OUTLOOKS.has(s.outlook);
-  if (isBullish) return change >= 0 ? "SUCCESS" : "FAILED";
-  return change <= 0 ? "SUCCESS" : "FAILED";
+  if (isBullish) return change > 0 ? "SUCCESS" : "FAILED";
+  return change < 0 ? "SUCCESS" : "FAILED";
 }
 
 const STATUS_STYLE: Record<string, { bg: string; text: string; icon: typeof CheckCircle }> = {
@@ -275,7 +282,7 @@ export function TrackingDashboard() {
         {(["ULTRA_HIGH", "HIGH", "MEDIUM"] as const).map((bucketKey) => {
           const b: BucketData = (metrics?.buckets ?? []).find((x) => x.bucket === bucketKey) ?? {
             bucket: bucketKey,
-            total: 0, pending: 0, success: 0, failed: 0,
+            total: 0, pending: 0, success: 0, failed: 0, neutral: 0,
             accuracy: 0, avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0,
             expectancy: 0, riskReward: 0,
             sampleSufficient: false,
@@ -349,10 +356,14 @@ export function TrackingDashboard() {
                 </div>
               </div>
 
-              {/* Win/Loss counts */}
+              {/* Win/Loss/Neutral counts. Neutral = |change|<0.2% dead-zone,
+                  excluded from accuracy calc but shown here for context. */}
               <div className="mt-3 flex items-center gap-3 text-[10px]">
                 <span className="text-emerald-600 dark:text-emerald-400">{b.success} W</span>
                 <span className="text-rose-600 dark:text-rose-400">{b.failed} L</span>
+                {b.neutral > 0 && (
+                  <span className="text-zinc-500 dark:text-zinc-400">{b.neutral} N</span>
+                )}
                 {b.pending > 0 && (
                   <span className="text-amber-600 dark:text-amber-400">{b.pending} P</span>
                 )}
@@ -440,11 +451,17 @@ export function TrackingDashboard() {
                   (acc, b) => {
                     const o = b.byOutlook[outlook];
                     return o
-                      ? { total: acc.total + o.total, wins: acc.wins + o.wins }
+                      ? {
+                          total: acc.total + o.total,
+                          wins: acc.wins + o.wins,
+                          neutral: acc.neutral + (o.neutral ?? 0),
+                        }
                       : acc;
                   },
-                  { total: 0, wins: 0 },
+                  { total: 0, wins: 0, neutral: 0 },
                 );
+                // Rate = wins / total where total = wins + losses (NEUTRAL excluded
+                // by the backend reclassifier already).
                 const rate = totals.total > 0 ? Math.round((totals.wins / totals.total) * 100) : 0;
 
                 return (
@@ -453,6 +470,7 @@ export function TrackingDashboard() {
                     <div className="flex items-center gap-3">
                       <span className="text-zinc-500 tabular-nums">
                         {totals.total} signals
+                        {totals.neutral > 0 ? ` · ${totals.neutral} N` : ""}
                       </span>
                       <span className={`font-bold tabular-nums ${totals.total > 0 ? accuracyColor(rate) : "text-zinc-400"}`}>
                         {totals.total > 0 ? `${rate}%` : "—"}
