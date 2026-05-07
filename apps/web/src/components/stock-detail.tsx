@@ -181,8 +181,23 @@ export function StockDetail({ symbol }: StockDetailProps) {
     return snapshot;
   }, [liveStock, snapshot]);
 
-  const supportLevel = snapshot?.levels.support ?? null;
-  const resistanceLevel = snapshot?.levels.resistance ?? null;
+  // Render-time SR validation. The backend levels cache (computed against a
+  // snapshot of currentPrice) can drift as price moves — a "support" level can
+  // end up above the live price, or a "resistance" below it. Drop those at
+  // render time so we never draw an inverted line. Only validates when we have
+  // a live price to compare against; otherwise pass the raw cached value
+  // through unchanged (preserves loading/empty behavior).
+  const livePriceForSR = intel?.price ?? null;
+  const rawSupport = snapshot?.levels.support ?? null;
+  const rawResistance = snapshot?.levels.resistance ?? null;
+  const supportLevel =
+    livePriceForSR !== null && rawSupport !== null && rawSupport >= livePriceForSR
+      ? null
+      : rawSupport;
+  const resistanceLevel =
+    livePriceForSR !== null && rawResistance !== null && rawResistance <= livePriceForSR
+      ? null
+      : rawResistance;
 
   const chartTick: ChartTick | null = intel
     ? { price: intel.price, timestamp: intel.timestamp }
@@ -365,28 +380,36 @@ export function StockDetail({ symbol }: StockDetailProps) {
 
             {snapshot?.levels && (
               <div className="space-y-2 border-t border-zinc-200 dark:border-zinc-800/80 pt-3">
-                {snapshot.levels.resistance !== null && (
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-                      <Crosshair className="size-3 text-rose-500 dark:text-rose-400/70" />
-                      <span>Resistance</span>
-                    </div>
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+                    <Crosshair className="size-3 text-rose-500 dark:text-rose-400/70" />
+                    <span>Resistance</span>
+                  </div>
+                  {resistanceLevel !== null ? (
                     <span className="font-mono font-semibold tabular-nums text-rose-700 dark:text-rose-300">
-                      ₹{snapshot.levels.resistance.toFixed(2)}
+                      ₹{resistanceLevel.toFixed(2)}
                     </span>
+                  ) : (
+                    <span className="text-[11px] italic text-zinc-500 dark:text-zinc-500">
+                      No level within 5%
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+                    <Crosshair className="size-3 text-emerald-500 dark:text-emerald-400/70" />
+                    <span>Support</span>
                   </div>
-                )}
-                {snapshot.levels.support !== null && (
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-                      <Crosshair className="size-3 text-emerald-500 dark:text-emerald-400/70" />
-                      <span>Support</span>
-                    </div>
+                  {supportLevel !== null ? (
                     <span className="font-mono font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
-                      ₹{snapshot.levels.support.toFixed(2)}
+                      ₹{supportLevel.toFixed(2)}
                     </span>
-                  </div>
-                )}
+                  ) : (
+                    <span className="text-[11px] italic text-zinc-500 dark:text-zinc-500">
+                      No level within 5%
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </div>
