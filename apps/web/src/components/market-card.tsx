@@ -97,7 +97,13 @@ export function MarketCard({ data }: MarketCardProps) {
   const zone = data.context.zone;
   const mDir = momentumDirection(data.momentum.label);
   const pDir = pressureDirection(data.pressure.label);
-  const volDir: "flat" = "flat"; // volatility is magnitude-only; never coloured up/down
+  // Volatility is magnitude-only — but we tint it by the *card-level* direction
+  // when momentum and pressure agree, so the whole card reads as one coherent
+  // bullish-or-bearish story (green when both are up, red when both are down).
+  // When they disagree (or either is neutral) volatility stays flat to signal
+  // mixed conditions.
+  const volDir: "up" | "down" | "flat" =
+    mDir !== "flat" && mDir === pDir ? mDir : "flat";
 
   const flash = usePriceFlash(data.price);
   const liveLabel = useLiveTimeAgo(data.timestamp);

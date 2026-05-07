@@ -198,6 +198,10 @@ export function StockDetail({ symbol }: StockDetailProps) {
   const zone = intel.context.zone;
   const mDir = momentumDirection(intel.momentum.label);
   const pDir = pressureDirection(intel.pressure.label);
+  // Volatility tinting follows overall card direction when momentum + pressure
+  // agree — same rule as the home MarketCard for visual consistency.
+  const volDir: "up" | "down" | "flat" =
+    mDir !== "flat" && mDir === pDir ? mDir : "flat";
 
   const changeUp = intel.change > 0;
   const changeDown = intel.change < 0;
@@ -430,7 +434,7 @@ export function StockDetail({ symbol }: StockDetailProps) {
                   {strengthDescriptor(intel.volatility.score)}
                 </span>
               </div>
-              <StrengthBar score={intel.volatility.score} dir="flat" />
+              <StrengthBar score={intel.volatility.score} dir={volDir} />
             </div>
           </div>
         </section>

@@ -5,7 +5,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BarChart3,
-  Compass,
+  Hammer,
   Landmark,
   LayoutGrid,
   PhoneCall,
@@ -16,15 +16,11 @@ import {
 import { MarketContextBanner } from "./market-context-banner";
 import { MarketCard } from "./market-card";
 import { IndexCard } from "./index-card";
-import { OptionCard } from "./option-card";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { useMarketData } from "@/hooks/use-market-data";
-import { useAuth } from "@/context/auth-context";
 import { apiFetch } from "@/lib/api";
 import { INDEX_NAMES } from "@/lib/constants";
-import { SUPPORTED_OPTION_INDICES } from "@/lib/option-insight";
 import type { IntelligenceSnapshot } from "@/lib/types";
-import { AddToWatchZoneButton } from "./watch-zone";
 
 type ScannerMode = "stocks" | "options";
 
@@ -114,7 +110,6 @@ function ModeToggle({
 
 export function Dashboard() {
   const { stockMap, marketContext } = useMarketData();
-  const { user } = useAuth();
   const [kiteConnected, setKiteConnected] = useState(false);
   const [mode, setMode] = useState<ScannerMode>("stocks");
 
@@ -289,42 +284,48 @@ export function Dashboard() {
               </>
             )}
 
-            {/* Options view — kept as-is (separate scope) */}
-            {mode === "options" && (
-              <section>
-                <SectionHeader
-                  Icon={Compass}
-                  title="Index Options"
-                  subtitle="Activity insights derived from each index's real-time data"
-                />
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  {SUPPORTED_OPTION_INDICES.map((idx) => {
-                    const data = stockMap.get(idx.symbol);
-                    return (
-                      <OptionCard
-                        key={idx.symbol}
-                        displayName={idx.displayName}
-                        indexSymbol={idx.symbol}
-                        data={data}
-                        watchButton={
-                          data ? (
-                            <AddToWatchZoneButton
-                              symbol={idx.symbol}
-                              price={data.price}
-                              isLoggedIn={!!user}
-                              kind="OPTION"
-                            />
-                          ) : undefined
-                        }
-                      />
-                    );
-                  })}
-                </div>
-              </section>
-            )}
+            {/* Options view — coming soon placeholder */}
+            {mode === "options" && <OptionsComingSoon />}
           </>
         )}
       </div>
     </main>
+  );
+}
+
+// Empty-state placeholder for the Options tab. Pure illustration card — no data,
+// no live polling, no API calls. Replaces the previous OptionCard grid until
+// proper options analytics ship.
+function OptionsComingSoon() {
+  return (
+    <section className="flex justify-center py-12">
+      <div className="relative w-full max-w-xl overflow-hidden rounded-3xl border border-zinc-200 dark:border-zinc-800/80 bg-gradient-to-br from-cyan-500/5 via-white to-violet-500/5 dark:from-cyan-500/8 dark:via-zinc-950/60 dark:to-violet-500/8 px-10 py-14 text-center">
+        {/* Decorative glow blobs */}
+        <div className="pointer-events-none absolute -top-16 -left-16 size-48 rounded-full blur-3xl bg-cyan-400/15" />
+        <div className="pointer-events-none absolute -bottom-20 -right-20 size-56 rounded-full blur-3xl bg-violet-400/15" />
+
+        <div className="relative flex flex-col items-center gap-5">
+          <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500/20 to-violet-500/20 ring-1 ring-cyan-400/30 shadow-lg shadow-cyan-500/10">
+            <Hammer className="size-7 text-cyan-600 dark:text-cyan-300" strokeWidth={2} />
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+              Options view coming soon
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-sm mx-auto leading-relaxed">
+              We are building a dedicated options activity surface. Switch back to the Stocks tab for now.
+            </p>
+          </div>
+
+          <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/[0.06] px-4 py-1.5">
+            <span className="size-1.5 animate-pulse rounded-full bg-cyan-400" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-cyan-700 dark:text-cyan-300">
+              In development
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
