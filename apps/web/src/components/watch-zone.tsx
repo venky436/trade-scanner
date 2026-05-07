@@ -4,9 +4,15 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { X, Plus, Eye, ChevronRight, Check, PhoneCall } from "lucide-react";
-import type { Bias, IntelligenceSnapshot, Outlook, Zone } from "@/lib/types";
+import type { IntelligenceSnapshot, Zone } from "@/lib/types";
 import { toOptionInsight, type OptionBias } from "@/lib/option-insight";
 import { apiFetch } from "@/lib/api";
+import {
+  momentumDirection,
+  momentumDisplay,
+  pressureDirection,
+  pressureDisplay,
+} from "@/lib/sebi-display";
 
 interface WatchZoneItem {
   id: number;
@@ -34,43 +40,10 @@ const ZONE_TONE: Record<Zone, string> = {
   MID_RANGE: "text-zinc-500",
 };
 
-const OUTLOOK_LABEL: Record<Outlook, string> = {
-  BREAKOUT_LIKELY: "Breakout Likely",
-  BREAKDOWN_RISK: "Breakdown Risk",
-  BOUNCE_EXPECTED: "Bounce Expected",
-  REJECTION_POSSIBLE: "Rejection Possible",
-  NO_CLEAR_EDGE: "No Clear Edge",
-};
-
-const OUTLOOK_TONE: Record<Outlook, string> = {
-  BREAKOUT_LIKELY:
-    "text-emerald-700 bg-emerald-500/10 ring-emerald-500/20 dark:text-emerald-300",
-  BOUNCE_EXPECTED:
-    "text-emerald-700 bg-emerald-500/10 ring-emerald-500/20 dark:text-emerald-300",
-  BREAKDOWN_RISK:
-    "text-rose-700 bg-rose-500/10 ring-rose-500/20 dark:text-rose-300",
-  REJECTION_POSSIBLE:
-    "text-rose-700 bg-rose-500/10 ring-rose-500/20 dark:text-rose-300",
-  NO_CLEAR_EDGE:
-    "text-zinc-600 bg-zinc-100 ring-zinc-200 dark:text-zinc-400 dark:bg-zinc-800/40 dark:ring-zinc-700/40",
-};
-
-const BIAS_LABEL: Record<Bias, string> = {
-  BULLISH: "Bullish",
-  BEARISH: "Bearish",
-  NEUTRAL: "Neutral",
-};
-
-const BIAS_TONE: Record<Bias, string> = {
-  BULLISH: "text-emerald-700 dark:text-emerald-400/70",
-  BEARISH: "text-rose-700 dark:text-rose-400/70",
-  NEUTRAL: "text-zinc-500",
-};
-
 const OPTION_BIAS_LABEL: Record<OptionBias, string> = {
-  CALL: "CALL side stronger",
-  PUT: "PUT side stronger",
-  NEUTRAL: "No clear edge",
+  CALL: "Call-side activity",
+  PUT: "Put-side activity",
+  NEUTRAL: "Balanced activity",
 };
 
 const OPTION_BIAS_TONE: Record<OptionBias, string> = {
@@ -246,9 +219,13 @@ export function WatchZoneSheet({ stockMap, isLoggedIn }: WatchZoneSheetProps) {
                               </span>
                             </div>
 
-                            {/* Row 3: Outlook + Time */}
+                            {/* Row 3: Activity + Time */}
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground/60 dark:text-muted-foreground/40">
-                              <span>{stock ? OUTLOOK_LABEL[stock.outlook] : "Loading…"}</span>
+                              <span>
+                                {stock
+                                  ? `${momentumDisplay(stock.momentum.label)} · ${pressureDisplay(stock.pressure.label)}`
+                                  : "Loading…"}
+                              </span>
                               <span>
                                 {getTimeSince(item.addedAt)} · added @ {addedPrice.toFixed(2)}
                               </span>
@@ -261,9 +238,17 @@ export function WatchZoneSheet({ stockMap, isLoggedIn }: WatchZoneSheetProps) {
                     }
 
                     // Stock items (default)
-                    const outlook = stock?.outlook ?? "NO_CLEAR_EDGE";
                     const zone = stock?.context.zone ?? "MID_RANGE";
-                    const bias = stock?.bias ?? "NEUTRAL";
+                    const momLabel = stock ? momentumDisplay(stock.momentum.label) : null;
+                    const presLabel = stock ? pressureDisplay(stock.pressure.label) : null;
+                    const mDir = stock ? momentumDirection(stock.momentum.label) : "flat";
+                    const pDir = stock ? pressureDirection(stock.pressure.label) : "flat";
+                    const dirToneClass = (d: "up" | "down" | "flat") =>
+                      d === "up"
+                        ? "text-emerald-600 dark:text-emerald-400/80"
+                        : d === "down"
+                        ? "text-rose-600 dark:text-rose-400/80"
+                        : "text-zinc-500";
 
                     return (
                       <div
@@ -275,7 +260,7 @@ export function WatchZoneSheet({ stockMap, isLoggedIn }: WatchZoneSheetProps) {
                         }}
                       >
                         <div className="p-3 space-y-2">
-                          {/* Row 1: Symbol + Remove */}
+                          {/* Row 1: Symbol + Zone */}
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-bold text-zinc-900 dark:text-foreground">
@@ -296,12 +281,10 @@ export function WatchZoneSheet({ stockMap, isLoggedIn }: WatchZoneSheetProps) {
                             </button>
                           </div>
 
-                          {/* Row 2: Outlook + Price + P&L */}
+                          {/* Row 2: Momentum + Price + change-since-added */}
                           <div className="flex items-center justify-between text-xs">
-                            <span
-                              className={`px-2 py-0.5 rounded-full ring-1 text-[10px] font-semibold ${OUTLOOK_TONE[outlook]}`}
-                            >
-                              {OUTLOOK_LABEL[outlook]}
+                            <span className={`text-[11px] font-semibold ${dirToneClass(mDir)}`}>
+                              {momLabel ?? "Loading…"}
                             </span>
                             <div className="flex items-center gap-2">
                               <span className="font-mono tabular-nums text-zinc-700 dark:text-foreground/80">
@@ -320,11 +303,13 @@ export function WatchZoneSheet({ stockMap, isLoggedIn }: WatchZoneSheetProps) {
                             </div>
                           </div>
 
-                          {/* Row 3: Bias + Time + Entry */}
+                          {/* Row 3: Pressure + Time + added price */}
                           <div className="flex items-center justify-between text-[10px] text-muted-foreground/60 dark:text-muted-foreground/40">
-                            <span className={BIAS_TONE[bias]}>{BIAS_LABEL[bias]} bias</span>
+                            <span className={dirToneClass(pDir)}>
+                              {presLabel ?? ""}
+                            </span>
                             <span>
-                              {getTimeSince(item.addedAt)} · entry ₹{addedPrice.toFixed(2)}
+                              {getTimeSince(item.addedAt)} · added ₹{addedPrice.toFixed(2)}
                             </span>
                           </div>
                         </div>

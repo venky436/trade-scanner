@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { AuthProvider, useAuth } from "@/context/auth-context";
 import { GlobalNav } from "./global-nav";
+import { SiteFooter } from "./site-footer";
 
 function AppContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -23,12 +24,13 @@ function AppContent({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  // Authenticated pages — show nav
+  // Authenticated pages — show nav + global SEBI disclaimer footer
   if (isAuthenticated) {
     return (
       <>
         <GlobalNav />
         {children}
+        <SiteFooter />
       </>
     );
   }

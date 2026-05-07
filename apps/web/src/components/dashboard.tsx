@@ -5,25 +5,19 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BarChart3,
+  Compass,
   Landmark,
   LayoutGrid,
   PhoneCall,
   Sparkles,
+  TrendingDown,
   TrendingUp,
 } from "lucide-react";
 import { MarketContextBanner } from "./market-context-banner";
-import { IntelligenceCard } from "./intelligence-card";
+import { MarketCard } from "./market-card";
 import { IndexCard } from "./index-card";
 import { OptionCard } from "./option-card";
-import { TopOpportunityCard } from "./top-opportunity-card";
 import { StockTableSkeleton } from "./stock-table-skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useAuth } from "@/context/auth-context";
 import { apiFetch } from "@/lib/api";
@@ -32,63 +26,54 @@ import { SUPPORTED_OPTION_INDICES } from "@/lib/option-insight";
 import type { IntelligenceSnapshot } from "@/lib/types";
 import { AddToWatchZoneButton } from "./watch-zone";
 
-type GridFilter = "ACTIONABLE" | "ALL" | "NEAR_RESISTANCE" | "NEAR_SUPPORT";
 type ScannerMode = "stocks" | "options";
+
+// Section caps — keep each list digestible at a glance.
+const STRONG_ALIGNMENT_CAP = 8;
+const ZONE_SECTION_CAP = 12;
+
+// Confidence threshold for "Strong Factor Alignment". Backend keeps producing
+// the score for ranking; UI never displays the % to the user.
+const STRONG_ALIGNMENT_FLOOR = 0.85;
 
 function SectionHeader({
   Icon,
   title,
   subtitle,
-  right,
+  count,
 }: {
   Icon: LucideIcon;
   title: string;
-  subtitle?: string;
-  right?: React.ReactNode;
+  subtitle: string;
+  count?: number;
 }) {
   return (
-    <div className="mb-4 flex items-end justify-between gap-3">
-      <div className="flex items-center gap-2.5">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-900/60 ring-1 ring-zinc-200 dark:ring-zinc-800/80">
+    <div className="mb-5 flex items-end justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <div className="flex size-9 items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-900/60 ring-1 ring-zinc-200 dark:ring-zinc-800/80">
           <Icon className="size-4 text-zinc-600 dark:text-zinc-400" />
         </div>
         <div>
-          <h2 className="text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+          <h2 className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
             {title}
           </h2>
-          {subtitle && <p className="text-[11px] text-zinc-500">{subtitle}</p>}
+          <p className="mt-0.5 text-xs text-zinc-500">{subtitle}</p>
         </div>
       </div>
-      {right}
+      {typeof count === "number" && (
+        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 tabular-nums">
+          {count} {count === 1 ? "stock" : "stocks"}
+        </span>
+      )}
     </div>
   );
 }
 
-const FILTER_LABEL: Record<GridFilter, string> = {
-  ACTIONABLE: "Actionable setups",
-  ALL: "All stocks",
-  NEAR_RESISTANCE: "Near resistance only",
-  NEAR_SUPPORT: "Near support only",
-};
-
-// Section title per filter — default "Opportunities", others reflect the selection.
-const FILTER_TITLE: Record<GridFilter, string> = {
-  ACTIONABLE: "Opportunities",
-  ALL: "All Stocks",
-  NEAR_RESISTANCE: "Near Resistance",
-  NEAR_SUPPORT: "Near Support",
-};
-
-function filterStocks(stocks: IntelligenceSnapshot[], filter: GridFilter): IntelligenceSnapshot[] {
-  if (filter === "ALL") return stocks;
-  if (filter === "NEAR_RESISTANCE") return stocks.filter((s) => s.context.zone === "NEAR_RESISTANCE");
-  if (filter === "NEAR_SUPPORT") return stocks.filter((s) => s.context.zone === "NEAR_SUPPORT");
-  // ACTIONABLE (default): near a level + directional outlook + confidence >= 0.65
-  return stocks.filter(
-    (s) =>
-      s.context.zone !== "MID_RANGE" &&
-      s.outlook !== "NO_CLEAR_EDGE" &&
-      s.confidence >= 0.65,
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-zinc-200 dark:border-zinc-800/80 bg-white/40 dark:bg-zinc-900/20 px-6 py-10 text-center text-sm text-zinc-500">
+      {message}
+    </div>
   );
 }
 
@@ -131,10 +116,9 @@ export function Dashboard() {
   const { stockMap, marketContext } = useMarketData();
   const { user } = useAuth();
   const [kiteConnected, setKiteConnected] = useState(false);
-  const [filter, setFilter] = useState<GridFilter>("ACTIONABLE");
   const [mode, setMode] = useState<ScannerMode>("stocks");
 
-  // Poll auth status until connected
+  // Poll auth status until connected.
   useEffect(() => {
     let active = true;
     async function check() {
@@ -154,61 +138,51 @@ export function Dashboard() {
     };
   }, []);
 
-  // Once we get stocks, kite is definitely connected
   useEffect(() => {
     if (stockMap.size > 0) setKiteConnected(true);
   }, [stockMap.size]);
 
+  // All non-index stocks, sorted by confidence (used internally for ranking).
   const allStocks = useMemo(() => {
     const list: IntelligenceSnapshot[] = [];
     for (const stock of stockMap.values()) {
       if (INDEX_NAMES.has(stock.symbol)) continue;
       list.push(stock);
     }
-    list.sort((a, b) => {
-      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
-      const aActionable = a.context.zone !== "MID_RANGE" ? 1 : 0;
-      const bActionable = b.context.zone !== "MID_RANGE" ? 1 : 0;
-      return bActionable - aActionable;
-    });
+    list.sort((a, b) => b.confidence - a.confidence);
     return list;
   }, [stockMap]);
 
-  const filteredStocks = useMemo(() => filterStocks(allStocks, filter), [allStocks, filter]);
-
-  // Top Opportunities — top 5 by confidence among ACTIONABLE stocks (near a level
-  // AND has a directional outlook). Only shown if at least one card clears the 0.6
-  // floor. Independent of the user's filter dropdown.
-  const topOpportunities = useMemo(() => {
-    const candidates = allStocks.filter(
-      (s) => s.context.zone !== "MID_RANGE" && s.outlook !== "NO_CLEAR_EDGE" && s.confidence >= 0.8,
-    );
-    return [...candidates].sort((a, b) => b.confidence - a.confidence).slice(0, 5);
-  }, [allStocks]);
-
-  const topSymbols = useMemo(
-    () => new Set(topOpportunities.map((s) => s.symbol)),
-    [topOpportunities],
+  // Section 1: Strong Factor Alignment — confidence ≥ 0.85
+  const strongAlignment = useMemo(
+    () => allStocks.filter((s) => s.confidence >= STRONG_ALIGNMENT_FLOOR).slice(0, STRONG_ALIGNMENT_CAP),
+    [allStocks],
   );
 
-  // The main "Stocks" grid excludes anything already in Top Opportunities.
-  const remainingStocks = useMemo(
-    () => filteredStocks.filter((s) => !topSymbols.has(s.symbol)),
-    [filteredStocks, topSymbols],
+  // Section 2: Near Support Zones
+  const nearSupport = useMemo(
+    () => allStocks.filter((s) => s.context.zone === "NEAR_SUPPORT").slice(0, ZONE_SECTION_CAP),
+    [allStocks],
+  );
+
+  // Section 3: Near Resistance Zones
+  const nearResistance = useMemo(
+    () => allStocks.filter((s) => s.context.zone === "NEAR_RESISTANCE").slice(0, ZONE_SECTION_CAP),
+    [allStocks],
   );
 
   const isLoading = stockMap.size === 0 && kiteConnected;
 
   return (
     <main className="min-h-screen bg-background">
-      <div className="max-w-[1400px] mx-auto px-4 py-4 space-y-6">
+      <div className="max-w-[1400px] mx-auto px-4 py-6 space-y-8">
         {!kiteConnected ? (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <p className="text-lg">Not connected to Kite</p>
             <p className="text-sm mt-1">
               Click{" "}
               <span className="text-yellow-600 dark:text-yellow-400 font-medium">Connect Kite</span>{" "}
-              above to login and start streaming market data.
+              above to start streaming market data.
             </p>
           </div>
         ) : isLoading ? (
@@ -217,17 +191,12 @@ export function Dashboard() {
           <>
             <MarketContextBanner market={marketContext} />
 
-            {/* Mode toggle: Stocks / Options */}
-            <div className="flex justify-center sm:justify-start">
-              <ModeToggle mode={mode} onChange={setMode} />
-            </div>
-
-            {/* Indices section — visible in both modes */}
+            {/* Section 1 — Market Overview (indices) */}
             <section>
               <SectionHeader
                 Icon={Activity}
-                title="Market Indices"
-                subtitle="Live index pulse"
+                title="Market Overview"
+                subtitle="Real-time market activity across major indices"
               />
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <IndexCard
@@ -254,75 +223,79 @@ export function Dashboard() {
               </div>
             </section>
 
-            {/* Top Opportunities (stocks mode only, hidden if no card clears floor) */}
-            {mode === "stocks" && topOpportunities.length > 0 && (
-              <section>
-                <SectionHeader
-                  Icon={Sparkles}
-                  title="Top Opportunities"
-                  subtitle={`Best ${topOpportunities.length} setups by confidence`}
-                />
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {topOpportunities.map((stock) => (
-                    <TopOpportunityCard key={stock.symbol} data={stock} />
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* Mode toggle */}
+            <div className="flex justify-center sm:justify-start">
+              <ModeToggle mode={mode} onChange={setMode} />
+            </div>
 
-            {/* Stocks view (excluding any stocks already in Top Opportunities) */}
             {mode === "stocks" && (
-              <section>
-                <SectionHeader
-                  Icon={LayoutGrid}
-                  title={FILTER_TITLE[filter]}
-                  subtitle={`Showing ${remainingStocks.length} of ${allStocks.length}`}
-                  right={
-                    <Select
-                      value={filter}
-                      onValueChange={(value) => setFilter(value as GridFilter)}
-                      items={(Object.keys(FILTER_LABEL) as GridFilter[]).map((key) => ({
-                        value: key,
-                        label: FILTER_LABEL[key],
-                      }))}
-                    >
-                      <SelectTrigger className="min-w-[160px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(Object.keys(FILTER_LABEL) as GridFilter[]).map((key) => (
-                          <SelectItem key={key} value={key}>
-                            {FILTER_LABEL[key]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  }
-                />
+              <>
+                {/* Section 2 — Strong Factor Alignment */}
+                <section>
+                  <SectionHeader
+                    Icon={Sparkles}
+                    title="Strong Factor Alignment"
+                    subtitle="Stocks showing alignment across momentum, pressure & volatility"
+                    count={strongAlignment.length}
+                  />
+                  {strongAlignment.length === 0 ? (
+                    <EmptyState message="No stocks currently showing strong factor alignment." />
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {strongAlignment.map((s) => (
+                        <MarketCard key={s.symbol} data={s} />
+                      ))}
+                    </div>
+                  )}
+                </section>
 
-                {remainingStocks.length === 0 ? (
-                  <div className="rounded-xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/40 px-6 py-12 text-center text-sm text-zinc-500">
-                    {topOpportunities.length > 0
-                      ? "All matching stocks are in Top Opportunities above."
-                      : "No stocks match this filter right now."}
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {remainingStocks.map((stock) => (
-                      <IntelligenceCard key={stock.symbol} data={stock} />
-                    ))}
-                  </div>
-                )}
-              </section>
+                {/* Section 3 — Near Support Zones */}
+                <section>
+                  <SectionHeader
+                    Icon={TrendingUp}
+                    title="Near Support Zones"
+                    subtitle="Stocks trading close to historically reactive support areas"
+                    count={nearSupport.length}
+                  />
+                  {nearSupport.length === 0 ? (
+                    <EmptyState message="No stocks currently near support zones." />
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {nearSupport.map((s) => (
+                        <MarketCard key={s.symbol} data={s} />
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                {/* Section 4 — Near Resistance Zones */}
+                <section>
+                  <SectionHeader
+                    Icon={TrendingDown}
+                    title="Near Resistance Zones"
+                    subtitle="Stocks approaching historically reactive resistance areas"
+                    count={nearResistance.length}
+                  />
+                  {nearResistance.length === 0 ? (
+                    <EmptyState message="No stocks currently near resistance zones." />
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {nearResistance.map((s) => (
+                        <MarketCard key={s.symbol} data={s} />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </>
             )}
 
-            {/* Options view */}
+            {/* Options view — kept as-is (separate scope) */}
             {mode === "options" && (
               <section>
                 <SectionHeader
-                  Icon={PhoneCall}
+                  Icon={Compass}
                   title="Index Options"
-                  subtitle="CALL / PUT bias derived from each index's intelligence"
+                  subtitle="Activity insights derived from each index's real-time data"
                 />
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                   {SUPPORTED_OPTION_INDICES.map((idx) => {
@@ -347,10 +320,6 @@ export function Dashboard() {
                     );
                   })}
                 </div>
-                <p className="mt-4 text-[11px] text-zinc-500">
-                  Options insight comes from the underlying index intelligence. Greeks, OI and IV
-                  are not yet supported.
-                </p>
               </section>
             )}
           </>
