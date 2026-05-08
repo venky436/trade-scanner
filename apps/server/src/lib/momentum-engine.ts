@@ -32,7 +32,15 @@ function getQualityMultiplier(signal: MomentumSignal, acceleration: MomentumAcce
   return 1.0;
 }
 
-export function getMomentum(candles: Candle[]): MomentumResult | null {
+// Stocks normally move 0.3–1% per 5-min candle, so dividing by 0.003 (0.3%)
+// puts a meaningful move at value ≈ 0.5–1.0. Indices move 0.05–0.2% per
+// 5-min candle, so the same divisor compresses everything into FLAT range.
+// Index divisor is 3× more sensitive, so a 0.1% NIFTY move reads UP, a
+// 0.2% move reads STRONG_UP.
+const STOCK_MOMENTUM_DIVISOR = 0.003;
+const INDEX_MOMENTUM_DIVISOR = 0.001;
+
+export function getMomentum(candles: Candle[], isIndex = false): MomentumResult | null {
   if (candles.length < 3) return null;
 
   const len = candles.length;
@@ -46,7 +54,8 @@ export function getMomentum(candles: Candle[]): MomentumResult | null {
 
   // Velocity: unchanged 3-candle weighted average
   const momentum = r3 * 0.2 + r2 * 0.3 + r1 * 0.5;
-  const value = clamp(momentum / 0.003, -1, 1);
+  const divisor = isIndex ? INDEX_MOMENTUM_DIVISOR : STOCK_MOMENTUM_DIVISOR;
+  const value = clamp(momentum / divisor, -1, 1);
   const signal = getSignal(value);
 
   // Acceleration: sliding window if 4+ candles, fallback to r1-r2

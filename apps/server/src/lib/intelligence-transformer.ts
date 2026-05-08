@@ -18,6 +18,7 @@ import type {
   VolatilityLabel,
   Zone,
 } from "./types.js";
+import { isIndexSymbol } from "./index-symbols.js";
 
 export interface IntelligenceInput {
   symbol: string;
@@ -119,12 +120,14 @@ function buildPressure(p: PressureResult | null): IntelligencePressure {
 // Volatility from intraday range. Prefers a rolling window of the last N
 // five-min candles ("current chaos"); falls back to today's session high/low
 // when fewer than 3 recent candles are available (cold start, fresh symbol,
-// server restart). Bands match score-engine.ts.
+// server restart). Bands match score-engine.ts for stocks; ~3× more sensitive
+// for indices (typical NIFTY intraday range is 0.3–1.0%, vs stocks 1–5%).
 function buildVolatility(
   price: number,
   sessionHigh: number,
   sessionLow: number,
   recentCandles?: Candle[],
+  isIndex = false,
 ): IntelligenceVolatility {
   if (price <= 0) return { label: "LOW", score: 0.2 };
 
@@ -150,11 +153,19 @@ function buildVolatility(
 
   const range = (high - low) / price;
   let score: number;
-  if (range >= 0.03) score = 1.0;
-  else if (range >= 0.02) score = 0.8;
-  else if (range >= 0.01) score = 0.6;
-  else if (range >= 0.005) score = 0.4;
-  else score = 0.2;
+  if (isIndex) {
+    if (range >= 0.012) score = 1.0;       // 1.2%+
+    else if (range >= 0.008) score = 0.8;  // 0.8%+
+    else if (range >= 0.005) score = 0.6;  // 0.5%+
+    else if (range >= 0.003) score = 0.4;  // 0.3%+
+    else score = 0.2;
+  } else {
+    if (range >= 0.03) score = 1.0;
+    else if (range >= 0.02) score = 0.8;
+    else if (range >= 0.01) score = 0.6;
+    else if (range >= 0.005) score = 0.4;
+    else score = 0.2;
+  }
 
   const label: VolatilityLabel = score >= 0.7 ? "HIGH" : score >= 0.4 ? "MEDIUM" : "LOW";
   return { label, score };
@@ -217,10 +228,17 @@ function buildBias(momentumLabel: IntelligenceMomentumLabel, pressureLabel: Inte
 }
 
 export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
+  const isIndex = isIndexSymbol(input.symbol);
   const { zone, distanceToLevel, level } = computeZone(input.price, input.sr);
   const momentum = buildMomentum(input.momentum);
-  const pressure = buildPressure(input.pressure);
-  const volatility = buildVolatility(input.price, input.high, input.low, input.recentCandles);
+  // Pressure is structurally unmeasurable for indices (Kite index ticks
+  // carry volume=0). Show NOT_APPLICABLE so the UI renders an honest "N/A"
+  // instead of fake-neutral readings. Stocks use the volume-weighted
+  // pressure engine as before.
+  const pressure: IntelligencePressure = isIndex
+    ? { label: "NOT_APPLICABLE", score: 0 }
+    : buildPressure(input.pressure);
+  const volatility = buildVolatility(input.price, input.high, input.low, input.recentCandles, isIndex);
 
   // Direction-aware pipeline: zone → direction → confidence → outlook
   const direction = getImpliedDirection(zone, input.momentum?.value ?? 0);

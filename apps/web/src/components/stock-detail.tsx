@@ -450,31 +450,49 @@ export function StockDetail({ symbol }: StockDetailProps) {
           </div>
         </section>
 
-        {/* Pressure Analysis */}
+        {/* Pressure Analysis — N/A for indices (no order-book volume).
+            For stocks, full readings as before. */}
         <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/60 p-6">
           <SectionHeader Icon={Gauge} title="Pressure Analysis" iconColor="text-cyan-600 dark:text-cyan-400" iconBg="bg-cyan-500/10" />
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              {pDir === "up" && <ArrowUp className={`size-7 ${directionColor("up")}`} strokeWidth={2.75} />}
-              {pDir === "down" && <ArrowDown className={`size-7 ${directionColor("down")}`} strokeWidth={2.75} />}
-              {pDir === "flat" && <Minus className={`size-7 ${directionColor("flat")}`} strokeWidth={2.75} />}
-              <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-                {pressureDisplay(intel.pressure.label)}
+          {intel.pressure.label === "NOT_APPLICABLE" ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <Minus className={`size-7 ${directionColor("flat")}`} strokeWidth={2.75} />
+                <div className="text-2xl font-bold text-zinc-500 dark:text-zinc-400">
+                  Not Applicable
+                </div>
+              </div>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                {pressureHeadline(intel.pressure.label)}
+              </p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                Indices are computed from constituent stocks and have no traded volume of their own. Buying / selling pressure is measured from order-book flow, which only exists on individual stocks.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                {pDir === "up" && <ArrowUp className={`size-7 ${directionColor("up")}`} strokeWidth={2.75} />}
+                {pDir === "down" && <ArrowDown className={`size-7 ${directionColor("down")}`} strokeWidth={2.75} />}
+                {pDir === "flat" && <Minus className={`size-7 ${directionColor("flat")}`} strokeWidth={2.75} />}
+                <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+                  {pressureDisplay(intel.pressure.label)}
+                </div>
+              </div>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                {pressureHeadline(intel.pressure.label)}
+              </p>
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-[0.25em] text-zinc-500">Strength</span>
+                  <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                    {strengthDescriptor(intel.pressure.score)}
+                  </span>
+                </div>
+                <StrengthBar score={intel.pressure.score} dir={pDir} />
               </div>
             </div>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              {pressureHeadline(intel.pressure.label)}
-            </p>
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-[0.25em] text-zinc-500">Strength</span>
-                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  {strengthDescriptor(intel.pressure.score)}
-                </span>
-              </div>
-              <StrengthBar score={intel.pressure.score} dir={pDir} />
-            </div>
-          </div>
+          )}
         </section>
 
         {/* Volatility State */}

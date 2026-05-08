@@ -2,6 +2,7 @@ import { KiteConnect } from "kiteconnect";
 import type { Candle, InstrumentMaps, SupportResistanceResult, MomentumResult, PatternSignal } from "../lib/types.js";
 import { getSupportResistance } from "./levels.service.js";
 import { getMomentum } from "../lib/momentum-engine.js";
+import { isIndexSymbol } from "../lib/index-symbols.js";
 import { detectPattern } from "../lib/pattern-engine.js";
 import { redisService } from "./redis.service.js";
 
@@ -96,9 +97,10 @@ export function createEodJob(config: EodJobConfig) {
           const saved = await redisService.setLevel(symbol, sr);
           if (saved) redisWritten++;
 
-          // Momentum from last 3 daily candles
+          // Momentum from last 3 daily candles (3× more sensitive divisor
+          // for indices — see momentum-engine.ts)
           if (candles.length >= 3) {
-            const mom = getMomentum(candles.slice(-3));
+            const mom = getMomentum(candles.slice(-3), isIndexSymbol(symbol));
             if (mom) config.onMomentumComputed?.(symbol, mom);
           }
 

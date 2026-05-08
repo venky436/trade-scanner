@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildMarketContext, toIntelligence, type IntelligenceInput } from "./intelligence-transformer.js";
+import { getMomentum } from "./momentum-engine.js";
 import type { Candle, MomentumResult, PressureResult, SupportResistanceResult, SRZone } from "./types.js";
 
 function makeZone(level: number, distancePercent: number): SRZone {
@@ -226,14 +227,17 @@ describe("toIntelligence — outlook decision table", () => {
   const nearRes = makeSr({ resistance: { level: 1005, dist: 0.5 }, support: { level: 900, dist: 10 } });
   const nearSup = makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } });
 
-  it("NEAR_RESISTANCE + STRONG_UP + HIGH conf → BREAKOUT_LIKELY", () => {
+  // Post-2026-05-07: BREAKOUT_LIKELY was retired (sub-50% accuracy in prod).
+  // The transformer now returns NO_CLEAR_EDGE for what would have been a
+  // BREAKOUT setup, regardless of confidence.
+  it("NEAR_RESISTANCE + STRONG_UP + HIGH conf → NO_CLEAR_EDGE (Breakout retired)", () => {
     const r = toIntelligence(baseInput({
       sr: nearRes,
       momentum: makeMomentum("STRONG_UP", 0.95),
       pressure: makePressure("STRONG_BUY", 0.95),
       high: 1030, low: 1000,
     }));
-    assert.equal(r.outlook, "BREAKOUT_LIKELY");
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
   it("NEAR_RESISTANCE + STRONG_UP + LOW conf → NO_CLEAR_EDGE", () => {
@@ -283,30 +287,47 @@ describe("toIntelligence — outlook decision table", () => {
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("NEAR_SUPPORT + STRONG_DOWN + HIGH conf → BREAKDOWN_RISK", () => {
+  // Post-2026-05-07: BREAKDOWN_RISK was retired (negative expectancy in prod).
+  // The transformer now returns NO_CLEAR_EDGE for what would have been a
+  // BREAKDOWN setup, regardless of confidence.
+  it("NEAR_SUPPORT + STRONG_DOWN + HIGH conf → NO_CLEAR_EDGE (Breakdown retired)", () => {
     const r = toIntelligence(baseInput({
       sr: nearSup,
       momentum: makeMomentum("STRONG_DOWN", -0.95),
       pressure: makePressure("STRONG_SELL", -0.95),
       high: 1030, low: 1000,
     }));
-    assert.equal(r.outlook, "BREAKDOWN_RISK");
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("NEAR_SUPPORT + STRONG_UP → BOUNCE_EXPECTED", () => {
+  // Post-2026-05-07: BOUNCE_EXPECTED needs HIGH confidence (>0.7).
+  // Values below would land in MEDIUM (~0.6) and return NO_CLEAR_EDGE.
+  it("NEAR_SUPPORT + STRONG_UP at HIGH conf → BOUNCE_EXPECTED", () => {
     const r = toIntelligence(baseInput({
       sr: nearSup,
-      momentum: makeMomentum("STRONG_UP", 0.7),
-      pressure: makePressure("STRONG_BUY", 0.7),
+      momentum: makeMomentum("STRONG_UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
     }));
     assert.equal(r.outlook, "BOUNCE_EXPECTED");
   });
 
-  it("NEAR_SUPPORT + WEAK_UP → BOUNCE_EXPECTED", () => {
+  // Post-2026-05-07 single-pool model: BOUNCE_EXPECTED requires HIGH
+  // confidence (>0.7). WEAK_UP at value 0.4 with BUY pressure 0.4 produces
+  // confidence ≈ 0.35 (LOW bucket) → no signal.
+  it("NEAR_SUPPORT + WEAK_UP at low confidence → NO_CLEAR_EDGE", () => {
     const r = toIntelligence(baseInput({
       sr: nearSup,
       momentum: makeMomentum("UP", 0.4),
       pressure: makePressure("BUY", 0.4),
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("NEAR_SUPPORT + WEAK_UP at HIGH confidence → BOUNCE_EXPECTED", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
     }));
     assert.equal(r.outlook, "BOUNCE_EXPECTED");
   });
@@ -479,5 +500,94 @@ describe("buildMarketContext", () => {
     );
     assert.equal(ctx.nifty.direction, "FLAT");
     assert.equal(ctx.bankNifty.direction, "FLAT");
+  });
+});
+
+describe("toIntelligence — index symbol handling", () => {
+  // Indices have no order-book volume → pressure must be NOT_APPLICABLE so
+  // the UI can render an honest N/A card instead of misleading neutrals.
+  it("returns NOT_APPLICABLE pressure for NIFTY 50", () => {
+    const r = toIntelligence(baseInput({
+      symbol: "NIFTY 50",
+      pressure: makePressure("BUY", 0.5),  // even when input pressure is non-null
+    }));
+    assert.equal(r.pressure.label, "NOT_APPLICABLE");
+    assert.equal(r.pressure.score, 0);
+  });
+
+  it("returns NOT_APPLICABLE pressure for NIFTY BANK", () => {
+    const r = toIntelligence(baseInput({ symbol: "NIFTY BANK" }));
+    assert.equal(r.pressure.label, "NOT_APPLICABLE");
+  });
+
+  // Stocks (non-index) keep their volume-weighted pressure as before.
+  it("preserves real pressure for non-index symbols", () => {
+    const r = toIntelligence(baseInput({
+      symbol: "RELIANCE",
+      pressure: makePressure("BUY", 0.5),
+    }));
+    assert.equal(r.pressure.label, "BUY");
+    assert.equal(r.pressure.score, 0.5);
+  });
+
+  // Volatility bands are 3× more sensitive for indices: a 0.6% range that
+  // would land at LOW (0.2) for stocks should land at MEDIUM (0.6) for indices.
+  it("uses index-scaled volatility bands — 0.6% range = score 0.6 for NIFTY", () => {
+    const r = toIntelligence(baseInput({
+      symbol: "NIFTY 50",
+      price: 24000,
+      high: 24090,   // (24090 - 23945) / 24000 ≈ 0.006 → 0.6%
+      low: 23945,
+    }));
+    // For stocks the same 0.6% range would be 0.4 (>= 0.005). For indices
+    // it crosses the >= 0.005 band at score 0.6.
+    assert.equal(r.volatility.score, 0.6);
+    assert.equal(r.volatility.label, "MEDIUM");
+  });
+
+  it("preserves stock-scaled volatility — 0.6% range = score 0.4 for stocks", () => {
+    const r = toIntelligence(baseInput({
+      symbol: "RELIANCE",
+      price: 2500,
+      high: 2515,    // (2515 - 2500) / 2500 = 0.006 → 0.6%
+      low: 2500,
+    }));
+    assert.equal(r.volatility.score, 0.4);
+    assert.equal(r.volatility.label, "MEDIUM");
+  });
+});
+
+describe("getMomentum — index-aware divisor", () => {
+  // The fix: indices use a 3× more sensitive divisor so smaller % moves still
+  // register. Demonstrates the contrast — at 0.05% per candle, stocks read
+  // FLAT (below the 0.3 threshold) while indices read UP.
+  function flatCandle(price: number, returnPct: number): Candle {
+    const open = price;
+    const close = open * (1 + returnPct);
+    return { time: 0, open, high: Math.max(open, close), low: Math.min(open, close), close, volume: 0 };
+  }
+
+  it("indices: 0.05% per candle reads UP (would be FLAT for stocks)", () => {
+    const c = [flatCandle(24000, 0.0005), flatCandle(24012, 0.0005), flatCandle(24024, 0.0005)];
+    const m = getMomentum(c, true);
+    assert.ok(m);
+    // 0.0005 / 0.001 = 0.5 → UP threshold (>0.3)
+    assert.equal(m!.signal, "UP");
+  });
+
+  it("stocks: 0.05% per candle stays FLAT (threshold unchanged)", () => {
+    const c = [flatCandle(2500, 0.0005), flatCandle(2501.25, 0.0005), flatCandle(2502.5, 0.0005)];
+    const m = getMomentum(c);  // default isIndex = false
+    assert.ok(m);
+    // 0.0005 / 0.003 = 0.167 → below 0.3 threshold → FLAT
+    assert.equal(m!.signal, "FLAT");
+  });
+
+  it("indices: 0.2% per candle reads STRONG_UP", () => {
+    const c = [flatCandle(24000, 0.002), flatCandle(24048, 0.002), flatCandle(24096, 0.002)];
+    const m = getMomentum(c, true);
+    assert.ok(m);
+    // 0.002 / 0.001 = 2.0 → clamped to 1.0 → STRONG_UP threshold (>0.6)
+    assert.equal(m!.signal, "STRONG_UP");
   });
 });

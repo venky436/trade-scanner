@@ -1,4 +1,5 @@
 import type { PressureResult, PressureSignal, PressureTrend } from "../lib/types.js";
+import { isIndexSymbol } from "../lib/index-symbols.js";
 
 interface TickInput {
   last_price: number;
@@ -105,6 +106,11 @@ export function createPressureEngine() {
   const versionMap = new Map<string, number>();
 
   function processTick(symbol: string, tick: TickInput): void {
+    // Indices have no order-book volume — Kite index ticks carry volume=0,
+    // so the engine would just accumulate empty state. Skip entirely:
+    // saves cycles and prevents misleading "neutral pressure" downstream.
+    if (isIndexSymbol(symbol)) return;
+
     let state = stateMap.get(symbol);
 
     if (!state) {
@@ -161,6 +167,9 @@ export function createPressureEngine() {
   }
 
   function getPressure(symbol: string): PressureResult | null {
+    // Defensive: indices never get state populated (see processTick), but
+    // guard the read path too in case any caller probes pre-existing state.
+    if (isIndexSymbol(symbol)) return null;
     const state = stateMap.get(symbol);
     if (!state) return null;
     return getPressureForState(state);

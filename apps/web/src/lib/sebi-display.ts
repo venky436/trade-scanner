@@ -35,6 +35,7 @@ export function momentumDisplay(label: MomentumLabel): string {
 export function pressureDisplay(label: PressureLabel): string {
   if (label === "BUY") return "Buying activity observed";
   if (label === "SELL") return "Selling activity observed";
+  if (label === "NOT_APPLICABLE") return "Not applicable for indices";
   return "Neutral participation";
 }
 
@@ -59,6 +60,8 @@ export function momentumDirection(label: MomentumLabel): Direction {
 export function pressureDirection(label: PressureLabel): Direction {
   if (label === "BUY") return "up";
   if (label === "SELL") return "down";
+  // NOT_APPLICABLE → flat (no directional signal). UI uses the label itself
+  // to decide whether to render the N/A card; the direction is irrelevant.
   return "flat";
 }
 
@@ -75,6 +78,7 @@ export function momentumHeadline(label: MomentumLabel): string {
 export function pressureHeadline(label: PressureLabel): string {
   if (label === "BUY") return "Buying activity gradually increasing";
   if (label === "SELL") return "Selling activity gradually increasing";
+  if (label === "NOT_APPLICABLE") return "Pressure requires order-book volume — not measurable for indices";
   return "Neutral market participation observed";
 }
 
