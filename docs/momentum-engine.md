@@ -94,10 +94,15 @@ Where `r1` is the most recent candle (50% weight), `r2` is the previous (30%), a
 ### 4. Normalize to [-1, +1]
 
 ```
-value = clamp(momentum / 0.003, -1, 1)
+divisor = isIndex ? 0.001 : 0.003
+value   = clamp(momentum / divisor, -1, 1)
 ```
 
-The divisor `0.003` (0.3%) acts as a scaling factor — a 0.3% weighted momentum maps to a value of 1.0 (maximum). This threshold was chosen because a 0.3% move across 5-minute candles represents meaningful directional commitment. Anything beyond that saturates at ±1.
+The divisor acts as a scaling factor:
+- **Stocks (0.003 = 0.3%)**: a 0.3% weighted momentum maps to value 1.0. Stocks routinely move 0.3–1% per 5-min candle, so this puts a meaningful move in the saturated range.
+- **Indices (0.001 = 0.1%)**: 3× more sensitive. Indices (NIFTY 50, NIFTY BANK, etc.) move 0.05–0.2% per 5-min candle. With the stock divisor, indices were stuck in `FLAT` even during aggressive sessions. The smaller divisor lets a 0.1% NIFTY move read `UP`, a 0.2% move read `STRONG_UP`. Index detection: `isIndexSymbol(symbol)` from `apps/server/src/lib/index-symbols.ts`.
+
+Anything beyond `divisor` saturates at ±1.
 
 ### 5. Signal Classification
 

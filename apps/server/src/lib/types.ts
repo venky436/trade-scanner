@@ -165,7 +165,10 @@ export interface SignalSnapshot {
 
 export type Zone = "NEAR_RESISTANCE" | "NEAR_SUPPORT" | "MID_RANGE";
 export type IntelligenceMomentumLabel = "STRONG_UP" | "WEAK_UP" | "NEUTRAL" | "WEAK_DOWN" | "STRONG_DOWN";
-export type IntelligencePressureLabel = "BUY" | "NEUTRAL" | "SELL";
+// NOT_APPLICABLE is used for index symbols — pressure requires order-book
+// volume and indices have none (Kite index ticks carry volume=0). Frontend
+// renders an N/A card instead of misleading neutral readings.
+export type IntelligencePressureLabel = "BUY" | "NEUTRAL" | "SELL" | "NOT_APPLICABLE";
 export type VolatilityLabel = "HIGH" | "MEDIUM" | "LOW";
 export type Outlook =
   | "BREAKOUT_LIKELY"

@@ -188,7 +188,9 @@ STRONG_DOWN        →     STRONG_DOWN
 score = |momentum.value|   // 0..1 magnitude
 ```
 
-### 3. Pressure (3 labels — collapsed)
+**Index-aware divisor (added 2026-05-08):** the underlying `getMomentum(candles, isIndex)` engine uses a 3× more sensitive divisor for index symbols (`0.001` vs the stock default `0.003`). Indices move 0.05–0.2% per 5-min candle vs stocks at 0.3–1%; without the rescale, indices were stuck in `FLAT` even during aggressive sessions. See `docs/momentum-engine.md` for the math.
+
+### 3. Pressure (4 labels — collapsed + N/A for indices)
 
 ```
 backend signal     →     intelligence label
@@ -199,8 +201,12 @@ NEUTRAL            →     NEUTRAL
 SELL               →     SELL
 STRONG_SELL        →     SELL
 
-score = |pressure.value|
+(index symbols)    →     NOT_APPLICABLE   (added 2026-05-08)
+
+score = |pressure.value|   (always 0 for NOT_APPLICABLE)
 ```
+
+**Why NOT_APPLICABLE for indices?** Indices (NIFTY 50, NIFTY BANK, etc.) are calculated values — weighted averages of constituent stocks. They aren't directly traded, so Kite's index ticks carry `volume = 0`. The pressure engine's volume-direction heuristic has nothing to attribute, producing structurally 0 readings. Rather than rendering misleading "neutral pressure" on `/stock/[index]`, the transformer emits `NOT_APPLICABLE` and the UI shows a dedicated "N/A" card explaining the limitation. A proper fix (constituent breadth — % of NIFTY 50 stocks up vs down) is deferred. See `apps/server/src/services/pressure.service.ts` for the index skip logic.
 
 ### 4. Volatility (rolling 30-min range, with session fallback)
 
@@ -215,18 +221,28 @@ range = (high - low) / price
 // Fallback (when window has < 3 candles):
 range = (sessionHigh - sessionLow) / price
 
+// Stocks (default):
 range ≥ 3.0%  → score 1.0   label HIGH
 range ≥ 2.0%  → score 0.8   label HIGH
 range ≥ 1.0%  → score 0.6   label MEDIUM
 range ≥ 0.5%  → score 0.4   label MEDIUM
 range <  0.5% → score 0.2   label LOW
+
+// Indices (~3× more sensitive — added 2026-05-08):
+range ≥ 1.2%  → score 1.0   label HIGH
+range ≥ 0.8%  → score 0.8   label HIGH
+range ≥ 0.5%  → score 0.6   label MEDIUM
+range ≥ 0.3%  → score 0.4   label MEDIUM
+range <  0.3% → score 0.2   label LOW
 ```
 
 **Why rolling, not session-cumulative?** The session-cumulative `(today's high − today's low)` was monotonically non-decreasing — once a stock whipsawed 3% by 10:30 AM, it stayed HIGH-volatility for the rest of the day even after going dead-flat. Rolling-window volatility reflects right-now conditions: the morning swing ages out of the window after ~30 min, so a stock that calms down gets credit for calming down.
 
+**Why index-specific bands?** Indices (NIFTY 50, NIFTY BANK, etc.) move 0.3–1.0% per session, vs stocks at 1–5%. Stock-calibrated bands locked indices in `LOW` even on aggressive sessions. The index bands are roughly 1/3 of the stock thresholds so a 0.5% NIFTY day reads `MEDIUM` instead of `LOW`. Detection: `isIndexSymbol(symbol)` from `apps/server/src/lib/index-symbols.ts`.
+
 **Implementation:**
 - `apps/server/src/services/candle-tracker.service.ts` — `getRecentCandles(symbol, n)` slices the newest n entries from session candles
-- `apps/server/src/lib/intelligence-transformer.ts` — `buildVolatility(price, sessionHigh, sessionLow, recentCandles?)` prefers the rolling window, falls back to session OHLC, returns LOW (0.2) as the safety floor when both are unavailable
+- `apps/server/src/lib/intelligence-transformer.ts` — `buildVolatility(price, sessionHigh, sessionLow, recentCandles?, isIndex?)` prefers the rolling window, falls back to session OHLC, returns LOW (0.2) as the safety floor when both are unavailable; switches to the index band table when `isIndex` is true
 - Wired into `broadcast.service.ts` (live every 500ms), `ws/ws-server.ts` (initial snapshot), and `routes/stocks.route.ts` (on-demand snapshot — uses last 6 of the Kite-fetched intraday candles)
 
 ### 5. Confidence (direction-aware formula)

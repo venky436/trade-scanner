@@ -123,6 +123,7 @@ const PRESSURE_SHORT: Record<PressureLabel, string> = {
   BUY: "Buy",
   NEUTRAL: "Neutral",
   SELL: "Sell",
+  NOT_APPLICABLE: "N/A",
 };
 
 const VOL_SHORT: Record<VolatilityLabel, string> = {

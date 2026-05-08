@@ -16,6 +16,7 @@ import { redisService } from "./services/redis.service.js";
 import { getIntradaySR } from "./services/intraday-levels.service.js";
 import { getMomentum } from "./lib/momentum-engine.js";
 import { detectPattern } from "./lib/pattern-engine.js";
+import { INDEX_SYMBOLS, isIndexSymbol } from "./lib/index-symbols.js";
 import { loadSession } from "./lib/session-store.js";
 import type { InstrumentMaps, SupportResistanceResult, MomentumResult, PatternSignal } from "./lib/types.js";
 import { marketDataService } from "./services/market-data.service.js";
@@ -116,7 +117,6 @@ async function main() {
 
     // Create stock filter (fast eligibility layer)
     if (stockFilterInstance) stockFilterInstance.stop();
-    const indexSymbols = new Set(["NIFTY 50", "NIFTY BANK", "SENSEX", "NIFTY FIN SERVICE", "INDIA VIX"]);
     const stockFilter = createStockFilter({
       maxStocks: 150,
       minChangePercent: 0.5,
@@ -124,7 +124,7 @@ async function main() {
       minPrice: 50,
       refreshIntervalMs: 5000,
       allSymbols: instrumentMaps.symbols,
-      alwaysInclude: indexSymbols,
+      alwaysInclude: INDEX_SYMBOLS,
     });
     stockFilterInstance = stockFilter;
 
@@ -194,8 +194,10 @@ async function main() {
     // Create candle tracker (5-min candles from ticks)
     const candleTracker = createCandleTracker({
       onCandleClose: (symbol, candles) => {
-        // Compute momentum
-        const mom = getMomentum(candles);
+        // Compute momentum (3× more sensitive divisor for indices — they
+        // move 0.05–0.2% per candle vs stocks at 0.3–1%, so the same
+        // threshold puts indices perpetually in FLAT)
+        const mom = getMomentum(candles, isIndexSymbol(symbol));
         if (mom) momentumMap.set(symbol, mom);
         else momentumMap.delete(symbol);
         momentumVersion.set(symbol, (momentumVersion.get(symbol) ?? 0) + 1);

@@ -6,6 +6,12 @@ The Pressure Engine infers **buy/sell pressure** for each stock in real time. Si
 
 The engine outputs a signal per symbol — one of `STRONG_BUY`, `BUY`, `NEUTRAL`, `SELL`, or `STRONG_SELL` — along with a numeric value, trend direction, and confidence score. This data is broadcast to the frontend via WebSocket and exposed through a REST endpoint.
 
+### Index symbols are skipped
+
+As of 2026-05-08, **index symbols (NIFTY 50, NIFTY BANK, SENSEX, NIFTY FIN SERVICE, INDIA VIX) are skipped entirely** by the pressure engine. Indices are calculated values (weighted aggregates of constituent stocks) and have no traded volume of their own — Kite ticks for indices carry `volume = 0`, so the volume-direction heuristic has nothing to attribute. Both `processTick(symbol, ...)` and `getPressure(symbol)` early-return for indices via `isIndexSymbol(symbol)`.
+
+Downstream, `toIntelligence` substitutes `pressure.label = "NOT_APPLICABLE"` for indices so the UI can render an explicit "N/A" card on `/stock/[index]` rather than a misleading neutral reading. A proper index-pressure signal would require constituent breadth (% of NIFTY 50 stocks currently up vs down) — deferred as a future enhancement.
+
 ---
 
 ## Why We Built It This Way
