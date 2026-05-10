@@ -8,19 +8,20 @@ import {
   ArrowLeft,
   ArrowUpRight,
   Camera,
+  CheckCircle2,
   Clock,
   Eye,
   Minus,
   Sparkles,
   TrendingDown,
   TrendingUp,
+  XCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import {
   outlookCategoryDisplay,
   socialDisplayStatus,
-  socialOutcomeStatusDisplay,
   type SocialSignal,
 } from "@/components/social/template-shared";
 
@@ -122,31 +123,50 @@ function zoneVisual(outlook: string): ZoneVisual {
   };
 }
 
-// Status visual treatment — three states, neutral vocabulary, no win/loss tone:
-//   PENDING                                 → amber Clock "Outcome Pending"
-//   NEUTRAL (|change| < 0.2% dead-zone)     → slate Minus "Limited Movement"
-//   SUCCESS / FAILED                        → cyan  Eye   "Follow-up Available"
-// Takes the full signal so socialDisplayStatus can apply the dead-zone rule.
+// Status visual treatment — four discrete states with the change% magnitude
+// shown inline on the pill so the admin can scan card outcomes without
+// opening each one. Outcomes (SUCCESS/FAILED) reflect the canonical 8-min
+// window's lock; the ±0.2% dead-zone reclassifies as NEUTRAL at metric time.
+//   PENDING                            → amber  Clock        "Pending"
+//   NEUTRAL  (|change| < 0.2%)         → slate  Minus        "Neutral ±X.XX%"
+//   SUCCESS                            → emerald CheckCircle "Success +X.XX%"
+//   FAILED                             → rose   XCircle      "Failed -X.XX%"
 function statusVisual(signal: SocialSignal) {
   const display = socialDisplayStatus(signal);
+  const change = Number(signal.changePercent ?? 0);
+  const absPct = Math.abs(change).toFixed(2);
+
   if (display === "PENDING") {
     return {
-      label: socialOutcomeStatusDisplay(signal),
+      label: "Pending",
       Icon: Clock,
       pill: "border-amber-400/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
     };
   }
   if (display === "NEUTRAL") {
     return {
-      label: socialOutcomeStatusDisplay(signal),
+      label: `Neutral · ±${absPct}%`,
       Icon: Minus,
       pill: "border-slate-400/30 bg-slate-500/10 text-slate-600 dark:text-slate-300",
     };
   }
+  if (display === "SUCCESS") {
+    // Magnitude can be either side (buy-side success = positive change,
+    // sell-side success = negative change). Show the SIGNED change so the
+    // direction is unambiguous when comparing buy/sell outcomes.
+    const signedPct = (change >= 0 ? "+" : "") + change.toFixed(2);
+    return {
+      label: `Success · ${signedPct}%`,
+      Icon: CheckCircle2,
+      pill: "border-emerald-400/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    };
+  }
+  // FAILED
+  const signedPct = (change >= 0 ? "+" : "") + change.toFixed(2);
   return {
-    label: socialOutcomeStatusDisplay(signal),
-    Icon: Eye,
-    pill: "border-cyan-400/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+    label: `Failed · ${signedPct}%`,
+    Icon: XCircle,
+    pill: "border-rose-400/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
   };
 }
 
