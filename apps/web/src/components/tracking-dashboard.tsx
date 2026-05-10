@@ -80,23 +80,21 @@ const BUCKET_STYLE: Record<string, { accent: string; border: string; gradient: s
     gradient: "from-cyan-500/10 via-cyan-500/5 to-transparent dark:from-cyan-500/15",
     icon: Eye,
     label: "Tracked Signals",
-    range: "conf ≥ 0.7 · Bounce / Rejection only",
+    range: "conf ≥ 0.7 · Bounce / Rejection / Breakout / Breakdown",
   },
 };
 
 const OUTLOOK_LABEL: Record<string, string> = {
   BOUNCE_EXPECTED: "Bounce",
   REJECTION_POSSIBLE: "Rejection",
-  // Kept defensively so Recent Signals on historical dates still renders a
-  // human-readable label for retired outlooks.
-  BREAKOUT_LIKELY: "Breakout (retired)",
-  BREAKDOWN_RISK: "Breakdown (retired)",
+  BREAKOUT_LIKELY: "Breakout",
+  BREAKDOWN_RISK: "Breakdown",
 };
 
-// Outlooks shown in the "By Outlook" rollup. Retired outlooks intentionally
-// excluded — they're filtered server-side too, but the frontend keeps its own
-// allowlist as a defensive guard.
-const TRACKED_OUTLOOKS = ["BOUNCE_EXPECTED", "REJECTION_POSSIBLE"];
+// Outlooks shown in the "By Outlook" rollup. Mirrors TRACKED_OUTLOOKS in
+// signal-tracking.service.ts. Frontend keeps its own list as a defensive guard
+// in case the backend payload includes retired/unknown outlooks.
+const TRACKED_OUTLOOKS = ["BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKOUT_LIKELY", "BREAKDOWN_RISK"];
 
 // Mirrors the backend reclassifyForMetrics() — applies the ±0.2% NEUTRAL
 // dead-zone so the Recent Signals table stays consistent with the bucket-card
@@ -105,6 +103,9 @@ const TRACKED_OUTLOOKS = ["BOUNCE_EXPECTED", "REJECTION_POSSIBLE"];
 // which is confusing. Threshold must stay in sync with the backend constant
 // (NEUTRAL_METRIC_THRESHOLD_PERCENT in signal-tracking.service.ts).
 const NEUTRAL_THRESHOLD_PERCENT = 0.2;
+// Bullish: signal expects price to rise (Bounce off support, Breakout above
+// resistance). Anything else (Rejection, Breakdown) is bearish — derived
+// implicitly via the else branch in displayStatus.
 const BULLISH_OUTLOOKS = new Set(["BREAKOUT_LIKELY", "BOUNCE_EXPECTED"]);
 function displayStatus(s: Pick<SignalRecord, "status" | "outlook" | "changePercent">): string {
   if (s.status === "PENDING") return "PENDING";

@@ -12,6 +12,8 @@ import {
   Eye,
   Minus,
   Sparkles,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api";
@@ -46,11 +48,14 @@ interface ZoneVisual {
   activityText: string;
 }
 
-// Zone visuals — colored accent strip + icon container per outlook. Bounce
-// (near support) reads as emerald upward; Rejection (near resistance) reads
-// as rose downward. Legacy Breakout/Breakdown rows fall back to a neutral
-// slate look so they still render legibly on historical dates without
-// implying a directional call.
+// Zone visuals — colored accent strip + icon container per outlook.
+//   Bounce    (gentle reactive up at support)   → emerald + ArrowUpRight
+//   Rejection (gentle reactive down at res)     → rose    + ArrowDownRight
+//   Breakout  (aggressive up through res)       → sky     + TrendingUp
+//   Breakdown (aggressive down through support) → orange  + TrendingDown
+// Distinct hues + steeper trending icons signal the more committed nature of
+// gated Breakout/Breakdown vs reactive Bounce/Rejection. Unknown outlooks fall
+// back to a neutral slate look so the card still renders legibly.
 function zoneVisual(outlook: string): ZoneVisual {
   if (outlook === "BOUNCE_EXPECTED") {
     return {
@@ -76,6 +81,32 @@ function zoneVisual(outlook: string): ZoneVisual {
       hoverShadow: "hover:shadow-rose-500/[0.06]",
       cardTint: "bg-gradient-to-br from-rose-500/[0.04] via-transparent to-transparent dark:from-rose-500/[0.05]",
       activityText: "text-rose-600 dark:text-rose-300/90",
+    };
+  }
+  if (outlook === "BREAKOUT_LIKELY") {
+    return {
+      Icon: TrendingUp,
+      iconColor: "text-sky-500 dark:text-sky-400",
+      iconBg: "bg-sky-500/10",
+      iconRing: "ring-sky-400/40",
+      strip: "bg-gradient-to-b from-sky-400/0 via-sky-400/80 to-sky-400/0",
+      hoverBorder: "hover:border-sky-400/40",
+      hoverShadow: "hover:shadow-sky-500/[0.06]",
+      cardTint: "bg-gradient-to-br from-sky-500/[0.04] via-transparent to-transparent dark:from-sky-500/[0.05]",
+      activityText: "text-sky-600 dark:text-sky-300/90",
+    };
+  }
+  if (outlook === "BREAKDOWN_RISK") {
+    return {
+      Icon: TrendingDown,
+      iconColor: "text-orange-500 dark:text-orange-400",
+      iconBg: "bg-orange-500/10",
+      iconRing: "ring-orange-400/40",
+      strip: "bg-gradient-to-b from-orange-400/0 via-orange-400/80 to-orange-400/0",
+      hoverBorder: "hover:border-orange-400/40",
+      hoverShadow: "hover:shadow-orange-500/[0.06]",
+      cardTint: "bg-gradient-to-br from-orange-500/[0.04] via-transparent to-transparent dark:from-orange-500/[0.05]",
+      activityText: "text-orange-600 dark:text-orange-300/90",
     };
   }
   return {

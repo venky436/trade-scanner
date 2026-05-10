@@ -54,6 +54,12 @@ async function main() {
   let cachedLevels: Record<string, SupportResistanceResult> = {};
   // Intraday S/R levels (computed from 5-min session candles)
   const intradayLevels: Record<string, SupportResistanceResult> = {};
+  // Per-symbol counter for throttling intraday S/R recompute. Recomputes
+  // every 3 candle closes (= 15 min) instead of every candle. Stops the
+  // S/R level from visibly "jumping" every 5 min (UX trust); also keeps
+  // any future intraday-S/R-pipe-into-broadcast stable for the gates.
+  const intradaySrCandlesSince = new Map<string, number>();
+  const INTRADAY_SR_RECOMPUTE_EVERY = 3;
   // Global market state (computed from NIFTY 50 5-min range)
   let globalMarketState: "DEAD" | "SLOW" | "ACTIVE" = "ACTIVE";
 
@@ -186,7 +192,7 @@ async function main() {
       getPressure: (s) => pressureEngine.getPressure(s),
       getMomentum: (s) => momentumMap.get(s) ?? null,
       getLevels: (s) => cachedLevels[s] ?? null,
-      getRecentCandles: (s) => candleTrackerRef?.getRecentCandles(s, 6) ?? [],
+      getRecentCandles: (s) => candleTrackerRef?.getRecentCandles(s, 21) ?? [],
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
     });
     wsManager.attach(server.server);
@@ -234,12 +240,25 @@ async function main() {
         }
         patternVersion.set(symbol, (patternVersion.get(symbol) ?? 0) + 1);
 
-        // Compute intraday S/R from session candles (5-min)
+        // Compute intraday S/R from session candles (5-min). Throttled to
+        // every 3rd close (15 min) so the user-visible level doesn't jump
+        // every 5 min. Always fires on the very first qualifying close
+        // (length === 15), which also handles new-trading-day resets — the
+        // candle tracker zeroes session candles on day change, so the next
+        // run-up to 15 always recomputes regardless of any leftover counter.
         const sessionCandles = candleTracker.getSessionCandles(symbol);
         if (sessionCandles.length >= 15 && price > 0) {
-          const intradaySr = getIntradaySR(sessionCandles, price);
-          if (intradaySr) {
-            intradayLevels[symbol] = intradaySr;
+          const since = intradaySrCandlesSince.get(symbol) ?? Infinity;
+          const isFirstSessionCompute = sessionCandles.length === 15;
+          const dueForRecompute = since + 1 >= INTRADAY_SR_RECOMPUTE_EVERY;
+          if (isFirstSessionCompute || dueForRecompute) {
+            const intradaySr = getIntradaySR(sessionCandles, price);
+            if (intradaySr) {
+              intradayLevels[symbol] = intradaySr;
+            }
+            intradaySrCandlesSince.set(symbol, 0);
+          } else {
+            intradaySrCandlesSince.set(symbol, since + 1);
           }
         }
       },
@@ -255,7 +274,7 @@ async function main() {
       getPressure: (s) => pressureEngine.getPressure(s),
       getMomentum: (s) => momentumMap.get(s) ?? null,
       getLevels: (s) => cachedLevels[s] ?? null,
-      getRecentCandles: (s) => candleTrackerRef?.getRecentCandles(s, 6) ?? [],
+      getRecentCandles: (s) => candleTrackerRef?.getRecentCandles(s, 21) ?? [],
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
       onIntelligenceComputed: (symbol, intel, price) => {
         trackingService.recordSignal(symbol, intel, price);

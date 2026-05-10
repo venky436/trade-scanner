@@ -134,9 +134,13 @@ function buildVolatility(
   let high: number;
   let low: number;
   if (recentCandles && recentCandles.length >= 3) {
+    // Explicit 6-candle (~30 min) window. Callers may pass longer arrays
+    // (e.g. 21 candles for the volume gate) — slice here so volatility's
+    // effective window is unchanged regardless of caller buffer size.
+    const window = recentCandles.slice(-6);
     high = -Infinity;
     low = Infinity;
-    for (const c of recentCandles) {
+    for (const c of window) {
       if (c.high > high) high = c.high;
       if (c.low < low) low = c.low;
     }
@@ -197,26 +201,86 @@ function buildConfidence(
   return { confidence: round2(confidence), confidenceLabel };
 }
 
-// Outlook decision table — only reactive plays at SR (Bounce + Rejection),
-// gated to HIGH confidence (>0.7). Predictive plays (Breakout/Breakdown) were
-// retired 2026-05-07 after 8-day prod analysis: HIGH Breakout 45.8% / 201 decided,
-// HIGH Breakdown 51.9% / 106 decided — both negative or coin-flip expectancy.
+// ── Breakout / Breakdown gates ──────────────────────────────────────────────
+// Re-enabled 2026-05-10 after the 2026-05-07 retirement (coin-flip expectancy
+// without filters). Two strict gates target the two failure modes that drove
+// the prior bad accuracy:
+//
+//   G1 Volume surge — current 5-min candle volume must be ≥ 1.5× average of
+//                     the prior 20 candles. Filters thin-volume fakeouts
+//                     (institutions don't commit on low volume).
+//   G2 Donchian-style confirmation — last 2 candle closes must be beyond the
+//                     max-high (Breakout) / min-low (Breakdown) of the prior
+//                     5 candles. Filters single-bar piercings. Deliberately
+//                     candle-relative (not S/R-relative) so it's robust to
+//                     mid-evaluation S/R recompute.
+
+const VOLUME_SURGE_MULTIPLIER = 1.5;
+const VOLUME_LOOKBACK = 20;
+const CONFIRMATION_CANDLES = 2;
+const DONCHIAN_LOOKBACK = 5;
+
+function passesVolumeGate(recentCandles?: Candle[]): boolean {
+  if (!recentCandles || recentCandles.length < VOLUME_LOOKBACK + 1) return false;
+  const current = recentCandles[recentCandles.length - 1];
+  const prior = recentCandles.slice(-(VOLUME_LOOKBACK + 1), -1);
+  const avgVol = prior.reduce((s, c) => s + c.volume, 0) / prior.length;
+  if (avgVol <= 0) return false;
+  return current.volume >= avgVol * VOLUME_SURGE_MULTIPLIER;
+}
+
+function passesConfirmationGate(
+  recentCandles: Candle[] | undefined,
+  side: "above" | "below",
+): boolean {
+  const needed = CONFIRMATION_CANDLES + DONCHIAN_LOOKBACK;
+  if (!recentCandles || recentCandles.length < needed) return false;
+  const confirm = recentCandles.slice(-CONFIRMATION_CANDLES);
+  const prior = recentCandles.slice(-needed, -CONFIRMATION_CANDLES);
+  if (side === "above") {
+    let maxHigh = -Infinity;
+    for (const c of prior) if (c.high > maxHigh) maxHigh = c.high;
+    return confirm.every((c) => c.close > maxHigh);
+  }
+  let minLow = Infinity;
+  for (const c of prior) if (c.low < minLow) minLow = c.low;
+  return confirm.every((c) => c.close < minLow);
+}
+
+// Outlook decision table. Bounce + Rejection paths are unchanged from the
+// 2026-05-07 single-pool refactor. Breakout + Breakdown are re-enabled but
+// only when both gates above pass; indices skip them entirely (volume = 0
+// makes G1 unsatisfiable, and indices behave differently at S/R).
 function buildOutlook(
   zone: Zone,
   momentumLabel: IntelligenceMomentumLabel,
   confidenceLabel: ConfidenceLabel,
+  isIndex: boolean,
+  recentCandles: Candle[] | undefined,
 ): Outlook {
   if (zone === "MID_RANGE") return "NO_CLEAR_EDGE";
   if (confidenceLabel !== "HIGH") return "NO_CLEAR_EDGE";
 
   if (zone === "NEAR_RESISTANCE") {
+    // Rejection path — UNCHANGED
     if (momentumLabel === "STRONG_DOWN" || momentumLabel === "WEAK_DOWN") return "REJECTION_POSSIBLE";
-    return "NO_CLEAR_EDGE";
+    // Breakout path — gated
+    if (isIndex) return "NO_CLEAR_EDGE";
+    if (momentumLabel !== "STRONG_UP" && momentumLabel !== "WEAK_UP") return "NO_CLEAR_EDGE";
+    if (!passesVolumeGate(recentCandles)) return "NO_CLEAR_EDGE";
+    if (!passesConfirmationGate(recentCandles, "above")) return "NO_CLEAR_EDGE";
+    return "BREAKOUT_LIKELY";
   }
 
   // NEAR_SUPPORT
+  // Bounce path — UNCHANGED
   if (momentumLabel === "STRONG_UP" || momentumLabel === "WEAK_UP") return "BOUNCE_EXPECTED";
-  return "NO_CLEAR_EDGE";
+  // Breakdown path — gated
+  if (isIndex) return "NO_CLEAR_EDGE";
+  if (momentumLabel !== "STRONG_DOWN" && momentumLabel !== "WEAK_DOWN") return "NO_CLEAR_EDGE";
+  if (!passesVolumeGate(recentCandles)) return "NO_CLEAR_EDGE";
+  if (!passesConfirmationGate(recentCandles, "below")) return "NO_CLEAR_EDGE";
+  return "BREAKDOWN_RISK";
 }
 
 function buildBias(momentumLabel: IntelligenceMomentumLabel, pressureLabel: IntelligencePressureLabel): Bias {
@@ -248,7 +312,7 @@ export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
     volatility.score,
     direction,
   );
-  const outlook = buildOutlook(zone, momentum.label, confidenceLabel);
+  const outlook = buildOutlook(zone, momentum.label, confidenceLabel, isIndex, input.recentCandles);
   const bias = buildBias(momentum.label, pressure.label);
 
   const change = input.close !== 0 ? ((input.price - input.close) / input.close) * 100 : 0;

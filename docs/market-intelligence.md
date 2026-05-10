@@ -152,7 +152,8 @@ range = 2.2% / price                       score: 0.6
                                     →   outlook lookup:
                                           NEAR_RESISTANCE + STRONG_UP + MEDIUM
                                           → NO_CLEAR_EDGE
-                                          (BREAKOUT_LIKELY needs HIGH conf)
+                                          (BREAKOUT_LIKELY needs HIGH conf
+                                           + volume gate + Donchian gate)
 
                                     →   bias:
                                           STRONG_UP + BUY → BULLISH
@@ -294,28 +295,60 @@ otherwise         → LOW
 ### 6. Outlook (decision table — full truth table)
 
 ```
-zone              momentum       confidence   →  outlook
-──────────────────────────────────────────────────────────────
-MID_RANGE         *              *            →  NO_CLEAR_EDGE
+zone              momentum       confidence   gates   →  outlook
+─────────────────────────────────────────────────────────────────────
+MID_RANGE         *              *            *       →  NO_CLEAR_EDGE
 
-NEAR_RESISTANCE   STRONG_UP      HIGH         →  BREAKOUT_LIKELY
-NEAR_RESISTANCE   STRONG_UP      MED/LOW      →  NO_CLEAR_EDGE
-NEAR_RESISTANCE   WEAK_UP        *            →  NO_CLEAR_EDGE
-NEAR_RESISTANCE   NEUTRAL        *            →  NO_CLEAR_EDGE
-NEAR_RESISTANCE   WEAK_DOWN      HIGH         →  REJECTION_POSSIBLE
-NEAR_RESISTANCE   WEAK_DOWN      MED/LOW      →  NO_CLEAR_EDGE
-NEAR_RESISTANCE   STRONG_DOWN    HIGH         →  REJECTION_POSSIBLE
-NEAR_RESISTANCE   STRONG_DOWN    MED/LOW      →  NO_CLEAR_EDGE
+NEAR_RESISTANCE   STRONG_UP      HIGH         PASS    →  BREAKOUT_LIKELY
+NEAR_RESISTANCE   STRONG_UP      HIGH         FAIL    →  NO_CLEAR_EDGE
+NEAR_RESISTANCE   STRONG_UP      MED/LOW      *       →  NO_CLEAR_EDGE
+NEAR_RESISTANCE   WEAK_UP        HIGH         PASS    →  BREAKOUT_LIKELY
+NEAR_RESISTANCE   WEAK_UP        HIGH         FAIL    →  NO_CLEAR_EDGE
+NEAR_RESISTANCE   WEAK_UP        MED/LOW      *       →  NO_CLEAR_EDGE
+NEAR_RESISTANCE   NEUTRAL        *            *       →  NO_CLEAR_EDGE
+NEAR_RESISTANCE   WEAK_DOWN      HIGH         —       →  REJECTION_POSSIBLE
+NEAR_RESISTANCE   WEAK_DOWN      MED/LOW      —       →  NO_CLEAR_EDGE
+NEAR_RESISTANCE   STRONG_DOWN    HIGH         —       →  REJECTION_POSSIBLE
+NEAR_RESISTANCE   STRONG_DOWN    MED/LOW      —       →  NO_CLEAR_EDGE
 
-NEAR_SUPPORT      STRONG_UP      *            →  BOUNCE_EXPECTED
-NEAR_SUPPORT      WEAK_UP        *            →  BOUNCE_EXPECTED
-NEAR_SUPPORT      NEUTRAL        *            →  NO_CLEAR_EDGE
-NEAR_SUPPORT      WEAK_DOWN      *            →  NO_CLEAR_EDGE
-NEAR_SUPPORT      STRONG_DOWN    HIGH         →  BREAKDOWN_RISK
-NEAR_SUPPORT      STRONG_DOWN    MED/LOW      →  NO_CLEAR_EDGE
+NEAR_SUPPORT      STRONG_UP      HIGH         —       →  BOUNCE_EXPECTED
+NEAR_SUPPORT      WEAK_UP        HIGH         —       →  BOUNCE_EXPECTED
+NEAR_SUPPORT      *_UP           MED/LOW      —       →  NO_CLEAR_EDGE
+NEAR_SUPPORT      NEUTRAL        *            *       →  NO_CLEAR_EDGE
+NEAR_SUPPORT      WEAK_DOWN      HIGH         PASS    →  BREAKDOWN_RISK
+NEAR_SUPPORT      WEAK_DOWN      HIGH         FAIL    →  NO_CLEAR_EDGE
+NEAR_SUPPORT      STRONG_DOWN    HIGH         PASS    →  BREAKDOWN_RISK
+NEAR_SUPPORT      STRONG_DOWN    HIGH         FAIL    →  NO_CLEAR_EDGE
+NEAR_SUPPORT      *_DOWN         MED/LOW      *       →  NO_CLEAR_EDGE
 ```
 
+Notes:
+- "gates" applies only to Breakout/Breakdown — Bounce/Rejection paths don't consult them.
+- "PASS" = both gates pass (see "Breakout/Breakdown gates" below). FAIL = either gate fails (or insufficient candle data).
+- For **index symbols** (NIFTY 50, NIFTY BANK, etc.) Breakout/Breakdown are always `NO_CLEAR_EDGE` regardless of gates — index volume = 0 makes the volume gate unsatisfiable, and indices behave differently at S/R. Bounce/Rejection still fire for indices.
+
 The `NO_CLEAR_EDGE` fallback prevents quiet stocks from being mislabeled as bearish/bullish setups just because they happen to be near a level.
+
+### 6a. Breakout / Breakdown gates
+
+Re-enabled 2026-05-10 after the 2026-05-07 retirement (HIGH Breakout 45.8% / 201 decided, HIGH Breakdown 51.9% / 106 decided — coin-flip / negative expectancy without filters). Two strict gates target the two failure modes that drove the prior bad accuracy.
+
+**Gate 1 — Volume surge (filters thin-volume fakeouts).**
+- Rule: current 5-min candle volume ≥ **1.5 × average** of prior 20 candles' volume.
+- Why: real breakouts have institutional money committing → volume spikes. Fake breakouts on thin volume are common stop-hunts; institutions rarely commit on low volume.
+
+**Gate 2 — Donchian-style confirmation (filters single-bar piercings).**
+- Rule (Breakout):  last 2 candle closes > **max-high** of the prior 5 candles.
+- Rule (Breakdown): last 2 candle closes < **min-low** of the prior 5 candles.
+- Why candle-relative, not S/R-relative: the live S/R level recomputes on every candle close and gets reclassified as price moves through clusters (a "resistance" at 1005 flips to "support" once price closes at 1006). Tying the gate to current S/R would make it brittle around the recompute boundary. The Donchian pattern is the standard breakout-detection approach in TradingView, Backtrader, etc. — it's stable regardless of S/R timing.
+
+Both gates must pass. If either fails (or `recentCandles.length < 21`), the outlook falls back to `NO_CLEAR_EDGE`.
+
+Constants in `apps/server/src/lib/intelligence-transformer.ts`:
+- `VOLUME_SURGE_MULTIPLIER = 1.5`
+- `VOLUME_LOOKBACK = 20`
+- `CONFIRMATION_CANDLES = 2`
+- `DONCHIAN_LOOKBACK = 5`
 
 ### 7. Bias (secondary read)
 
@@ -991,7 +1024,7 @@ Manual sanity check for on-demand stocks:
 
 - **Watch zone column rename** — `signalAction` / `signalType` are now overloaded for option tagging. A `kind` column would be cleaner. Defer until the schema is touched for another reason.
 - **Per-symbol levels endpoint** — currently the stock-detail page uses a chart-helper `levels` field on the snapshot response. A cleaner path is `GET /api/stocks/:symbol/levels`.
-- **Outlook tuning** — the confidence threshold for `BREAKOUT_LIKELY` (HIGH) and `BREAKDOWN_RISK` (HIGH) is fixed. If real-world hit rate suggests it's too strict, lower to MEDIUM.
+- **Outlook tuning** — `BREAKOUT_LIKELY` and `BREAKDOWN_RISK` require HIGH confidence + Volume gate (`VOLUME_SURGE_MULTIPLIER = 1.5`) + Donchian gate (`DONCHIAN_LOOKBACK = 5`, `CONFIRMATION_CANDLES = 2`). If first-week prod data shows the gates are too strict, relax volume to 1.3× or shorten Donchian lookback to 3. If too loose (still <55% accuracy), tighten to 2.0× and 3-candle confirmation, or add sector-context alignment.
 - ~~**Search-on-demand intelligence**~~ — ✅ **Done.** Untracked stocks now get real momentum (from 5-min intraday candles) and approximate pressure (from `pressureFromCandles` — see "On-demand stocks" section above). Volatility was already working.
 
 ### Options module (Phase 2 — explicitly deferred)

@@ -21,8 +21,8 @@ The intelligence layer produces a confidence score (0–1) for every stock. But 
 
 After 8 days of production data, the 3-bucket × 4-outlook model collapsed into a single tracking pool:
 
-- **Predictive plays retired**: BREAKOUT_LIKELY (45.8% on 201 decided) and BREAKDOWN_RISK (51.9% on 106 decided, R:R 0.80 → negative expectancy) no longer emit. The intelligence transformer returns `NO_CLEAR_EDGE` for those zone+momentum combinations.
-- **Reactive plays retained**: BOUNCE_EXPECTED (54.3% on 70, R:R 1.57) and REJECTION_POSSIBLE (60.8% on 51) are the only outlooks that publish.
+- **Reactive plays**: BOUNCE_EXPECTED and REJECTION_POSSIBLE require only HIGH confidence (no extra gates).
+- **Predictive plays re-enabled 2026-05-10 with strict gates**: BREAKOUT_LIKELY and BREAKDOWN_RISK fire only when both **Volume Surge** (current 5-min vol ≥ 1.5× avg of prior 20) AND **Donchian Confirmation** (last 2 closes beyond max-high / min-low of prior 5 candles) gates pass. They had been retired 2026-05-07 after coin-flip prod accuracy (HIGH Breakout 45.8% / 201 decided, HIGH Breakdown 51.9% / 106 decided) — re-enabled with the gates that target the failure modes (thin-volume fakeouts + single-bar piercings). Indices skip Breakout/Breakdown entirely (volume = 0). See `docs/market-intelligence.md` § "Breakout / Breakdown gates".
 - **Single confidence floor**: emission requires `confidence ≥ 0.7` (i.e. the legacy `HIGH` label). Below that, `NO_CLEAR_EDGE`.
 - **Single bucket label**: new rows are written with `confidence_bucket = "TRACKED"`. Historical `HIGH` and `ULTRA_HIGH` rows are folded into the same single-pool view at metric time (they're also conf ≥ 0.7); historical `MEDIUM` rows (conf 0.5–0.7) fall below the new floor and are excluded.
 
@@ -50,9 +50,9 @@ Every emitted signal lands in the same pool. The 3-bucket model (Ultra/High/Medi
 
 | Pool | Range | Outlooks | Min samples before trusting |
 |---|---|---|---|
-| **TRACKED** | confidence ≥ 0.7 | BOUNCE_EXPECTED, REJECTION_POSSIBLE | 250 |
+| **TRACKED** | confidence ≥ 0.7 | BOUNCE_EXPECTED, REJECTION_POSSIBLE, BREAKOUT_LIKELY (gated), BREAKDOWN_RISK (gated) | 250 |
 
-Below 0.7 → no signal. Above 0.7 with a non-reactive outlook (Breakout / Breakdown) → no signal. The minimum sample rule prevents random luck from fooling us; until 250 decided signals (SUCCESS + FAILED) exist, results are flagged insufficient.
+Below 0.7 → no signal. Above 0.7 with `NO_CLEAR_EDGE` outlook → no signal. Breakout / Breakdown additionally require their 2-gate stack to pass — see `docs/market-intelligence.md` § "Breakout / Breakdown gates". The minimum sample rule prevents random luck from fooling us; until 250 decided signals (SUCCESS + FAILED) exist, results are flagged insufficient.
 
 ---
 
@@ -71,7 +71,7 @@ signal-tracking.service.ts recordSignal()
     ↓
 Guards:
   ✗ confidence < 0.7      → skip (single floor)
-  ✗ outlook = NO_CLEAR_EDGE → skip (no directional bet — covers retired Breakout/Breakdown)
+  ✗ outlook = NO_CLEAR_EDGE → skip (no directional bet — also catches Breakout/Breakdown that failed their volume + Donchian gates)
   ✗ phase ≠ NORMAL         → skip (OPENING/STABILIZING)
   ✗ before 9:30 AM IST     → skip (NORMAL phase begins at 9:30)
   ✗ after 3:10 PM IST      → skip (stop before close)
@@ -144,7 +144,7 @@ signal_time         TIMESTAMP      NOT NULL
 price_at_signal     NUMERIC(12,2)  NOT NULL
 
 outlook             VARCHAR(30)    NOT NULL   -- BOUNCE_EXPECTED / REJECTION_POSSIBLE
-                                              -- (legacy rows: BREAKOUT_LIKELY / BREAKDOWN_RISK)
+                                              -- BREAKOUT_LIKELY / BREAKDOWN_RISK (gated, re-enabled 2026-05-10)
 confidence          NUMERIC(5,4)   NOT NULL   -- 0.7000 – 1.0000 (new floor)
 confidence_bucket   VARCHAR(15)    NOT NULL   -- TRACKED (new); HIGH/ULTRA_HIGH/MEDIUM on legacy rows
 zone                VARCHAR(20)    NOT NULL   -- NEAR_RESISTANCE / NEAR_SUPPORT
