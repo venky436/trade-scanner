@@ -1,17 +1,26 @@
 import { eq, isNull, and, gte, lte, sql, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { signalTracking } from "../db/schema/signal-tracking.js";
+import { signalTrackingWindows } from "../db/schema/signal-tracking-windows.js";
 import { marketDataService } from "./market-data.service.js";
 import { getMarketPhase } from "../lib/market-phase.js";
 import type { IntelligenceSnapshot } from "../lib/types.js";
 
 const MAX_DAILY_SIGNALS = 200;
-// Pure direction snapshot at minute 10. No TP/SL threshold race, no NEUTRAL —
-// every tracked signal is forced into SUCCESS or FAILED based on price direction
-// at the snapshot moment. Any movement matching the outlook direction (even
-// 0.01%) is a win; any opposite movement is a loss.
+// Multi-window tracking (2026-05-10): every tracked signal is evaluated at
+// THREE checkpoints in parallel — 4, 8, 12 min — to compare which window
+// length captures real moves cleanest. Same trigger fires once; 3 child rows
+// in signal_tracking_windows hold the per-window outcomes. Same direction
+// snapshot logic at each lock — never NEUTRAL on the lock itself; any
+// matching-direction movement (even 0.01%) is SUCCESS, any opposite is
+// FAILED. The metric-time NEUTRAL dead-zone (±0.2%) reclassifies later.
 const EVAL_INTERVAL_MS = 30_000;
-const EVAL_WINDOW_MS = 10 * 60_000;
+const TRACKING_WINDOWS_MIN = [4, 8, 12] as const;
+// The 8-min window is "canonical" — its lock also writes the same outcome
+// into the parent signal_tracking row's existing outcome columns so all
+// pre-existing readers (Recent Signals table, social feed, /social/[id])
+// keep working unchanged. Other windows live exclusively in the child table.
+const CANONICAL_WINDOW_MIN = 8;
 
 // Social-template eligibility: confidence ≥ 0.75. Volatility filter dropped —
 // surfaces more signals so /admin/social has steady content even on calm days.
@@ -73,13 +82,23 @@ function reclassifyForMetrics(
   return change < 0 ? "SUCCESS" : "FAILED";
 }
 
+interface ActiveTrackingWindow {
+  windowMinutes: number;
+  childRowId: number;
+  status: "PENDING" | "SUCCESS" | "FAILED";
+  // Captured at lock time so the all-NEUTRAL re-eligibility check after all
+  // 3 windows lock can run without a DB re-read.
+  changePercentLocked: number | null;
+}
+
 interface ActiveTracking {
   symbol: string;
-  dbId: number;
+  parentDbId: number;
   isBuySide: boolean;
   entryPrice: number;
   recordedAt: number;
   confidenceBucket: ConfidenceBucket;
+  windows: ActiveTrackingWindow[]; // 3 entries: 4 / 8 / 12 min
 }
 
 interface BucketRecord {
@@ -157,6 +176,49 @@ function computeBucketStats(bucketRecords: BucketRecord[]) {
   };
 }
 
+// Multi-window metrics builder. Pulls parent rows for the date, joins with
+// child rows, then computes one BucketStats per window. Shared between the
+// live `getMetrics` (with activeMap-aware activeCount) and the standalone
+// `getTrackingMetricsFromDB` (no service required, used on weekends).
+async function computeMultiWindowMetrics(dayStart: Date, dayEnd: Date) {
+  const parents = await db
+    .select()
+    .from(signalTracking)
+    .where(and(
+      gte(signalTracking.signalTime, dayStart),
+      lte(signalTracking.signalTime, dayEnd),
+    ));
+
+  // Same single-pool filter as before: only conf ≥ 0.7 buckets count.
+  const eligibleParents = parents.filter((r) => ABOVE_FLOOR_BUCKET_LABELS.has(r.confidenceBucket));
+  const parentMap = new Map(eligibleParents.map((p) => [p.id, p]));
+  const parentIds = eligibleParents.map((p) => p.id);
+
+  // Pull all child rows for these parents in one query
+  const children = parentIds.length > 0
+    ? await db
+        .select()
+        .from(signalTrackingWindows)
+        .where(inArray(signalTrackingWindows.signalId, parentIds))
+    : [];
+
+  // For each window, build BucketRecord[] and run computeBucketStats
+  return TRACKING_WINDOWS_MIN.map((windowMin) => {
+    const windowChildren = children.filter((c) => c.windowMinutes === windowMin);
+    const records = windowChildren.map((c) => {
+      const parent = parentMap.get(c.signalId);
+      return {
+        status: c.status,
+        outlook: parent?.outlook ?? "",
+        changePercent: c.changePercent,
+        maxProfitPercent: c.maxProfitPercent,
+        maxDrawdownPercent: c.maxDrawdownPercent,
+      };
+    });
+    return { windowMinutes: windowMin, ...computeBucketStats(records) };
+  });
+}
+
 function getISTDate(): string {
   return new Date().toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
 }
@@ -185,26 +247,56 @@ export function createSignalTrackingService() {
 
   async function loadPending(): Promise<void> {
     try {
-      const pending = await db
+      // Find parent rows that have any pending child window. We don't filter on
+      // parent.status because the canonical (8m) lock writes back to parent —
+      // parent could be SUCCESS/FAILED while 4m or 12m are still PENDING.
+      const pendingChildren = await db
+        .select({
+          parentId: signalTrackingWindows.signalId,
+          windowMinutes: signalTrackingWindows.windowMinutes,
+          childRowId: signalTrackingWindows.id,
+        })
+        .from(signalTrackingWindows)
+        .where(eq(signalTrackingWindows.status, "PENDING"));
+
+      if (pendingChildren.length === 0) return;
+
+      // Group pending child rows by parent
+      const byParent = new Map<number, Array<{ windowMinutes: number; childRowId: number }>>();
+      for (const c of pendingChildren) {
+        const arr = byParent.get(c.parentId) ?? [];
+        arr.push({ windowMinutes: c.windowMinutes, childRowId: c.childRowId });
+        byParent.set(c.parentId, arr);
+      }
+
+      // Pull the parent metadata for those signals
+      const parentIds = [...byParent.keys()];
+      const parents = await db
         .select()
         .from(signalTracking)
-        .where(eq(signalTracking.status, "PENDING"));
+        .where(inArray(signalTracking.id, parentIds));
 
-      for (const r of pending) {
-        if (activeMap.has(r.symbol)) continue;
-        activeMap.set(r.symbol, {
-          symbol: r.symbol,
-          dbId: r.id,
-          isBuySide: BUY_SIDE_OUTLOOKS.has(r.outlook),
-          entryPrice: Number(r.priceAtSignal),
-          recordedAt: new Date(r.signalTime).getTime(),
-          confidenceBucket: r.confidenceBucket as ConfidenceBucket,
+      for (const p of parents) {
+        if (activeMap.has(p.symbol)) continue;
+        const pending = byParent.get(p.id) ?? [];
+        if (pending.length === 0) continue;
+        activeMap.set(p.symbol, {
+          symbol: p.symbol,
+          parentDbId: p.id,
+          isBuySide: BUY_SIDE_OUTLOOKS.has(p.outlook),
+          entryPrice: Number(p.priceAtSignal),
+          recordedAt: new Date(p.signalTime).getTime(),
+          confidenceBucket: p.confidenceBucket as ConfidenceBucket,
+          windows: pending.map((w) => ({
+            windowMinutes: w.windowMinutes,
+            childRowId: w.childRowId,
+            status: "PENDING",
+            changePercentLocked: null,
+          })),
         });
       }
 
-      if (pending.length > 0) {
-        console.log(`[Tracking] Loaded ${pending.length} pending signals from DB [${activeMap.size} active]`);
-      }
+      console.log(`[Tracking] Loaded ${parents.length} pending signals (${pendingChildren.length} pending windows) from DB [${activeMap.size} active]`);
     } catch (err: any) {
       console.warn("[Tracking] Failed to load pending:", err.message);
     }
@@ -257,18 +349,34 @@ export function createSignalTrackingService() {
         status: "PENDING",
       }).returning({ id: signalTracking.id });
 
+      // Insert one child row per tracking window. Each starts PENDING and gets
+      // locked independently by evaluate() when its window elapses.
+      const insertedWindows = await db
+        .insert(signalTrackingWindows)
+        .values(TRACKING_WINDOWS_MIN.map((w) => ({
+          signalId: inserted.id,
+          windowMinutes: w,
+        })))
+        .returning({ id: signalTrackingWindows.id, windowMinutes: signalTrackingWindows.windowMinutes });
+
       activeMap.set(symbol, {
         symbol,
-        dbId: inserted.id,
+        parentDbId: inserted.id,
         isBuySide,
         entryPrice: price,
         recordedAt: Date.now(),
         confidenceBucket: bucket,
+        windows: insertedWindows.map((w) => ({
+          windowMinutes: w.windowMinutes,
+          childRowId: w.id,
+          status: "PENDING",
+          changePercentLocked: null,
+        })),
       });
       dailyCount++;
       trackedToday.set(symbol, bucket);
 
-      console.log(`[Tracking] Recorded: ${symbol} ${intel.outlook} conf=${intel.confidence.toFixed(2)} bucket=${bucket} entry=₹${price.toFixed(2)} [${dailyCount}/${MAX_DAILY_SIGNALS} today, ${activeMap.size} active]`);
+      console.log(`[Tracking] Recorded: ${symbol} ${intel.outlook} conf=${intel.confidence.toFixed(2)} bucket=${bucket} entry=₹${price.toFixed(2)} windows=${TRACKING_WINDOWS_MIN.join("/")}min [${dailyCount}/${MAX_DAILY_SIGNALS} today, ${activeMap.size} active]`);
     } catch (err: any) {
       console.warn(`[Tracking] Failed to record ${symbol}:`, err.message);
     }
@@ -278,75 +386,98 @@ export function createSignalTrackingService() {
     if (activeMap.size === 0) return;
 
     const now = Date.now();
-    const toLock: Array<{
-      sig: ActiveTracking;
-      status: "SUCCESS" | "FAILED";
-      quote: { lastPrice: number; high: number; low: number };
-    }> = [];
 
-    // Pure direction snapshot at minute 10. Wait the full window, then compare
-    // current price to entry — any matching-direction movement (even 0.01%) is
-    // a win, any opposite movement is a loss. Flat counts as a win (defensive
-    // tiebreaker; near-impossible at intraday paise resolution).
-    for (const sig of activeMap.values()) {
-      if (now < sig.recordedAt + EVAL_WINDOW_MS) continue;
-
+    // Iterate symbols, then per-symbol iterate each window. Each window locks
+    // independently when its own window time elapses. The 8-min canonical
+    // window also writes its outcome back to the parent row's outcome columns
+    // so existing readers (Recent Signals table, social feed) keep working.
+    // A symbol stays in activeMap until ALL its windows have locked.
+    for (const sig of [...activeMap.values()]) {
       const quote = marketDataService.getQuote(sig.symbol);
       if (!quote || quote.lastPrice <= 0) continue;
 
-      const changePercent = ((quote.lastPrice - sig.entryPrice) / sig.entryPrice) * 100;
+      let lockedThisTick = false;
+      for (const w of sig.windows) {
+        if (w.status !== "PENDING") continue;
+        const windowEndMs = sig.recordedAt + w.windowMinutes * 60_000;
+        if (now < windowEndMs) continue;
 
-      let status: "SUCCESS" | "FAILED";
-      if (sig.isBuySide) {
-        status = changePercent >= 0 ? "SUCCESS" : "FAILED";
-      } else {
-        status = changePercent <= 0 ? "SUCCESS" : "FAILED";
+        const priceAfter = quote.lastPrice;
+        const maxPrice = quote.high;
+        const minPrice = quote.low;
+        const changePercent = ((priceAfter - sig.entryPrice) / sig.entryPrice) * 100;
+        const changePoints = priceAfter - sig.entryPrice;
+        const maxProfitPercent = ((maxPrice - sig.entryPrice) / sig.entryPrice) * 100;
+        const maxDrawdownPercent = ((minPrice - sig.entryPrice) / sig.entryPrice) * 100;
+
+        let status: "SUCCESS" | "FAILED";
+        if (sig.isBuySide) {
+          status = changePercent >= 0 ? "SUCCESS" : "FAILED";
+        } else {
+          status = changePercent <= 0 ? "SUCCESS" : "FAILED";
+        }
+
+        try {
+          // Always update the child row for this window
+          await db.update(signalTrackingWindows).set({
+            status,
+            priceAfter: priceAfter.toFixed(2),
+            changePercent: changePercent.toFixed(4),
+            changePoints: changePoints.toFixed(2),
+            maxPrice: maxPrice.toFixed(2),
+            minPrice: minPrice.toFixed(2),
+            maxProfitPercent: maxProfitPercent.toFixed(4),
+            maxDrawdownPercent: maxDrawdownPercent.toFixed(4),
+            evaluatedAt: new Date(),
+          }).where(eq(signalTrackingWindows.id, w.childRowId));
+
+          // 8-min canonical window also writes back to the parent row so
+          // Recent Signals table, social feed, /social/[id] etc. keep showing
+          // an outcome without needing to join the child table.
+          if (w.windowMinutes === CANONICAL_WINDOW_MIN) {
+            await db.update(signalTracking).set({
+              status,
+              priceAfter: priceAfter.toFixed(2),
+              changePercent: changePercent.toFixed(4),
+              changePoints: changePoints.toFixed(2),
+              maxPrice: maxPrice.toFixed(2),
+              minPrice: minPrice.toFixed(2),
+              maxProfitPercent: maxProfitPercent.toFixed(4),
+              maxDrawdownPercent: maxDrawdownPercent.toFixed(4),
+              evaluatedAt: new Date(),
+            }).where(eq(signalTracking.id, sig.parentDbId));
+          }
+
+          w.status = status;
+          w.changePercentLocked = changePercent;
+          lockedThisTick = true;
+
+          const lockSec = Math.round((now - sig.recordedAt) / 1000);
+          console.log(`[Tracking] ${status}@${w.windowMinutes}m: ${sig.symbol} change=${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}% lock=${lockSec}s`);
+        } catch (err: any) {
+          console.warn(`[Tracking] Failed to evaluate ${sig.symbol}@${w.windowMinutes}m:`, err.message);
+        }
       }
 
-      toLock.push({ sig, status, quote });
-    }
+      // Symbol cleanup: remove from activeMap only when all windows have
+      // locked. NEUTRAL re-eligibility: free the symbol from today's dedup
+      // ONLY if every window landed inside the ±0.2% dead-zone — i.e., the
+      // signal had no real outcome at any horizon. Stricter than the prior
+      // single-window rule, intentional.
+      if (!lockedThisTick) continue;
+      const allLocked = sig.windows.every((w) => w.status !== "PENDING");
+      if (!allLocked) continue;
 
-    if (toLock.length === 0) return;
-
-    for (const { sig, status, quote } of toLock) {
-      const priceAfter = quote.lastPrice;
-      const maxPrice = quote.high;
-      const minPrice = quote.low;
-
-      const changePercent = ((priceAfter - sig.entryPrice) / sig.entryPrice) * 100;
-      const changePoints = priceAfter - sig.entryPrice;
-      const maxProfitPercent = ((maxPrice - sig.entryPrice) / sig.entryPrice) * 100;
-      const maxDrawdownPercent = ((minPrice - sig.entryPrice) / sig.entryPrice) * 100;
-
-      try {
-        await db.update(signalTracking).set({
-          status,
-          priceAfter: priceAfter.toFixed(2),
-          changePercent: changePercent.toFixed(4),
-          changePoints: changePoints.toFixed(2),
-          maxPrice: maxPrice.toFixed(2),
-          minPrice: minPrice.toFixed(2),
-          maxProfitPercent: maxProfitPercent.toFixed(4),
-          maxDrawdownPercent: maxDrawdownPercent.toFixed(4),
-          evaluatedAt: new Date(),
-        }).where(eq(signalTracking.id, sig.dbId));
-
-        activeMap.delete(sig.symbol);
-
-        // NEUTRAL re-eligibility: if the lock landed inside the ±0.2% dead-zone
-        // (no real outcome), free this symbol from today's dedup so it can fire
-        // again. The DB row is still stored as SUCCESS/FAILED per the direction
-        // snapshot — only the in-memory dedup is cleared. Without this, a
-        // symbol that drifts <0.2% over 10 min would burn its one daily slot
-        // on a non-event.
-        const isNeutral = Math.abs(changePercent) < NEUTRAL_METRIC_THRESHOLD_PERCENT;
-        if (isNeutral) trackedToday.delete(sig.symbol);
-
-        const lockSec = Math.round((now - sig.recordedAt) / 1000);
-        const tag = isNeutral ? `${status}/NEUTRAL re-eligible` : status;
-        console.log(`[Tracking] ${tag}: ${sig.symbol} change=${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}% lock=${lockSec}s [${activeMap.size} active]`);
-      } catch (err: any) {
-        console.warn(`[Tracking] Failed to evaluate ${sig.symbol}:`, err.message);
+      activeMap.delete(sig.symbol);
+      const allNeutral = sig.windows.every((w) =>
+        w.changePercentLocked !== null &&
+        Math.abs(w.changePercentLocked) < NEUTRAL_METRIC_THRESHOLD_PERCENT
+      );
+      if (allNeutral) {
+        trackedToday.delete(sig.symbol);
+        console.log(`[Tracking] All-NEUTRAL re-eligible: ${sig.symbol} [${activeMap.size} active]`);
+      } else {
+        console.log(`[Tracking] All locked: ${sig.symbol} [${activeMap.size} active]`);
       }
     }
   }
@@ -355,7 +486,7 @@ export function createSignalTrackingService() {
     const { phase } = getMarketPhase();
     if (phase !== "CLOSED" || activeMap.size === 0) return;
 
-    console.log(`[Tracking] Market closed — evaluating ${activeMap.size} remaining signals`);
+    console.log(`[Tracking] Market closed — force-locking ${activeMap.size} remaining signals' open windows`);
 
     for (const sig of [...activeMap.values()]) {
       const quote = marketDataService.getQuote(sig.symbol);
@@ -368,8 +499,8 @@ export function createSignalTrackingService() {
       const maxProfitPercent = ((maxPrice - sig.entryPrice) / sig.entryPrice) * 100;
       const maxDrawdownPercent = ((minPrice - sig.entryPrice) / sig.entryPrice) * 100;
 
-      // Force-resolve all PENDING signals at close — even ones that haven't
-      // reached minute 10. Same direction logic as evaluate(); never NEUTRAL.
+      // Force-resolve any PENDING window at market close — same direction
+      // logic as evaluate(), never NEUTRAL on the lock itself.
       let status: "SUCCESS" | "FAILED";
       if (sig.isBuySide) {
         status = changePercent >= 0 ? "SUCCESS" : "FAILED";
@@ -378,17 +509,37 @@ export function createSignalTrackingService() {
       }
 
       try {
-        await db.update(signalTracking).set({
-          status,
-          priceAfter: priceAfter.toFixed(2),
-          changePercent: changePercent.toFixed(4),
-          changePoints: changePoints.toFixed(2),
-          maxPrice: maxPrice.toFixed(2),
-          minPrice: minPrice.toFixed(2),
-          maxProfitPercent: maxProfitPercent.toFixed(4),
-          maxDrawdownPercent: maxDrawdownPercent.toFixed(4),
-          evaluatedAt: new Date(),
-        }).where(eq(signalTracking.id, sig.dbId));
+        for (const w of sig.windows) {
+          if (w.status !== "PENDING") continue;
+          await db.update(signalTrackingWindows).set({
+            status,
+            priceAfter: priceAfter.toFixed(2),
+            changePercent: changePercent.toFixed(4),
+            changePoints: changePoints.toFixed(2),
+            maxPrice: maxPrice.toFixed(2),
+            minPrice: minPrice.toFixed(2),
+            maxProfitPercent: maxProfitPercent.toFixed(4),
+            maxDrawdownPercent: maxDrawdownPercent.toFixed(4),
+            evaluatedAt: new Date(),
+          }).where(eq(signalTrackingWindows.id, w.childRowId));
+
+          if (w.windowMinutes === CANONICAL_WINDOW_MIN) {
+            await db.update(signalTracking).set({
+              status,
+              priceAfter: priceAfter.toFixed(2),
+              changePercent: changePercent.toFixed(4),
+              changePoints: changePoints.toFixed(2),
+              maxPrice: maxPrice.toFixed(2),
+              minPrice: minPrice.toFixed(2),
+              maxProfitPercent: maxProfitPercent.toFixed(4),
+              maxDrawdownPercent: maxDrawdownPercent.toFixed(4),
+              evaluatedAt: new Date(),
+            }).where(eq(signalTracking.id, sig.parentDbId));
+          }
+
+          w.status = status;
+          w.changePercentLocked = changePercent;
+        }
         activeMap.delete(sig.symbol);
       } catch (err: any) {
         console.warn(`[Tracking] Market close eval failed for ${sig.symbol}:`, err.message);
@@ -404,20 +555,7 @@ export function createSignalTrackingService() {
     dayEnd.setHours(23, 59, 59, 999);
 
     try {
-      const records = await db
-        .select()
-        .from(signalTracking)
-        .where(and(
-          gte(signalTracking.signalTime, dayStart),
-          lte(signalTracking.signalTime, dayEnd),
-        ));
-
-      // Single tracking pool — fold historical "HIGH"/"ULTRA_HIGH" rows in with
-      // newly-written "TRACKED" rows (all conf ≥ 0.7). Legacy "MEDIUM" rows
-      // (conf 0.5–0.7) are excluded since they're below the new floor.
-      const bucketRecords = records.filter((r) => ABOVE_FLOOR_BUCKET_LABELS.has(r.confidenceBucket));
-      const result = [computeBucketStats(bucketRecords)];
-
+      const result = await computeMultiWindowMetrics(dayStart, dayEnd);
       return {
         date: dayStart.toISOString().split("T")[0],
         buckets: result,
@@ -511,7 +649,7 @@ export function createSignalTrackingService() {
       evalTimer.unref();
       closeTimer = setInterval(evaluateMarketClose, 5 * 60_000);
       closeTimer.unref();
-      console.log(`[Tracking] Started — direction snapshot at minute ${EVAL_WINDOW_MS / 60_000} (${EVAL_INTERVAL_MS / 1000}s poll)`);
+      console.log(`[Tracking] Started — direction snapshots at minutes ${TRACKING_WINDOWS_MIN.join("/")} (canonical=${CANONICAL_WINDOW_MIN}m, ${EVAL_INTERVAL_MS / 1000}s poll)`);
     },
 
     stop() {
@@ -538,19 +676,7 @@ export async function getTrackingMetricsFromDB(date?: Date) {
   dayEnd.setHours(23, 59, 59, 999);
 
   try {
-    const records = await db
-      .select()
-      .from(signalTracking)
-      .where(and(
-        gte(signalTracking.signalTime, dayStart),
-        lte(signalTracking.signalTime, dayEnd),
-      ));
-
-    // Single-pool view — same shape as getMetrics, shared reducer. Folds
-    // historical HIGH/ULTRA_HIGH rows in with newly-written TRACKED rows.
-    const bucketRecords = records.filter((r) => ABOVE_FLOOR_BUCKET_LABELS.has(r.confidenceBucket));
-    const result = [computeBucketStats(bucketRecords)];
-
+    const result = await computeMultiWindowMetrics(dayStart, dayEnd);
     return { date: dayStart.toISOString().split("T")[0], buckets: result, activeCount: 0 };
   } catch (err: any) {
     console.warn("[Tracking] Standalone metrics error:", err.message);

@@ -25,6 +25,7 @@ interface OutlookMetric {
 
 interface BucketData {
   bucket: string;
+  windowMinutes: number; // 4 / 8 / 12 — added 2026-05-10 for multi-window
   total: number;
   pending: number;
   success: number;
@@ -41,6 +42,13 @@ interface BucketData {
   minSampleRequired: number;
   byOutlook: Record<string, OutlookMetric>;
 }
+
+// Multi-window tracking constants (mirror server-side TRACKING_WINDOWS_MIN
+// and CANONICAL_WINDOW_MIN). Movement Stats + By Outlook below the cards
+// show only the canonical (8m) window to keep the dashboard scannable —
+// the 3 headline cards ARE the cross-window comparison.
+const TRACKING_WINDOWS_MIN = [4, 8, 12] as const;
+const CANONICAL_WINDOW_MIN = 8;
 
 interface TrackingMetrics {
   date: string;
@@ -262,51 +270,60 @@ export function TrackingDashboard() {
           Signal Tracking Analytics
         </h1>
         <p className="mt-1 text-xs text-zinc-500">
-          10-minute direction snapshot · single tracked pool · {metrics?.date ?? "today"}
+          Multi-window snapshot ({TRACKING_WINDOWS_MIN.join(" / ")} min) · single tracked pool · {metrics?.date ?? "today"}
         </p>
       </div>
 
-      {/* Single TRACKED bucket card. Replaces the prior Ultra/High/Medium row
-          following the 2026-05-07 model change (only conf ≥ 0.7 emits). */}
-      {(() => {
-        const b: BucketData = (metrics?.buckets ?? []).find((x) => x.bucket === "TRACKED") ?? {
-          bucket: "TRACKED",
-          total: 0, pending: 0, success: 0, failed: 0, neutral: 0,
-          accuracy: 0, avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0,
-          expectancy: 0, riskReward: 0,
-          sampleSufficient: false,
-          minSampleRequired: 250,
-          byOutlook: {},
-        };
-        const style = BUCKET_STYLE.TRACKED;
-        const BucketIcon = style.icon;
-        const decided = b.success + b.failed;
+      {/* Three TRACKED bucket cards — one per window (4 / 8 / 12 min).
+          Same trigger fires once; each card shows accuracy / expectancy /
+          R:R for the same signal pool measured at a different horizon, so
+          we can see which window length captures real moves cleanest. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {TRACKING_WINDOWS_MIN.map((windowMin) => {
+          const b: BucketData = (metrics?.buckets ?? []).find((x) => x.windowMinutes === windowMin) ?? {
+            bucket: "TRACKED",
+            windowMinutes: windowMin,
+            total: 0, pending: 0, success: 0, failed: 0, neutral: 0,
+            accuracy: 0, avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0,
+            expectancy: 0, riskReward: 0,
+            sampleSufficient: false,
+            minSampleRequired: 250,
+            byOutlook: {},
+          };
+          const style = BUCKET_STYLE.TRACKED;
+          const BucketIcon = style.icon;
+          const decided = b.success + b.failed;
+          const isCanonical = windowMin === CANONICAL_WINDOW_MIN;
 
-        return (
-          <div className={`relative overflow-hidden rounded-2xl border ${style.border} bg-gradient-to-br ${style.gradient} bg-white dark:bg-zinc-950/60 p-6`}>
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <BucketIcon className={`size-6 ${style.accent}`} />
-                <div>
-                  <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    {style.label}
+          return (
+            <div
+              key={windowMin}
+              className={`relative overflow-hidden rounded-2xl border ${style.border} bg-gradient-to-br ${style.gradient} bg-white dark:bg-zinc-950/60 p-5`}
+            >
+              {/* Header — window label as primary identity */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <BucketIcon className={`size-5 ${style.accent}`} />
+                  <div>
+                    <div className="text-sm font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+                      {windowMin} min window
+                      {isCanonical && (
+                        <span className="rounded-full bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-300">
+                          canonical
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-zinc-500">{b.total} signals</div>
                   </div>
-                  <div className="text-[11px] text-zinc-500">{style.range}</div>
                 </div>
               </div>
-              <div className="text-right text-xs text-zinc-500">
-                {b.total} signals
-              </div>
-            </div>
 
-            <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-6">
               {/* Big accuracy */}
-              <div>
-                <div className={`text-5xl font-bold tabular-nums ${decided > 0 ? accuracyColor(b.accuracy) : "text-zinc-400"}`}>
+              <div className="mt-4">
+                <div className={`text-4xl font-bold tabular-nums ${decided > 0 ? accuracyColor(b.accuracy) : "text-zinc-400"}`}>
                   {decided > 0 ? `${b.accuracy}%` : "—"}
                 </div>
-                <div className="mt-1 text-[10px] uppercase tracking-wider text-zinc-500">accuracy</div>
+                <div className="mt-0.5 text-[10px] uppercase tracking-wider text-zinc-500">accuracy</div>
                 <div className="mt-2 flex items-center gap-3 text-[11px]">
                   <span className="text-emerald-600 dark:text-emerald-400">{b.success} W</span>
                   <span className="text-rose-600 dark:text-rose-400">{b.failed} L</span>
@@ -315,32 +332,38 @@ export function TrackingDashboard() {
                 </div>
               </div>
 
-              {/* Expectancy + R:R */}
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500">Expectancy / Trade</div>
-                <div className={`mt-1 text-2xl font-bold tabular-nums ${expectancyColor(b.expectancy)}`}>
-                  {b.expectancy > 0 ? "+" : ""}{b.expectancy.toFixed(3)}%
+              {/* Expectancy + R:R inline */}
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-500">Expectancy</div>
+                  <div className={`mt-0.5 text-base font-bold tabular-nums ${expectancyColor(b.expectancy)}`}>
+                    {b.expectancy > 0 ? "+" : ""}{b.expectancy.toFixed(3)}%
+                  </div>
                 </div>
-                <div className="mt-3 text-[10px] uppercase tracking-wider text-zinc-500">Risk : Reward</div>
-                <div className="mt-1 text-base font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {b.riskReward.toFixed(2)}x
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-500">R : R</div>
+                  <div className="mt-0.5 text-base font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                    {b.riskReward.toFixed(2)}x
+                  </div>
                 </div>
               </div>
 
               {/* Sample progress */}
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500">Sample</div>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-2xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{decided}</span>
-                  <span className="text-xs text-zinc-500">/ {b.minSampleRequired}</span>
+              <div className="mt-4">
+                <div className="flex items-baseline justify-between">
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-500">Sample</div>
+                  <div className="text-[11px] text-zinc-500 tabular-nums">
+                    <span className="font-bold text-zinc-900 dark:text-zinc-100">{decided}</span>
+                    <span> / {b.minSampleRequired}</span>
+                  </div>
                 </div>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800/80">
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800/80">
                   <div
                     className={`h-full rounded-full transition-all ${b.sampleSufficient ? "bg-emerald-500" : "bg-amber-500"}`}
                     style={{ width: `${Math.min(100, (decided / b.minSampleRequired) * 100)}%` }}
                   />
                 </div>
-                <div className="mt-1.5 text-[11px]">
+                <div className="mt-1 text-[10px]">
                   {b.sampleSufficient ? (
                     <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
                       <CheckCircle className="size-3" /> Sufficient
@@ -353,40 +376,31 @@ export function TrackingDashboard() {
                 </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })}
+      </div>
 
-      {/* Detailed Stats */}
+      {/* Detailed Stats — canonical (8m) window only.
+          The 3 cards above ARE the cross-window comparison; this section
+          stays focused on the single canonical window so the rest of the
+          page doesn't triple in size. Easy to extend later if useful. */}
       {metrics && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Movement Stats — single-pool, no bucket switcher */}
+          {/* Movement Stats — 8m window */}
           <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/60 p-5">
             <div className="mb-4 flex items-center gap-2">
               <TrendingUp className="size-4 text-emerald-500" />
               <h2 className="text-[11px] font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
-                Movement Stats
+                Movement Stats <span className="text-zinc-400 font-normal">· {CANONICAL_WINDOW_MIN}m window</span>
               </h2>
             </div>
             {(() => {
-              const buckets = metrics.buckets ?? [];
-              const totals = buckets.reduce(
-                (acc, b) => ({
-                  avgGain: acc.avgGain + b.avgGain * b.success,
-                  avgLoss: acc.avgLoss + b.avgLoss * b.failed,
-                  avgMaxProfit: acc.avgMaxProfit + b.avgMaxProfit * (b.success + b.failed),
-                  avgMaxDrawdown: acc.avgMaxDrawdown + b.avgMaxDrawdown * (b.success + b.failed),
-                  successCount: acc.successCount + b.success,
-                  failedCount: acc.failedCount + b.failed,
-                  evalCount: acc.evalCount + b.success + b.failed,
-                }),
-                { avgGain: 0, avgLoss: 0, avgMaxProfit: 0, avgMaxDrawdown: 0, successCount: 0, failedCount: 0, evalCount: 0 },
-              );
-              const avgGain = totals.successCount > 0 ? totals.avgGain / totals.successCount : 0;
-              const avgLoss = totals.failedCount > 0 ? totals.avgLoss / totals.failedCount : 0;
-              const avgMaxProfit = totals.evalCount > 0 ? totals.avgMaxProfit / totals.evalCount : 0;
-              const avgMaxDrawdown = totals.evalCount > 0 ? totals.avgMaxDrawdown / totals.evalCount : 0;
-              const rr = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
+              const canonical = (metrics.buckets ?? []).find((b) => b.windowMinutes === CANONICAL_WINDOW_MIN);
+              const avgGain = canonical?.avgGain ?? 0;
+              const avgLoss = canonical?.avgLoss ?? 0;
+              const avgMaxProfit = canonical?.avgMaxProfit ?? 0;
+              const avgMaxDrawdown = canonical?.avgMaxDrawdown ?? 0;
+              const rr = canonical?.riskReward ?? 0;
 
               return (
                 <div className="space-y-2.5 text-xs">
@@ -416,30 +430,21 @@ export function TrackingDashboard() {
             })()}
           </section>
 
-          {/* By Outlook — only the two emitted outlooks */}
+          {/* By Outlook — canonical (8m) window */}
           <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/60 p-5">
             <div className="mb-4 flex items-center gap-2">
               <Shield className="size-4 text-purple-500" />
               <h2 className="text-[11px] font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
-                By Outlook
+                By Outlook <span className="text-zinc-400 font-normal">· {CANONICAL_WINDOW_MIN}m window</span>
               </h2>
             </div>
             <div className="space-y-2.5">
               {TRACKED_OUTLOOKS.map((outlook) => {
-                const buckets = metrics.buckets ?? [];
-                const totals = buckets.reduce(
-                  (acc, b) => {
-                    const o = b.byOutlook[outlook];
-                    return o
-                      ? {
-                          total: acc.total + o.total,
-                          wins: acc.wins + o.wins,
-                          neutral: acc.neutral + (o.neutral ?? 0),
-                        }
-                      : acc;
-                  },
-                  { total: 0, wins: 0, neutral: 0 },
-                );
+                const canonical = (metrics.buckets ?? []).find((b) => b.windowMinutes === CANONICAL_WINDOW_MIN);
+                const o = canonical?.byOutlook[outlook];
+                const totals = o
+                  ? { total: o.total, wins: o.wins, neutral: o.neutral ?? 0 }
+                  : { total: 0, wins: 0, neutral: 0 };
                 // Rate = wins / total where total = wins + losses (NEUTRAL excluded
                 // by the backend reclassifier already).
                 const rate = totals.total > 0 ? Math.round((totals.wins / totals.total) * 100) : 0;
@@ -478,7 +483,7 @@ export function TrackingDashboard() {
 
         {filteredSignals.length === 0 ? (
           <div className="py-12 text-center text-sm text-zinc-500">
-            No signals recorded yet. Tracking starts after 9:30 AM IST for Bounce / Rejection at confidence ≥ 0.7.
+            No signals recorded yet. Tracking starts after 9:30 AM IST for Bounce / Rejection / Breakout / Breakdown at confidence ≥ 0.7.
           </div>
         ) : (
           <div className="overflow-x-auto">

@@ -1,6 +1,6 @@
 # Signal Tracking System
 
-> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a **single tracking pool** (confidence ≥ 0.7, Bounce + Rejection only) and a **direction snapshot at minute 10 with a ±0.2% NEUTRAL dead-zone**. Each signal is classified at metric time:
+> Validates whether the intelligence layer's confidence actually correlates with real price outcomes. Uses a **single tracking pool** (confidence ≥ 0.7, all four outlooks — Bounce, Rejection, Breakout, Breakdown) and **multi-window direction snapshots at minutes 4 / 8 / 12** (added 2026-05-10) with a **±0.2% NEUTRAL dead-zone** per window. The 8-min lock is canonical (also writes back to parent table for backward-compatible reads). Each per-window outcome is classified at metric time:
 >
 > - `|change| ≥ 0.2%` in the expected direction → **SUCCESS**
 > - `|change| ≥ 0.2%` in the opposite direction → **FAILED**
@@ -25,6 +25,24 @@ After 8 days of production data, the 3-bucket × 4-outlook model collapsed into 
 - **Predictive plays re-enabled 2026-05-10 with strict gates**: BREAKOUT_LIKELY and BREAKDOWN_RISK fire only when both **Volume Surge** (current 5-min vol ≥ 1.5× avg of prior 20) AND **Donchian Confirmation** (last 2 closes beyond max-high / min-low of prior 5 candles) gates pass. They had been retired 2026-05-07 after coin-flip prod accuracy (HIGH Breakout 45.8% / 201 decided, HIGH Breakdown 51.9% / 106 decided) — re-enabled with the gates that target the failure modes (thin-volume fakeouts + single-bar piercings). Indices skip Breakout/Breakdown entirely (volume = 0). See `docs/market-intelligence.md` § "Breakout / Breakdown gates".
 - **Single confidence floor**: emission requires `confidence ≥ 0.7` (i.e. the legacy `HIGH` label). Below that, `NO_CLEAR_EDGE`.
 - **Single bucket label**: new rows are written with `confidence_bucket = "TRACKED"`. Historical `HIGH` and `ULTRA_HIGH` rows are folded into the same single-pool view at metric time (they're also conf ≥ 0.7); historical `MEDIUM` rows (conf 0.5–0.7) fall below the new floor and are excluded.
+
+## 2026-05-10 model change — multi-window evaluation
+
+The single 10-min window was replaced with **three parallel windows: 4, 8, 12 min**. Same trigger fires once; each tracked signal gets 3 outcome rows in a child table, each evaluated independently when its window time elapses. Goal: data to settle the "what's the right tracking window?" question instead of guessing.
+
+- **Trigger path unchanged**: same gates (conf ≥ 0.7, outlook in TRACKED_OUTLOOKS, market phase, dedup, daily cap). One parent row in `signal_tracking`.
+- **Three child rows** are inserted into `signal_tracking_windows` at trigger time, one per window (`window_minutes = 4 | 8 | 12`), all starting `status = PENDING`.
+- **Each window locks independently** at minute 4, 8, 12 respectively. Same direction-snapshot logic per window — never NEUTRAL on the lock itself; ±0.2% dead-zone is metric-time only.
+- **8 min is canonical**: when the 8-min window locks, it ALSO writes its outcome back into the parent `signal_tracking` row's outcome columns (`status`, `priceAfter`, `changePercent`, `maxPrice`, etc.). This keeps every pre-existing reader (Recent Signals table, social feed, /social/[id], legacy admin) working unchanged. The other windows live exclusively in the child table.
+- **Symbol stays in `activeMap`** until ALL 3 windows have locked. The dashboard's "active" count is still 1 per symbol (not 3).
+- **NEUTRAL re-eligibility**: a symbol is freed for re-tracking only when **all 3 windows lock NEUTRAL** (every window's `|change_percent| < 0.2%`). If any window had a real outcome, the symbol stays locked for the day. Stricter than the prior single-window rule, intentional — a signal that moved meaningfully at any horizon is treated as "had an outcome".
+- **Dashboard**: `/admin/tracking` now shows **3 cards side-by-side** (one per window), each with its own accuracy / W-L-N / expectancy / R:R / sample bar. Movement Stats + By Outlook below the cards show the canonical (8m) window only — the 3 cards ARE the cross-window comparison.
+
+Constants (in `apps/server/src/services/signal-tracking.service.ts`):
+- `TRACKING_WINDOWS_MIN = [4, 8, 12]`
+- `CANONICAL_WINDOW_MIN = 8`
+
+Min sample threshold is **250 per window** (each window is its own measurement). Since signals are shared across windows, all 3 reach "trusted" sample size at roughly the same rate.
 
 ## Relationship to the existing accuracy tracker
 
@@ -82,20 +100,22 @@ Guards:
                                    inside the ±0.2% dead-zone)
   ✗ daily cap (200) hit      → skip
     ↓
-INSERT into signal_tracking table
+INSERT 1 row into signal_tracking (parent)
   status = PENDING
   bucket = TRACKED
+INSERT 3 rows into signal_tracking_windows (child)
+  one per window (window_minutes = 4 | 8 | 12), all status = PENDING
     ↓
-Evaluation timer (every 30 seconds, direction snapshot)
-  For each PENDING row in activeMap:
-    if now < signal_time + 10 min  → leave PENDING (still inside the window)
+Evaluation timer (every 30 seconds, direction snapshot per window)
+  For each symbol in activeMap, for each PENDING window:
+    if now < signal_time + windowMinutes × 60s  → leave PENDING
 
-    Once 10 min elapsed:
+    Once that window has elapsed:
       quote = marketDataService.getQuote(symbol)   // in-memory, cheap
       change_percent = ((quote.lastPrice - price_at_signal) / price_at_signal) * 100
 
       Classification at WRITE time (direction snapshot):
-        BUY-side (BREAKOUT_LIKELY, BOUNCE_EXPECTED):
+        BUY-side (BOUNCE_EXPECTED, BREAKOUT_LIKELY):
           change ≥ 0%   → SUCCESS
           change <  0%   → FAILED
 
@@ -104,19 +124,26 @@ Evaluation timer (every 30 seconds, direction snapshot)
           change >  0%   → FAILED
 
       The ±0.2% NEUTRAL dead-zone is applied later, at metric-compute time
-      (see "NEUTRAL dead-zone" below). The DB row stores the raw
-      direction-snapshot SUCCESS / FAILED.
+      (see "NEUTRAL dead-zone" below). DB rows store raw SUCCESS / FAILED.
     ↓
-On lock:
-  price_after = quote.lastPrice (snapshot at minute 10)
-  max_price = quote.high (intraday)
-  min_price = quote.low (intraday)
-  change_points = price_after - price_at_signal
-  max_profit_percent = ((max_price - price_at_signal) / price_at_signal) * 100
-  max_drawdown_percent = ((min_price - price_at_signal) / price_at_signal) * 100
+On per-window lock:
+  UPDATE child row (signal_tracking_windows): status, price_after, change_percent,
+    change_points, max_price, min_price, max_profit_percent, max_drawdown_percent,
+    evaluated_at
 
-  UPDATE row (status, evaluatedAt=now, all price fields)
-  Remove from activeMap (evaluation lifecycle done)
+  IF window_minutes == 8 (canonical):
+    ALSO UPDATE parent row (signal_tracking) with the same outcome fields
+    so legacy readers (Recent Signals table, social feed) keep working
+    without joining the child table.
+
+  Mark window as locked (in-memory state on activeMap entry).
+    ↓
+After all 3 windows have locked for a symbol:
+  Remove symbol from activeMap.
+  IF every window's |change_percent| < 0.2% (all NEUTRAL):
+    Remove symbol from trackedToday → re-eligible for re-firing today.
+  ELSE:
+    Symbol stays in trackedToday (had a real outcome at some horizon).
 ```
 
 ### Why pure direction (no TP/SL thresholds)
@@ -125,11 +152,11 @@ Earlier iterations used a first-touch race against ±0.5% TP/SL bands. Prod data
 
 ### Why 30-second polling
 
-The eval doesn't act on the signal until minute 10, so polling cadence only affects how quickly we lock in *after* the 10-min mark passes. 30 seconds is fast enough (lock-in lag ≤ 30s) without burning cycles on signals that aren't due yet.
+The eval doesn't act on a window until its time elapses, so polling cadence only affects how quickly we lock in *after* each window's mark passes. 30 seconds is fast enough (lock-in lag ≤ 30s per window) without burning cycles on windows that aren't due yet.
 
 ### Market close cleanup
 
-After 3:30 PM IST, any remaining PENDING signals (including ones that haven't reached minute 10) are force-evaluated against the close price using the same direction logic. Never NEUTRAL.
+After 3:30 PM IST, any window still in PENDING status (including 8m / 12m windows for signals that fired late in the session) is force-locked against the close price using the same direction logic. The 8m canonical lock still writes back to the parent row. Never NEUTRAL on the lock itself.
 
 ---
 
@@ -168,6 +195,34 @@ created_at          TIMESTAMP DEFAULT NOW()
 File: `apps/server/src/db/schema/signal-tracking.ts`
 
 To create the table: `npx drizzle-kit push`
+
+### Child table: `signal_tracking_windows` (added 2026-05-10)
+
+One row per (signal × window). Three rows are inserted per signal at trigger time (`window_minutes = 4 | 8 | 12`).
+
+```sql
+id                     SERIAL PRIMARY KEY
+signal_id              INTEGER NOT NULL  REFERENCES signal_tracking(id) ON DELETE CASCADE
+window_minutes         INTEGER NOT NULL                -- 4 | 8 | 12
+status                 VARCHAR(10) NOT NULL DEFAULT 'PENDING'
+
+price_after            NUMERIC(12,2)
+change_percent         NUMERIC(8,4)
+change_points          NUMERIC(12,2)
+max_price              NUMERIC(12,2)
+min_price              NUMERIC(12,2)
+max_profit_percent     NUMERIC(8,4)
+max_drawdown_percent   NUMERIC(8,4)
+evaluated_at           TIMESTAMP
+created_at             TIMESTAMP DEFAULT NOW()
+
+INDEX idx_stw_signal   ON (signal_id)
+INDEX idx_stw_pending  ON (status)
+```
+
+File: `apps/server/src/db/schema/signal-tracking-windows.ts`
+
+The 8-min row (canonical) duplicates its outcome into the parent `signal_tracking` row's outcome columns at lock time, so existing readers don't need to join this child table.
 
 ---
 

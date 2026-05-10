@@ -4,12 +4,12 @@
 
 ## Why this exists
 
-Pre-launch audience building. We want to share what the system sees in real time (and what happened 10 minutes later) without building any auto-posting infrastructure or platform integrations. The platform's job is just to render beautiful, on-brand templates that look great as static images.
+Pre-launch audience building. We want to share what the system sees in real time (and what happened 8 minutes later) without building any auto-posting infrastructure or platform integrations. The platform's job is just to render beautiful, on-brand templates that look great as static images.
 
 The feature is intentionally **scoped down**:
 - **No auto-post** — admin screenshots manually
 - **No image generation server-side** — pure browser rendering, zero impact on the tick-processing loop
-- **No new infrastructure** — reuses the existing `signal_tracking` table + 10-min direction snapshot that already runs
+- **No new infrastructure** — reuses the existing `signal_tracking` parent table; outcome columns are populated by the canonical 8-min lock from the multi-window tracker (see `docs/signal-tracking.md` § "2026-05-10 model change — multi-window evaluation")
 
 ---
 
@@ -40,12 +40,12 @@ The eligibility flag is computed once, at insert time, and persisted. We do **no
 
 | | InitialTemplate | OutcomeTemplate |
 |---|---|---|
-| **When** | At signal time | After 10-minute direction snapshot |
+| **When** | At signal time | After the 8-minute (canonical) direction snapshot |
 | **Shows** | Symbol, zone, momentum, pressure, volatility, alignment | Symbol, points moved, status verdict, dynamic timeline (`X min later`) |
 | **Status required** | Any | `SUCCESS` / `FAILED` / NEUTRAL (display) — see "NEUTRAL dead-zone" below |
 | **File** | `apps/web/src/components/social/initial-template.tsx` | `apps/web/src/components/social/outcome-template.tsx` |
 
-The outcome template **automatically** becomes available once the signal-tracking evaluator locks the row's status — no new timer, worker, or trigger needed. Lock-in fires at the 10-minute mark for every tracked signal (within a 30s polling cycle).
+The outcome template **automatically** becomes available once the signal-tracking evaluator locks the canonical 8-min window — no new timer, worker, or trigger needed. The 4-min and 12-min windows live exclusively in the child table and don't drive the social feed (the social feed reads the parent row's outcome columns, which only the 8-min canonical lock writes back to). Lock-in fires at the 8-minute mark for every tracked signal (within a 30s polling cycle).
 
 ---
 
@@ -75,16 +75,18 @@ signal-tracking.service.ts recordSignal()
    InitialTemplate renders at 1080×1080
    Admin screenshots, posts manually
        ↓
-   ... 10-minute window elapses (30-sec poll waits then snapshots) ...
+   ... 8-minute (canonical) window elapses ...
        ↓
-   Evaluator locks the row at minute 10:
-     UPDATE signal_tracking
+   Evaluator locks the canonical window at minute 8 (also writes parent row):
+     UPDATE signal_tracking            -- canonical 8m writeback
        status = SUCCESS or FAILED  (pure direction — no NEUTRAL)
        price_after = 414.30
        change_percent = +0.55
        max_profit_percent = +0.78
        max_drawdown_percent = -0.12
-       evaluated_at = (10 min after signal_time)
+       evaluated_at = (8 min after signal_time)
+     -- The 4m and 12m windows lock independently in signal_tracking_windows
+     -- (child table) but don't affect the social feed.
        ↓
    /admin/social list page (auto-refreshes every 30s):
      row badge flips from "Outcome Pending" → "Played Out" / "Did Not Play Out"
@@ -95,7 +97,7 @@ signal-tracking.service.ts recordSignal()
    Admin screenshots, posts as follow-up
 ```
 
-The `view=outcome` page **polls every 30 seconds** while the underlying status is still `PENDING`. As soon as the evaluator commits at minute 10, the outcome template appears on the next poll without a manual refresh.
+The `view=outcome` page **polls every 30 seconds** while the underlying status is still `PENDING`. As soon as the evaluator commits the canonical 8-min lock, the outcome template appears on the next poll without a manual refresh.
 
 ---
 
@@ -181,11 +183,12 @@ Status pill semantics on the `/social` list page — three states:
 
 | Display class | Pill label | Color | When |
 |---|---|---|---|
-| `PENDING` | "Outcome Pending" | amber | Before minute 10 lock-in |
-| `NEUTRAL` | "Limited Movement" | slate | `|change_percent|` < 0.2% (dead-zone) |
-| `SUCCESS` / `FAILED` | "Follow-up Available" | emerald | `|change_percent|` ≥ 0.2% in either direction |
+| `PENDING` | "Pending" | amber | Before the canonical 8-minute lock-in |
+| `NEUTRAL` | "Neutral · ±X.XX%" | slate | `|change_percent|` < 0.2% (dead-zone) |
+| `SUCCESS` | "Success · +X.XX%" | emerald | matched outlook direction (with magnitude) |
+| `FAILED` | "Failed · −X.XX%" | rose | opposite to outlook direction (with magnitude) |
 
-The list view doesn't expose WIN vs LOSS in the pill — that distinction shows when the user opens the actual template card (where the hero stamp turns emerald / rose / slate based on direction). Keeps the list view neutral and observation-focused.
+The list view exposes Success vs Failed directly with the signed change percentage so the admin can scan card outcomes at a glance instead of opening each one. The deeper template page still holds the full hero stamp + timeline.
 
 Backend writes pure `SUCCESS` / `FAILED` from the direction snapshot. `socialDisplayStatus()` in `template-shared.tsx` then applies a **±0.2% NEUTRAL dead-zone** at display time:
 
@@ -309,7 +312,7 @@ The `NEUTRAL` branch in `outcomeVerdict()` is kept as a defensive fallback for a
 - Move ≥ 0 → `ArrowUp`
 - Move < 0 → `ArrowDown`
 
-**Dynamic timeline duration:** the "X min later" text is computed live from `evaluatedAt - signalTime`. With the direction-snapshot model every signal locks at minute 10, so the text consistently reads "10 min later".
+**Dynamic timeline duration:** the "X min later" text is computed live from `evaluatedAt - signalTime`. The parent row's `evaluated_at` is set by the canonical 8-min lock from the multi-window tracker, so the text consistently reads "8 min later" for new signals. (Historical rows from before 2026-05-10 may still display "10 min later" — that's the old single-window cadence preserved in the data.)
 
 **Honest by default.** All evaluated outcomes get fully designed templates and the loss case is rendered as prominently as the win. Cherry-picking only SUCCESS posts is what shady channels do — and is one of the things SEBI cites in enforcement orders. Showing losses publicly builds genuine trust.
 
