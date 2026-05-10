@@ -19,12 +19,14 @@ A signal becomes a "social-eligible" template candidate when **all** are true at
 
 ```
 intel.confidence >= 0.75    (stricter than the 0.7 tracking floor)
-intel.outlook   in (BOUNCE_EXPECTED, REJECTION_POSSIBLE)
+intel.outlook   in (BOUNCE_EXPECTED, REJECTION_POSSIBLE, BREAKOUT_LIKELY, BREAKDOWN_RISK)
 ```
 
-The volatility filter (`>= 0.7`) was dropped — it was producing too few templates on calm/sideways days, leaving `/admin/social` empty for stretches. Confidence + reactive-outlook are the gates now. `volatility_score` still gets persisted on every row for future analysis but no longer affects eligibility.
+The volatility filter (`>= 0.7`) was dropped — it was producing too few templates on calm/sideways days, leaving `/admin/social` empty for stretches. Confidence + emitted-outlook are the gates now. `volatility_score` still gets persisted on every row for future analysis but no longer affects eligibility.
 
-**Outlook restriction (2026-05-07):** the `/social` list page server-filters to `BOUNCE_EXPECTED` and `REJECTION_POSSIBLE` only. Historical `BREAKOUT_LIKELY` / `BREAKDOWN_RISK` rows still exist in the DB but are excluded from the list. Direct deep-links (`/social/[id]`) to those legacy rows still render via the templates — only the discovery surface is filtered.
+**Outlook restriction history:**
+- 2026-05-07: list page restricted to BOUNCE_EXPECTED + REJECTION_POSSIBLE only (Breakout/Breakdown retired upstream).
+- 2026-05-10: BREAKOUT_LIKELY + BREAKDOWN_RISK re-added — they're re-enabled in the transformer with strict gates (volume surge ≥ 1.5× + Donchian-style 2-of-5 confirmation), so any row that reaches the social feed has already cleared the gates. See `docs/market-intelligence.md` § "Breakout / Breakdown gates".
 
 The eligibility flag is computed once, at insert time, and persisted. We do **not** re-evaluate eligibility later.
 

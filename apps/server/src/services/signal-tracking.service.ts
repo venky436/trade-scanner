@@ -33,14 +33,17 @@ const MIN_SAMPLES_TRACKED = 250;
 // conf ≥ 0.7) plus newly-written "TRACKED" rows. Excludes legacy MEDIUM (conf
 // 0.5–0.7) rows since they're below the new floor.
 const ABOVE_FLOOR_BUCKET_LABELS = new Set(["TRACKED", "HIGH", "ULTRA_HIGH"]);
-// Outlooks emitted under the new single-pool model.
-const TRACKED_OUTLOOKS = ["BOUNCE_EXPECTED", "REJECTION_POSSIBLE"];
+// Outlooks emitted under the new single-pool model. Breakout/Breakdown were
+// retired 2026-05-07 and re-enabled 2026-05-10 with a strict 2-gate stack
+// (volume surge + Donchian-style confirmation) — see intelligence-transformer.ts.
+const TRACKED_OUTLOOKS = ["BOUNCE_EXPECTED", "REJECTION_POSSIBLE", "BREAKOUT_LIKELY", "BREAKDOWN_RISK"];
 
-// BUY_SIDE includes the retired BREAKOUT_LIKELY for backward compatibility:
-// historical pending rows with that outlook still need correct direction
-// classification at evaluation + metric time. Going forward, only BOUNCE_EXPECTED
-// is emitted on the buy side (Breakout was retired 2026-05-07).
+// Direction maps for evaluate() + reclassifyForMetrics(). Buy-side: signal
+// expects price to rise (Bounce off support, Breakout above resistance).
+// Sell-side: signal expects price to fall (Rejection at resistance, Breakdown
+// below support).
 const BUY_SIDE_OUTLOOKS = new Set(["BREAKOUT_LIKELY", "BOUNCE_EXPECTED"]);
+const SELL_SIDE_OUTLOOKS = new Set(["REJECTION_POSSIBLE", "BREAKDOWN_RISK"]);
 
 // Metric-time NEUTRAL dead-zone. Rows where |change| < this threshold are
 // considered "no real outcome" — excluded from the accuracy denominator on
@@ -118,9 +121,9 @@ function computeBucketStats(bucketRecords: BucketRecord[]) {
   const expectancy = (winRate * avgGain) - (lossRate * avgLoss);
   const riskReward = avgLoss !== 0 ? Math.abs(avgGain / avgLoss) : 0;
 
-  // Only the two surviving outlooks under the new model. Historical Breakout /
-  // Breakdown rows are still in the records (excluded here) so dashboard
-  // doesn't render rows for retired outlooks.
+  // Iterates over the currently-tracked outlooks. Historical rows for any
+  // outlook not in TRACKED_OUTLOOKS (retired variants, future drops) are
+  // excluded so the dashboard rows match what's actually being emitted.
   const byOutlook: Record<string, { total: number; wins: number; neutral: number; rate: number }> = {};
   for (const outlook of TRACKED_OUTLOOKS) {
     const outlookEvaluated = evaluated.filter((r) => r.outlook === outlook);

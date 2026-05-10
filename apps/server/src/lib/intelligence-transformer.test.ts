@@ -227,10 +227,12 @@ describe("toIntelligence — outlook decision table", () => {
   const nearRes = makeSr({ resistance: { level: 1005, dist: 0.5 }, support: { level: 900, dist: 10 } });
   const nearSup = makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } });
 
-  // Post-2026-05-07: BREAKOUT_LIKELY was retired (sub-50% accuracy in prod).
-  // The transformer now returns NO_CLEAR_EDGE for what would have been a
-  // BREAKOUT setup, regardless of confidence.
-  it("NEAR_RESISTANCE + STRONG_UP + HIGH conf → NO_CLEAR_EDGE (Breakout retired)", () => {
+  // Re-enabled 2026-05-10 with strict gates. Without recentCandles the volume
+  // and Donchian-style confirmation gates fail closed, so we still get
+  // NO_CLEAR_EDGE — the gates only let signals through when we have candle
+  // data to evaluate. See "Breakout / Breakdown gates" describe block below
+  // for explicit pass/fail tests.
+  it("NEAR_RESISTANCE + STRONG_UP + HIGH conf, no candles → NO_CLEAR_EDGE (gates fail closed)", () => {
     const r = toIntelligence(baseInput({
       sr: nearRes,
       momentum: makeMomentum("STRONG_UP", 0.95),
@@ -287,10 +289,11 @@ describe("toIntelligence — outlook decision table", () => {
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  // Post-2026-05-07: BREAKDOWN_RISK was retired (negative expectancy in prod).
-  // The transformer now returns NO_CLEAR_EDGE for what would have been a
-  // BREAKDOWN setup, regardless of confidence.
-  it("NEAR_SUPPORT + STRONG_DOWN + HIGH conf → NO_CLEAR_EDGE (Breakdown retired)", () => {
+  // Re-enabled 2026-05-10 with strict gates. Without recentCandles the gates
+  // fail closed (insufficient data), so still NO_CLEAR_EDGE. Pass/fail tests
+  // with real candle data are in the "Breakout / Breakdown gates" describe
+  // block below.
+  it("NEAR_SUPPORT + STRONG_DOWN + HIGH conf, no candles → NO_CLEAR_EDGE (gates fail closed)", () => {
     const r = toIntelligence(baseInput({
       sr: nearSup,
       momentum: makeMomentum("STRONG_DOWN", -0.95),
@@ -554,6 +557,194 @@ describe("toIntelligence — index symbol handling", () => {
     }));
     assert.equal(r.volatility.score, 0.4);
     assert.equal(r.volatility.label, "MEDIUM");
+  });
+});
+
+// Helper: build a candle stream where the last 2 candles ("confirmation")
+// breach the prior 5 candles' max-high (Breakout) or min-low (Breakdown), and
+// the LAST candle's volume is > 1.5× the average of the prior 20.
+function buildBreakoutCandles(): Candle[] {
+  const candles: Candle[] = [];
+  // 19 baseline candles: low volume (1000), price stuck near 995-1000
+  for (let i = 0; i < 19; i++) {
+    candles.push({ time: 1700000000 + i * 300, open: 997, high: 1000, low: 995, close: 997, volume: 1000 });
+  }
+  // 2 confirmation candles: close above the prior 5's max-high (1000), high vol on the last
+  candles.push({ time: 1700000000 + 19 * 300, open: 1001, high: 1010, low: 1000, close: 1006, volume: 1500 });
+  candles.push({ time: 1700000000 + 20 * 300, open: 1006, high: 1012, low: 1003, close: 1008, volume: 2500 }); // current — vol surge
+  return candles;
+  // prior 20 vol avg = (19×1000 + 1×1500)/20 = 1025  →  current 2500 ≥ 1.5×1025 = 1537.5 ✓
+  // prior 5 (candles 14-18) max-high = 1000  →  candles 19,20 close = 1006,1008 > 1000 ✓
+}
+
+function buildBreakdownCandles(): Candle[] {
+  const candles: Candle[] = [];
+  for (let i = 0; i < 19; i++) {
+    candles.push({ time: 1700000000 + i * 300, open: 1003, high: 1005, low: 1000, close: 1003, volume: 1000 });
+  }
+  candles.push({ time: 1700000000 + 19 * 300, open: 999, high: 1000, low: 990, close: 994, volume: 1500 });
+  candles.push({ time: 1700000000 + 20 * 300, open: 994, high: 997, low: 988, close: 992, volume: 2500 }); // current — vol surge
+  return candles;
+  // prior 5 min-low = 1000  →  candles 19,20 close = 994,992 < 1000 ✓
+}
+
+describe("toIntelligence — Breakout / Breakdown gates", () => {
+  const nearRes = makeSr({ resistance: { level: 1005, dist: 0.5 }, support: { level: 900, dist: 10 } });
+  const nearSup = makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } });
+
+  it("Breakout: both gates pass + HIGH conf + STRONG_UP near resistance → BREAKOUT_LIKELY", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
+      recentCandles: buildBreakoutCandles(),
+    }));
+    assert.equal(r.outlook, "BREAKOUT_LIKELY");
+  });
+
+  it("Breakout: volume gate fails (current vol = avg) → NO_CLEAR_EDGE", () => {
+    const candles = buildBreakoutCandles();
+    candles[candles.length - 1].volume = 1000; // drop the surge → equal to baseline
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
+      recentCandles: candles,
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("Breakout: confirmation fails (only 1 of 2 closes above max-high) → NO_CLEAR_EDGE", () => {
+    const candles = buildBreakoutCandles();
+    candles[candles.length - 2].close = 999; // pull the second-to-last close back below 1000
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
+      recentCandles: candles,
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("Breakout: insufficient candles (only 6) → NO_CLEAR_EDGE", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
+      recentCandles: buildBreakoutCandles().slice(-6),
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("Breakdown: both gates pass + HIGH conf + STRONG_DOWN near support → BREAKDOWN_RISK", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_DOWN", -0.95),
+      pressure: makePressure("STRONG_SELL", -0.95),
+      recentCandles: buildBreakdownCandles(),
+    }));
+    assert.equal(r.outlook, "BREAKDOWN_RISK");
+  });
+
+  it("Breakdown: volume gate fails → NO_CLEAR_EDGE", () => {
+    const candles = buildBreakdownCandles();
+    candles[candles.length - 1].volume = 1000;
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_DOWN", -0.95),
+      pressure: makePressure("STRONG_SELL", -0.95),
+      recentCandles: candles,
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("Breakdown: confirmation fails (only 1 close below min-low) → NO_CLEAR_EDGE", () => {
+    const candles = buildBreakdownCandles();
+    candles[candles.length - 2].close = 1001; // pull second-to-last back above min-low (1000)
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_DOWN", -0.95),
+      pressure: makePressure("STRONG_SELL", -0.95),
+      recentCandles: candles,
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("Index symbol with all-pass Breakout setup → NO_CLEAR_EDGE (indices skip Breakout/Breakdown)", () => {
+    const r = toIntelligence(baseInput({
+      symbol: "NIFTY 50",
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
+      recentCandles: buildBreakoutCandles(),
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  // Bounce / Rejection paths must remain unaffected by the candles array
+  // length — they don't consult the gates at all.
+  it("Bounce path unaffected by 21-candle stream", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
+      recentCandles: buildBreakoutCandles(),  // 21 candles passed but Bounce ignores gates
+    }));
+    assert.equal(r.outlook, "BOUNCE_EXPECTED");
+  });
+
+  it("Rejection path unaffected by 21-candle stream", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_DOWN", -0.9),
+      pressure: makePressure("STRONG_SELL", -0.9),
+      recentCandles: buildBreakdownCandles(),
+    }));
+    assert.equal(r.outlook, "REJECTION_POSSIBLE");
+  });
+});
+
+// Volatility must use only the last 6 candles even when the caller passes a
+// longer buffer (e.g. 21 for the volume gate). Without slicing, bumping the
+// caller's buffer length would silently change volatility scores for every
+// stock — a regression that would corrupt confidence calculations.
+describe("toIntelligence — volatility window isolation", () => {
+  it("21-candle buffer with calm last 6 → volatility ignores the older chaos", () => {
+    const candles: Candle[] = [];
+    // Wild older 15 candles (would inflate volatility if iterated)
+    for (let i = 0; i < 15; i++) {
+      candles.push({ time: 1700000000 + i * 300, open: 1000, high: 1100, low: 900, close: 1000, volume: 1000 });
+    }
+    // Calm last 6 candles — should be the entire window volatility considers
+    for (let i = 15; i < 21; i++) {
+      candles.push({ time: 1700000000 + i * 300, open: 1000, high: 1010, low: 1000, close: 1005, volume: 1000 });
+    }
+    const r = toIntelligence(baseInput({
+      high: 1100, low: 900, // session high/low huge — irrelevant when ≥3 candles supplied
+      recentCandles: candles,
+    }));
+    // Last 6 range = (1010 - 1000)/1000 = 1.0% → score 0.6 (MEDIUM)
+    // If slicing were broken: range = (1100 - 900)/1000 = 20% → score 1.0 (HIGH)
+    assert.equal(r.volatility.score, 0.6);
+    assert.equal(r.volatility.label, "MEDIUM");
+  });
+
+  it("6-candle buffer matches 21-candle buffer score (regression check)", () => {
+    const calmSix: Candle[] = [];
+    for (let i = 0; i < 6; i++) {
+      calmSix.push({ time: 1700000000 + i * 300, open: 1000, high: 1010, low: 1000, close: 1005, volume: 1000 });
+    }
+    const sixOnly = toIntelligence(baseInput({ recentCandles: calmSix }));
+
+    const padded: Candle[] = [];
+    for (let i = 0; i < 15; i++) {
+      padded.push({ time: 1700000000 + i * 300, open: 1000, high: 1100, low: 900, close: 1000, volume: 1000 });
+    }
+    padded.push(...calmSix);
+    const padded21 = toIntelligence(baseInput({ recentCandles: padded }));
+
+    assert.equal(sixOnly.volatility.score, padded21.volatility.score);
+    assert.equal(sixOnly.volatility.label, padded21.volatility.label);
   });
 });
 

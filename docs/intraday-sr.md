@@ -50,7 +50,8 @@ Market Open (9:15 AM)
   │    ↓
   │  Frontend: shows which type is active
   │
-  │  Every 5 min: intraday levels recomputed with latest candles
+  │  Every 15 min (3 candle closes): intraday levels recomputed
+  │  (was every 5 min — throttled 2026-05-10 for UX trust + gate stability)
   │
 Market Close (3:30 PM)
   │
@@ -194,12 +195,19 @@ srType:   "INTRADAY" (because at least one side uses intraday)
 
 10:30 AM  15th candle closes (~75 min after open)
           Session candles: 15
-          Intraday S/R computed for first time
+          Intraday S/R computed for first time (always fires on length=15)
           S/R source: INTRADAY if valid, else DAILY
 
 10:35 AM  16th candle closes
-          Intraday S/R recomputed with 16 candles
-          Levels may shift as more data accumulates
+          Counter +1, no recompute (waiting for 3 candles since last)
+
+10:40 AM  17th candle closes
+          Counter +1, no recompute
+
+10:45 AM  18th candle closes (3 candles since last recompute → 15 min)
+          Intraday S/R recomputed with 18 candles
+          Counter resets to 0
+          Levels may shift, but not more than once per ~15 min
 
 12:00 PM  33 candles accumulated
           Intraday S/R well-established
@@ -250,12 +258,23 @@ The badge only appears when the signal has an `srType` field (CONFIRMED stage si
 
 ---
 
+## Recompute throttle (15-min cadence)
+
+As of 2026-05-10, intraday S/R is recomputed at most **once every 3 candle closes (15 min)** per symbol. The previous behavior (recompute on every 5-min candle close) caused two issues:
+
+1. **UX trust** — users saw the displayed S/R level "jump" every 5 min, especially around cluster boundaries when price moved through a level. Real traders don't redraw their lines that often; the constant flicker undermined credibility ("wait, didn't this say X earlier?").
+2. **Gate stability** — the Breakout / Breakdown gates added in the same release reference candle-relative max-high / min-low (Donchian-style) precisely because they need a stable reference. Slowing recompute reduces the surface area for any future code path that exposes intraday levels into the broadcast / gate flow.
+
+Implementation: a per-symbol `Map<string, number>` counter in `apps/server/src/index.ts` increments on each candle close and triggers the recompute when it hits `INTRADAY_SR_RECOMPUTE_EVERY = 3`. The first compute (when `sessionCandles.length === 15`) always fires immediately so we don't make traders wait 15 extra minutes at session start, and this also gracefully handles new-trading-day resets (the candle tracker zeros session candles on day change, so the next run-up to length 15 always recomputes regardless of any leftover counter).
+
+Daily S/R is unaffected — it's already stable mid-session (recomputed once per day in the EOD job + periodic `levels-worker` which produces the same result from the same daily candles).
+
 ## Performance
 
 | Metric | Value |
 |--------|-------|
 | Intraday S/R computation | < 1ms per symbol (50 candles, pure function) |
-| Frequency | Every 5 min per symbol (on candle close) |
+| Frequency | Every 15 min per symbol (every 3rd candle close, throttled 2026-05-10) |
 | Memory per symbol | ~75 candles × ~50 bytes = ~3.75 KB |
 | Total memory (500 symbols) | ~1.8 MB |
 | Session candle cap | 75 (prevents unbounded growth) |

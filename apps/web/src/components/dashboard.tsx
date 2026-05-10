@@ -34,9 +34,15 @@ const ZONE_SECTION_CAP = 6;
 // (best-of-the-best highlight), one tier above /social's 0.75 publishable feed
 // and the 0.70 tracking floor. Low volume is a feature.
 const STRONG_ALIGNMENT_FLOOR = 0.85;
-// Reactive plays only — Breakout / Breakdown were retired 2026-05-07. Defensive
-// guard at the UI layer; the transformer also no longer emits those outlooks.
-const STRONG_ALIGNMENT_OUTLOOKS = new Set(["BOUNCE_EXPECTED", "REJECTION_POSSIBLE"]);
+// Tracks all currently-emitted outlooks. Breakout / Breakdown were re-enabled
+// 2026-05-10 with strict volume + Donchian-style confirmation gates — they
+// qualify for Strong Alignment when they additionally clear the 0.85 floor.
+const STRONG_ALIGNMENT_OUTLOOKS = new Set([
+  "BOUNCE_EXPECTED",
+  "REJECTION_POSSIBLE",
+  "BREAKOUT_LIKELY",
+  "BREAKDOWN_RISK",
+]);
 
 function SectionHeader({
   Icon,
@@ -192,11 +198,11 @@ export function Dashboard() {
     return list;
   }, [stockMap]);
 
-  // Section 1: Strong Factor Alignment — confidence ≥ 0.75 AND outlook is one
-  // of the two emitted reactive plays (Bounce / Rejection). Predictive outlooks
-  // (Breakout / Breakdown) were retired 2026-05-07 — they no longer fire from
-  // the transformer, but we filter here too as a defensive guard in case any
-  // historical or in-flight snapshot still carries one.
+  // Section 1: Strong Factor Alignment — confidence ≥ STRONG_ALIGNMENT_FLOOR
+  // AND outlook is in STRONG_ALIGNMENT_OUTLOOKS (currently all 4 emitted
+  // outlooks: Bounce, Rejection, Breakout, Breakdown). Frontend allowlist is
+  // intentionally narrower than "any non-NO_CLEAR_EDGE" so unknown future
+  // outlooks don't accidentally surface in the elevator-pitch lane.
   const strongAlignment = useMemo(
     () =>
       allStocks
