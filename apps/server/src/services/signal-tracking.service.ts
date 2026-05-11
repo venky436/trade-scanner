@@ -176,6 +176,47 @@ function computeBucketStats(bucketRecords: BucketRecord[]) {
   };
 }
 
+// Helper: attach per-window outcomes to a list of signal rows. Used by
+// getRecentSignals + getTrackingSignalsFromDB to power the 3-column display
+// in the Recent Signals table on /admin/tracking. Single child query for all
+// signals, grouped in JS — same pattern as computeMultiWindowMetrics.
+async function attachWindows<T extends { id: number; signalTime: Date | string; symbol: string }>(rows: T[]) {
+  if (rows.length === 0) return [] as Array<T & { groupId: string; windows: WindowRow[] }>;
+  const ids = rows.map((r) => r.id);
+  const children = await db
+    .select({
+      signalId: signalTrackingWindows.signalId,
+      windowMinutes: signalTrackingWindows.windowMinutes,
+      status: signalTrackingWindows.status,
+      changePercent: signalTrackingWindows.changePercent,
+    })
+    .from(signalTrackingWindows)
+    .where(inArray(signalTrackingWindows.signalId, ids));
+
+  const byParent = new Map<number, WindowRow[]>();
+  for (const c of children) {
+    const arr = byParent.get(c.signalId) ?? [];
+    arr.push({
+      windowMinutes: c.windowMinutes,
+      status: c.status,
+      changePercent: c.changePercent,
+    });
+    byParent.set(c.signalId, arr);
+  }
+
+  return rows.map((r) => ({
+    ...r,
+    groupId: `${r.symbol}-${new Date(r.signalTime).toISOString().slice(0, 10)}`,
+    windows: (byParent.get(r.id) ?? []).sort((a, b) => a.windowMinutes - b.windowMinutes),
+  }));
+}
+
+interface WindowRow {
+  windowMinutes: number;
+  status: string;
+  changePercent: string | null;
+}
+
 // Multi-window metrics builder. Pulls parent rows for the date, joins with
 // child rows, then computes one BucketStats per window. Shared between the
 // live `getMetrics` (with activeMap-aware activeCount) and the standalone
@@ -585,10 +626,7 @@ export function createSignalTrackingService() {
         .orderBy(sql`${signalTracking.signalTime} DESC`)
         .limit(limit);
 
-      return rows.map(r => ({
-        ...r,
-        groupId: `${r.symbol}-${new Date(r.signalTime).toISOString().slice(0, 10)}`,
-      }));
+      return await attachWindows(rows);
     } catch {
       return [];
     }
@@ -702,10 +740,7 @@ export async function getTrackingSignalsFromDB(limit = 200, date?: Date) {
       .orderBy(sql`${signalTracking.signalTime} DESC`)
       .limit(limit);
 
-    return rows.map(r => ({
-      ...r,
-      groupId: `${r.symbol}-${new Date(r.signalTime).toISOString().slice(0, 10)}`,
-    }));
+    return await attachWindows(rows);
   } catch {
     return [];
   }

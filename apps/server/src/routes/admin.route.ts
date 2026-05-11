@@ -64,9 +64,12 @@ export async function adminRoute(fastify: FastifyInstance, opts: AdminRouteOpts)
     const service = opts.getTrackingService?.();
     const { date } = req.query as { date?: string };
     const targetDate = date ? new Date(date) : undefined;
+    // Limit set to 1000 (effectively no pagination) — daily cap is 200 signals
+    // so this comfortably fits a full day. Frontend renders all rows so the
+    // admin can scan the entire day's tracker output without paging.
     const signals = service
-      ? await service.getRecentSignals(200, targetDate)
-      : await getTrackingSignalsFromDB(200, targetDate);
+      ? await service.getRecentSignals(1000, targetDate)
+      : await getTrackingSignalsFromDB(1000, targetDate);
     return { signals, count: signals.length };
   });
 
