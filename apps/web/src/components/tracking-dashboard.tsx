@@ -76,6 +76,14 @@ interface SignalRecord {
   maxDrawdownPercent: string | null;
   evaluatedAt: string | null;
   groupId: string;
+  // Per-window outcomes (added 2026-05-11). Backend joins signal_tracking_windows
+  // and returns one entry per window for each signal. Empty array for legacy
+  // rows from before the multi-window deploy.
+  windows: Array<{
+    windowMinutes: number;
+    status: string;
+    changePercent: string | null;
+  }>;
 }
 
 // Single tracking pool. Three-bucket model (Ultra/High/Medium) was retired
@@ -146,6 +154,28 @@ function expectancyColor(exp: number): string {
 
 function getTodayIST(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD
+}
+
+// Renders a per-window outcome cell on the Recent Signals table. Mirrors the
+// backend reclassifier: PENDING / NEUTRAL (|change|<0.2%) / SUCCESS / FAILED.
+// Compact format: "✓ +0.45%" / "✗ -0.62%" / "− ±0.08%" / "⏳" — color-coded
+// so the admin can scan a row across 3 windows at a glance.
+function renderWindowCell(outlook: string, win?: { windowMinutes: number; status: string; changePercent: string | null }) {
+  if (!win) return <span className="text-zinc-400">—</span>;
+  if (win.status === "PENDING") {
+    return <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400"><Clock className="size-3" />pending</span>;
+  }
+  const change = Number(win.changePercent ?? 0);
+  if (Math.abs(change) < NEUTRAL_THRESHOLD_PERCENT) {
+    return <span className="inline-flex items-center gap-1 tabular-nums text-zinc-500"><Minus className="size-3" />{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span>;
+  }
+  // SUCCESS vs FAILED based on direction matching the outlook
+  const isBullish = BULLISH_OUTLOOKS.has(outlook);
+  const success = isBullish ? change >= 0 : change <= 0;
+  if (success) {
+    return <span className="inline-flex items-center gap-1 tabular-nums font-semibold text-emerald-600 dark:text-emerald-400"><CheckCircle className="size-3" />{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span>;
+  }
+  return <span className="inline-flex items-center gap-1 tabular-nums font-semibold text-rose-600 dark:text-rose-400"><XCircle className="size-3" />{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span>;
 }
 
 function formatTime(iso: string): string {
@@ -494,24 +524,19 @@ export function TrackingDashboard() {
                   <th className="pb-2 pr-3">Symbol</th>
                   <th className="pb-2 pr-3">Outlook</th>
                   <th className="pb-2 pr-3 text-right">Conf</th>
-                  <th className="pb-2 pr-3">Bucket</th>
                   <th className="pb-2 pr-3 text-right">Entry</th>
-                  <th className="pb-2 pr-3 text-right">After</th>
-                  <th className="pb-2 pr-3 text-right">Change</th>
-                  <th className="pb-2 pr-3 text-right">Max ↑</th>
-                  <th className="pb-2 pr-3 text-right">Max ↓</th>
-                  <th className="pb-2">Status</th>
+                  {TRACKING_WINDOWS_MIN.map((w) => (
+                    <th key={w} className="pb-2 pr-3 text-right">
+                      {w}m{w === CANONICAL_WINDOW_MIN && (
+                        <span className="ml-1 text-[8px] font-normal normal-case text-cyan-500">canonical</span>
+                      )}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {filteredSignals.map((s) => {
-                  const shownStatus = displayStatus(s);
-                  const statusStyle = STATUS_STYLE[shownStatus] ?? STATUS_STYLE.PENDING;
-                  const StatusIcon = statusStyle.icon;
-                  const change = s.changePercent ? Number(s.changePercent) : null;
-                  const maxProfit = s.maxProfitPercent ? Number(s.maxProfitPercent) : null;
-                  const maxDrawdown = s.maxDrawdownPercent ? Number(s.maxDrawdownPercent) : null;
-
+                  const windowMap = new Map((s.windows ?? []).map((w) => [w.windowMinutes, w]));
                   return (
                     <tr
                       key={s.id}
@@ -529,32 +554,13 @@ export function TrackingDashboard() {
                       <td className="py-2 pr-3 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
                         {Number(s.confidence).toFixed(2)}
                       </td>
-                      <td className="py-2 pr-3">
-                        <span className={`text-[9px] font-bold uppercase ${BUCKET_STYLE[s.confidenceBucket]?.accent ?? "text-zinc-500"}`}>
-                          {s.confidenceBucket === "ULTRA_HIGH" ? "ULTRA" : s.confidenceBucket}
-                        </span>
-                      </td>
                       <td className="py-2 pr-3 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
                         ₹{Number(s.priceAtSignal).toFixed(2)}
                       </td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-zinc-700 dark:text-zinc-300">
-                        {s.priceAfter ? `₹${Number(s.priceAfter).toFixed(2)}` : "—"}
-                      </td>
-                      <td className={`py-2 pr-3 text-right tabular-nums font-semibold ${change !== null ? (change >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400") : "text-zinc-400"}`}>
-                        {change !== null ? `${change >= 0 ? "+" : ""}${change.toFixed(2)}%` : "—"}
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-emerald-600 dark:text-emerald-400">
-                        {maxProfit !== null ? `+${maxProfit.toFixed(2)}%` : "—"}
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-rose-600 dark:text-rose-400">
-                        {maxDrawdown !== null ? `${maxDrawdown.toFixed(2)}%` : "—"}
-                      </td>
-                      <td className="py-2">
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusStyle.bg} ${statusStyle.text}`}>
-                          <StatusIcon className="size-3" />
-                          {shownStatus}
-                        </span>
-                      </td>
+                      {TRACKING_WINDOWS_MIN.map((w) => {
+                        const win = windowMap.get(w);
+                        return <td key={w} className="py-2 pr-3 text-right">{renderWindowCell(s.outlook, win)}</td>;
+                      })}
                     </tr>
                   );
                 })}
