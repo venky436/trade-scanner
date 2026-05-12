@@ -206,9 +206,17 @@ function buildConfidence(
 // without filters). Two strict gates target the two failure modes that drove
 // the prior bad accuracy:
 //
-//   G1 Volume surge — current 5-min candle volume must be ≥ 1.5× average of
-//                     the prior 20 candles. Filters thin-volume fakeouts
-//                     (institutions don't commit on low volume).
+//   G1 Volume surge — current 5-min candle volume must be ≥ 1.5× MEDIAN of
+//                     the prior 5 candles' volume. Filters thin-volume
+//                     fakeouts (institutions don't commit on low volume).
+//                     Median (not mean) because volume is heavily right-
+//                     skewed: one earlier spike inflates a mean baseline,
+//                     causing the next real surge to fail "1.5× of inflated
+//                     mean". Median ignores the outlier and reflects the
+//                     symbol's typical volume.
+//                     Tightened from 20→5 lookback on 2026-05-12 after
+//                     prod data showed 21-candle warmup blocked all
+//                     Breakout/Breakdown signals before 11:00 AM.
 //   G2 Donchian-style confirmation — last 2 candle closes must be beyond the
 //                     max-high (Breakout) / min-low (Breakdown) of the prior
 //                     5 candles. Filters single-bar piercings. Deliberately
@@ -216,7 +224,7 @@ function buildConfidence(
 //                     mid-evaluation S/R recompute.
 
 const VOLUME_SURGE_MULTIPLIER = 1.5;
-const VOLUME_LOOKBACK = 20;
+const VOLUME_LOOKBACK = 5;
 const CONFIRMATION_CANDLES = 2;
 const DONCHIAN_LOOKBACK = 5;
 
@@ -224,9 +232,13 @@ function passesVolumeGate(recentCandles?: Candle[]): boolean {
   if (!recentCandles || recentCandles.length < VOLUME_LOOKBACK + 1) return false;
   const current = recentCandles[recentCandles.length - 1];
   const prior = recentCandles.slice(-(VOLUME_LOOKBACK + 1), -1);
-  const avgVol = prior.reduce((s, c) => s + c.volume, 0) / prior.length;
-  if (avgVol <= 0) return false;
-  return current.volume >= avgVol * VOLUME_SURGE_MULTIPLIER;
+  // Median of the prior 5 candles. For odd counts (5), median is the middle
+  // element after sort. The Math.floor form keeps the code generic if the
+  // lookback ever changes to an even number.
+  const sortedVols = prior.map((c) => c.volume).sort((a, b) => a - b);
+  const median = sortedVols[Math.floor(sortedVols.length / 2)];
+  if (median <= 0) return false;
+  return current.volume >= median * VOLUME_SURGE_MULTIPLIER;
 }
 
 function passesConfirmationGate(
