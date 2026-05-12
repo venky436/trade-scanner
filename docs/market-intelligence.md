@@ -334,19 +334,21 @@ The `NO_CLEAR_EDGE` fallback prevents quiet stocks from being mislabeled as bear
 Re-enabled 2026-05-10 after the 2026-05-07 retirement (HIGH Breakout 45.8% / 201 decided, HIGH Breakdown 51.9% / 106 decided — coin-flip / negative expectancy without filters). Two strict gates target the two failure modes that drove the prior bad accuracy.
 
 **Gate 1 — Volume surge (filters thin-volume fakeouts).**
-- Rule: current 5-min candle volume ≥ **1.5 × average** of prior 20 candles' volume.
-- Why: real breakouts have institutional money committing → volume spikes. Fake breakouts on thin volume are common stop-hunts; institutions rarely commit on low volume.
+- Rule: current 5-min candle volume ≥ **1.5 × MEDIAN** of the prior 5 candles' volume.
+- Why volume surge: real breakouts have institutional money committing → volume spikes. Fake breakouts on thin volume are common stop-hunts; institutions rarely commit on low volume.
+- Why median (not mean): volume distributions are heavily right-skewed — most candles are normal, occasional candles spike massively. Mean baselines get inflated by a single previous spike, causing the next REAL surge to fail "1.5× of inflated mean" (the "spike then miss" failure mode). Median ignores outliers and reflects the symbol's TYPICAL volume, so the 1.5× threshold is calibrated against the right baseline.
+- Why 5 candles (not 20): tightened on 2026-05-12 after first-day prod data. The 20-candle lookback required ~21 session candles per symbol = ~1h45min of data → no Breakout/Breakdown could fire before 11:00 AM, losing 1h45min of opportunity per day. 5 candles allows the gate to evaluate from ~9:45 AM. Combined with median (outlier-resistant), the smaller window doesn't suffer the noisier-baseline trade-off that a 5-candle MEAN would have.
 
 **Gate 2 — Donchian-style confirmation (filters single-bar piercings).**
 - Rule (Breakout):  last 2 candle closes > **max-high** of the prior 5 candles.
 - Rule (Breakdown): last 2 candle closes < **min-low** of the prior 5 candles.
 - Why candle-relative, not S/R-relative: the live S/R level recomputes on every candle close and gets reclassified as price moves through clusters (a "resistance" at 1005 flips to "support" once price closes at 1006). Tying the gate to current S/R would make it brittle around the recompute boundary. The Donchian pattern is the standard breakout-detection approach in TradingView, Backtrader, etc. — it's stable regardless of S/R timing.
 
-Both gates must pass. If either fails (or `recentCandles.length < 21`), the outlook falls back to `NO_CLEAR_EDGE`.
+Both gates must pass. If either fails (or `recentCandles.length < 7` for the Donchian gate), the outlook falls back to `NO_CLEAR_EDGE`.
 
 Constants in `apps/server/src/lib/intelligence-transformer.ts`:
 - `VOLUME_SURGE_MULTIPLIER = 1.5`
-- `VOLUME_LOOKBACK = 20`
+- `VOLUME_LOOKBACK = 5` (was 20 prior to 2026-05-12)
 - `CONFIRMATION_CANDLES = 2`
 - `DONCHIAN_LOOKBACK = 5`
 
@@ -1024,7 +1026,7 @@ Manual sanity check for on-demand stocks:
 
 - **Watch zone column rename** — `signalAction` / `signalType` are now overloaded for option tagging. A `kind` column would be cleaner. Defer until the schema is touched for another reason.
 - **Per-symbol levels endpoint** — currently the stock-detail page uses a chart-helper `levels` field on the snapshot response. A cleaner path is `GET /api/stocks/:symbol/levels`.
-- **Outlook tuning** — `BREAKOUT_LIKELY` and `BREAKDOWN_RISK` require HIGH confidence + Volume gate (`VOLUME_SURGE_MULTIPLIER = 1.5`) + Donchian gate (`DONCHIAN_LOOKBACK = 5`, `CONFIRMATION_CANDLES = 2`). If first-week prod data shows the gates are too strict, relax volume to 1.3× or shorten Donchian lookback to 3. If too loose (still <55% accuracy), tighten to 2.0× and 3-candle confirmation, or add sector-context alignment.
+- **Outlook tuning** — `BREAKOUT_LIKELY` and `BREAKDOWN_RISK` require HIGH confidence + Volume gate (`VOLUME_SURGE_MULTIPLIER = 1.5` × **median** of `VOLUME_LOOKBACK = 5` prior candles) + Donchian gate (`DONCHIAN_LOOKBACK = 5`, `CONFIRMATION_CANDLES = 2`). If prod data shows the gates are too loose (accuracy < 50%), tighten by raising `VOLUME_SURGE_MULTIPLIER` to 1.7–2.0× or lengthening confirmation to 3 candles. If too strict (< 10 Breakout/Breakdown signals/day), lower `VOLUME_SURGE_MULTIPLIER` to 1.3× or shorten Donchian lookback to 3.
 - ~~**Search-on-demand intelligence**~~ — ✅ **Done.** Untracked stocks now get real momentum (from 5-min intraday candles) and approximate pressure (from `pressureFromCandles` — see "On-demand stocks" section above). Volatility was already working.
 
 ### Options module (Phase 2 — explicitly deferred)

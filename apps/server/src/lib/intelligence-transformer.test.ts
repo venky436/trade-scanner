@@ -562,7 +562,7 @@ describe("toIntelligence — index symbol handling", () => {
 
 // Helper: build a candle stream where the last 2 candles ("confirmation")
 // breach the prior 5 candles' max-high (Breakout) or min-low (Breakdown), and
-// the LAST candle's volume is > 1.5× the average of the prior 20.
+// the LAST candle's volume is > 1.5× the MEDIAN of the prior 5 candles' volume.
 function buildBreakoutCandles(): Candle[] {
   const candles: Candle[] = [];
   // 19 baseline candles: low volume (1000), price stuck near 995-1000
@@ -573,8 +573,11 @@ function buildBreakoutCandles(): Candle[] {
   candles.push({ time: 1700000000 + 19 * 300, open: 1001, high: 1010, low: 1000, close: 1006, volume: 1500 });
   candles.push({ time: 1700000000 + 20 * 300, open: 1006, high: 1012, low: 1003, close: 1008, volume: 2500 }); // current — vol surge
   return candles;
-  // prior 20 vol avg = (19×1000 + 1×1500)/20 = 1025  →  current 2500 ≥ 1.5×1025 = 1537.5 ✓
-  // prior 5 (candles 14-18) max-high = 1000  →  candles 19,20 close = 1006,1008 > 1000 ✓
+  // VOLUME_LOOKBACK=5 → prior 5 candles for current=index 20 are indices 15-19,
+  //   volumes [1000,1000,1000,1000,1500] → median=1000 → 1.5×1000=1500
+  //   current vol 2500 ≥ 1500 → PASS ✓
+  // DONCHIAN_LOOKBACK=5 → prior 5 max-high (indices 14-18) = 1000
+  //   candles 19,20 close = 1006,1008 > 1000 → PASS ✓
 }
 
 function buildBreakdownCandles(): Candle[] {
@@ -585,7 +588,10 @@ function buildBreakdownCandles(): Candle[] {
   candles.push({ time: 1700000000 + 19 * 300, open: 999, high: 1000, low: 990, close: 994, volume: 1500 });
   candles.push({ time: 1700000000 + 20 * 300, open: 994, high: 997, low: 988, close: 992, volume: 2500 }); // current — vol surge
   return candles;
-  // prior 5 min-low = 1000  →  candles 19,20 close = 994,992 < 1000 ✓
+  // VOLUME_LOOKBACK=5 → prior 5 vols [1000,1000,1000,1000,1500] → median=1000
+  //   → 1.5×1000=1500. current 2500 ≥ 1500 → PASS ✓
+  // DONCHIAN_LOOKBACK=5 → prior 5 min-low (indices 14-18) = 1000
+  //   candles 19,20 close = 994,992 < 1000 → PASS ✓
 }
 
 describe("toIntelligence — Breakout / Breakdown gates", () => {
@@ -626,12 +632,17 @@ describe("toIntelligence — Breakout / Breakdown gates", () => {
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("Breakout: insufficient candles (only 6) → NO_CLEAR_EDGE", () => {
+  it("Breakout: insufficient candles (only 5) → NO_CLEAR_EDGE", () => {
+    // VOLUME_LOOKBACK=5 means the volume gate needs 6 candles minimum
+    // (5 prior + 1 current). With only 5, the volume gate fails closed.
+    // (The Donchian gate also needs 7 candles, so even 6 would short-circuit
+    // there — but this test specifically validates the volume gate's
+    // insufficient-data guard.)
     const r = toIntelligence(baseInput({
       sr: nearRes,
       momentum: makeMomentum("STRONG_UP", 0.95),
       pressure: makePressure("STRONG_BUY", 0.95),
-      recentCandles: buildBreakoutCandles().slice(-6),
+      recentCandles: buildBreakoutCandles().slice(-5),
     }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
@@ -679,6 +690,42 @@ describe("toIntelligence — Breakout / Breakdown gates", () => {
       recentCandles: buildBreakoutCandles(),
     }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  // Regression guard for the 2026-05-12 mean→median switch. With the OLD
+  // mean-of-20 logic, a single high-volume spike in the lookback window
+  // inflated the threshold and caused the next REAL surge to fail — the
+  // "spike then miss" failure mode that motivated the switch to median.
+  // This test pins the new behaviour: outlier in the prior 5 must NOT
+  // prevent the gate from passing on a moderate next-candle surge.
+  it("Breakout: prior-5 contains an outlier — median ignores it, gate still passes", () => {
+    const candles: Candle[] = [];
+    // 14 baseline candles, low vol, price at 995-1000 (Donchian setup)
+    for (let i = 0; i < 14; i++) {
+      candles.push({ time: 1700000000 + i * 300, open: 997, high: 1000, low: 995, close: 997, volume: 1000 });
+    }
+    // Prior 5 (indices 14-18): four normal vols + one big spike (5000)
+    candles.push({ time: 1700000000 + 14 * 300, open: 997, high: 1000, low: 995, close: 997, volume: 1000 });
+    candles.push({ time: 1700000000 + 15 * 300, open: 997, high: 1000, low: 995, close: 997, volume: 1000 });
+    candles.push({ time: 1700000000 + 16 * 300, open: 997, high: 1000, low: 995, close: 997, volume: 5000 });
+    candles.push({ time: 1700000000 + 17 * 300, open: 997, high: 1000, low: 995, close: 997, volume: 1000 });
+    candles.push({ time: 1700000000 + 18 * 300, open: 997, high: 1000, low: 995, close: 997, volume: 1000 });
+    // 2 confirmation candles: above max-high (1000), and last has moderate surge
+    candles.push({ time: 1700000000 + 19 * 300, open: 1001, high: 1010, low: 1000, close: 1006, volume: 1200 });
+    candles.push({ time: 1700000000 + 20 * 300, open: 1006, high: 1012, low: 1003, close: 1008, volume: 1600 });
+    // Prior 5 vols (indices 15-19): [1000,1000,5000,1000,1200] sorted = [1000,1000,1000,1200,5000]
+    //   median = 1000  →  threshold = 1.5 × 1000 = 1500
+    //   current vol 1600 ≥ 1500 → PASS ✓
+    // Old mean-of-20 would have been ≈ (14*1000 + 1000+1000+5000+1000+1200)/19 ≈ 947 (ok pass)
+    // But the canonical "spike then miss" case: median wins where mean fails when the
+    // spike is in the SHORT prior window. Here we pin the median behaviour explicitly.
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
+      recentCandles: candles,
+    }));
+    assert.equal(r.outlook, "BREAKOUT_LIKELY");
   });
 
   // Bounce / Rejection paths must remain unaffected by the candles array
