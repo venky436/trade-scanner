@@ -158,24 +158,26 @@ function getTodayIST(): string {
 
 // Renders a per-window outcome cell on the Recent Signals table. Mirrors the
 // backend reclassifier: PENDING / NEUTRAL (|change|<0.2%) / SUCCESS / FAILED.
-// Compact format: "✓ +0.45%" / "✗ -0.62%" / "− ±0.08%" / "⏳" — color-coded
-// so the admin can scan a row across 3 windows at a glance.
+// Status-only labels — Success / Failed / Neutral / Pending. Earlier version
+// also showed the signed change %; dropped 2026-05-12 per user request to
+// keep the row scannable (the per-window comparison IS the comparison; the
+// magnitude clutters the visual).
 function renderWindowCell(outlook: string, win?: { windowMinutes: number; status: string; changePercent: string | null }) {
   if (!win) return <span className="text-zinc-400">—</span>;
   if (win.status === "PENDING") {
-    return <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400"><Clock className="size-3" />pending</span>;
+    return <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400"><Clock className="size-3" />Pending</span>;
   }
   const change = Number(win.changePercent ?? 0);
   if (Math.abs(change) < NEUTRAL_THRESHOLD_PERCENT) {
-    return <span className="inline-flex items-center gap-1 tabular-nums text-zinc-500"><Minus className="size-3" />{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span>;
+    return <span className="inline-flex items-center gap-1 text-zinc-500"><Minus className="size-3" />Neutral</span>;
   }
   // SUCCESS vs FAILED based on direction matching the outlook
   const isBullish = BULLISH_OUTLOOKS.has(outlook);
   const success = isBullish ? change >= 0 : change <= 0;
   if (success) {
-    return <span className="inline-flex items-center gap-1 tabular-nums font-semibold text-emerald-600 dark:text-emerald-400"><CheckCircle className="size-3" />{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span>;
+    return <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400"><CheckCircle className="size-3" />Success</span>;
   }
-  return <span className="inline-flex items-center gap-1 tabular-nums font-semibold text-rose-600 dark:text-rose-400"><XCircle className="size-3" />{change >= 0 ? "+" : ""}{change.toFixed(2)}%</span>;
+  return <span className="inline-flex items-center gap-1 font-semibold text-rose-600 dark:text-rose-400"><XCircle className="size-3" />Failed</span>;
 }
 
 function formatTime(iso: string): string {
