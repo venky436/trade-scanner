@@ -2,6 +2,7 @@ import "./globals.css";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { MarketDataProvider } from "@/context/market-data-context";
+import { ConfigProvider } from "@/context/config-context";
 import { ThemeProvider } from "next-themes";
 import { AppShell } from "@/components/app-shell";
 
@@ -25,9 +26,11 @@ export default function RootLayout({
     <html lang="en" className={cn("font-sans", inter.variable, jetbrainsMono.variable)} suppressHydrationWarning>
       <body className="min-h-screen antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          <MarketDataProvider>
-            <AppShell>{children}</AppShell>
-          </MarketDataProvider>
+          <ConfigProvider>
+            <MarketDataProvider>
+              <AppShell>{children}</AppShell>
+            </MarketDataProvider>
+          </ConfigProvider>
         </ThemeProvider>
       </body>
     </html>

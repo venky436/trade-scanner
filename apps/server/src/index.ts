@@ -12,6 +12,9 @@ import { createStockFilter, type StockFilter } from "./services/stock-filter.ser
 import { createEodJob, type EodJob } from "./services/eod-job.service.js";
 import { createSignalAccuracyService, type SignalAccuracyService } from "./services/signal-accuracy.service.js";
 import { createSignalTrackingService, type SignalTrackingService } from "./services/signal-tracking.service.js";
+import { createAiCallService, type AiCallService } from "./services/ai-call.service.js";
+import { createAiOutcomeService, type AiOutcomeService } from "./services/ai-outcome.service.js";
+import { getAiModeEnabled } from "./lib/runtime-config.js";
 import { redisService } from "./services/redis.service.js";
 import { getIntradaySR } from "./services/intraday-levels.service.js";
 import { getMomentum } from "./lib/momentum-engine.js";
@@ -43,12 +46,24 @@ async function main() {
   let eodJobInstance: EodJob | null = null;
   let accuracyServiceInstance: SignalAccuracyService | null = null;
   let trackingServiceInstance: SignalTrackingService | null = null;
+  // AI verdict module — only created + started when AI_MODE_ENABLED=true.
+  // When the flag is off this stays null, the scheduler never runs, no
+  // Gemini calls are made, and no GEMINI_API_KEY is required.
+  let aiCallServiceInstance: AiCallService | null = null;
+  let aiOutcomeServiceInstance: AiOutcomeService | null = null;
+  // Lifecycle handlers populated inside startMarketData() so they have
+  // closure access to the live pressureEngine / momentumMap / candleTracker.
+  // Exposed to /api/config/ai-mode for the runtime toggle.
+  let enableAiServices: (() => void) | null = null;
+  let disableAiServices: (() => void) | null = null;
 
   // Exposed so routes can use them
   let currentAccessToken: string | null = null;
   let currentInstrumentMaps: InstrumentMaps | null = null;
   let currentPressureEngine: PressureEngine | null = null;
   let currentMomentumMap: Map<string, MomentumResult> | null = null;
+  // Exposed for sections route (reads recent candles) — assigned in startMarketData
+  let currentCandleTracker: ReturnType<typeof createCandleTracker> | null = null;
 
   // Shared S/R levels cache (populated by levels-worker, read by signal-worker + broadcast)
   let cachedLevels: Record<string, SupportResistanceResult> = {};
@@ -264,6 +279,7 @@ async function main() {
       },
     });
     candleTrackerRef = candleTracker;
+    currentCandleTracker = candleTracker;
 
     // Start broadcast engine (reads from caches, NO computation)
     if (broadcastStop) broadcastStop();
@@ -289,6 +305,38 @@ async function main() {
     levelsWorker.start();
     accuracyService.start();
     trackingService.start();
+
+    // AI Verdict Module — lifecycle hooks. Define enable/disable as closures
+    // over the live engines (pressureEngine, momentumMap, candleTracker,
+    // instrumentMaps) so the /api/config/ai-mode toggle can spin them up or
+    // tear them down at runtime without a server restart.
+    enableAiServices = () => {
+      if (aiCallServiceInstance) return; // already running
+      const aiCallService = createAiCallService({
+        getCachedLevels: () => cachedLevels,
+        getPressure: (s) => pressureEngine.getPressure(s),
+        getMomentum: (s) => momentumMap.get(s) ?? null,
+        getRecentCandles: (s, n) => candleTracker.getRecentCandles(s, n),
+        getAllSymbols: () => instrumentMaps.symbols,
+      });
+      aiCallService.start();
+      aiCallServiceInstance = aiCallService;
+
+      const aiOutcomeService = createAiOutcomeService();
+      aiOutcomeService.start();
+      aiOutcomeServiceInstance = aiOutcomeService;
+    };
+    disableAiServices = () => {
+      if (aiCallServiceInstance) { aiCallServiceInstance.stop(); aiCallServiceInstance = null; }
+      if (aiOutcomeServiceInstance) { aiOutcomeServiceInstance.stop(); aiOutcomeServiceInstance = null; }
+    };
+
+    // Initial state from runtime flag (initialized from env at boot)
+    if (getAiModeEnabled()) {
+      enableAiServices();
+    } else {
+      console.log("[AI] Module disabled at boot (AI_MODE_ENABLED is not 'true') — toggle on via /api/config/ai-mode");
+    }
 
     // Connect to Kite ticker
     if (tickerDisconnect) tickerDisconnect();
@@ -357,6 +405,18 @@ async function main() {
     getMomentum: (s: string) => currentMomentumMap?.get(s) ?? null,
     getAccuracyService: () => accuracyServiceInstance,
     getTrackingService: () => trackingServiceInstance,
+    // AI verdict module wiring — provides null when AI_MODE_ENABLED=false
+    getAiCallService: () => aiCallServiceInstance,
+    onAiModeEnable: () => enableAiServices?.(),
+    onAiModeDisable: () => disableAiServices?.(),
+    // Sections endpoint dependencies (always provided so sections endpoint
+    // works even when AI mode is off — it just reads from the same in-memory
+    // state the dashboard uses)
+    getCachedLevelsMap: () => cachedLevels,
+    getPressureSignal: (s) => currentPressureEngine?.getPressure(s) ?? null,
+    getMomentumSignal: (s) => currentMomentumMap?.get(s) ?? null,
+    getRecentCandles: (s, n) => currentCandleTracker?.getRecentCandles(s, n) ?? [],
+    getAllSymbols: () => currentInstrumentMaps?.symbols ?? [],
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });
@@ -382,6 +442,8 @@ async function main() {
     if (levelsWorkerInstance) levelsWorkerInstance.stop();
     if (accuracyServiceInstance) accuracyServiceInstance.stop();
     if (trackingServiceInstance) trackingServiceInstance.stop();
+    if (aiCallServiceInstance) aiCallServiceInstance.stop();
+    if (aiOutcomeServiceInstance) aiOutcomeServiceInstance.stop();
     if (broadcastStop) broadcastStop();
     if (tickerDisconnect) tickerDisconnect();
     if (wsManager) wsManager.close();

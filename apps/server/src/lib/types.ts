@@ -200,6 +200,22 @@ export interface IntelligenceVolatility {
   score: number; // 0..1
 }
 
+// Trade plan — explicit BUY/SELL with ATR-derived entry / SL / target.
+// null = WAIT (no actionable setup). Personal-use mode; superseded the
+// non-directive "intelligence-only" framing from the May 2026 redesign.
+// Stop = entry ± 1.5 × ATR, Target = entry ± 3.0 × ATR (fixed 2:1 R:R).
+// See docs/market-intelligence.md § "Trade Plan".
+export interface TradePlan {
+  action: "BUY" | "SELL";
+  entry: number;
+  stopLoss: number;
+  target: number;
+  riskPercent: number;    // |entry-SL|/entry × 100
+  rewardPercent: number;  // |target-entry|/entry × 100
+  riskReward: number;     // always 2.0 today; field reserved for future R:R variation
+  atr: number;            // ATR (₹) used to size SL/target — exposed for setup transparency
+}
+
 export interface IntelligenceSnapshot {
   symbol: string;
   price: number;
@@ -213,6 +229,7 @@ export interface IntelligenceSnapshot {
   bias: Bias;
   confidence: number; // 0..1
   confidenceLabel: ConfidenceLabel;
+  tradePlan: TradePlan | null;  // null = WAIT
 }
 
 export type MarketCondition = "TRENDING" | "SIDEWAYS";

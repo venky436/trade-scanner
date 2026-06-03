@@ -4,3 +4,9 @@ dist
 .env
 *.local
 .kite-session.json
+
+# macOS
+.DS_Store
+
+# TypeScript build cache
+*.tsbuildinfo

@@ -15,10 +15,12 @@ import type {
   Outlook,
   PressureResult,
   SupportResistanceResult,
+  TradePlan,
   VolatilityLabel,
   Zone,
 } from "./types.js";
 import { isIndexSymbol } from "./index-symbols.js";
+import { computeATR } from "./atr.js";
 
 export interface IntelligenceInput {
   symbol: string;
@@ -295,6 +297,87 @@ function buildOutlook(
   return "BREAKDOWN_RISK";
 }
 
+// ── Trade plan ──────────────────────────────────────────────────────────────
+// Translate the existing Outlook into an explicit BUY/SELL with ATR-derived
+// entry / stop-loss / target. Personal-use mode — replaces the prior
+// non-directive framing. The outlook gate already encodes direction + the
+// HIGH-confidence floor + (for Breakout/Breakdown) the volume + Donchian
+// gates, so we just route here based on outlook.
+
+const STOP_ATR_MULT = 1.5;
+const TARGET_ATR_MULT = 3.0; // → fixed 2:1 R:R
+const TRADE_PLAN_MIN_CONFIDENCE = 0.7;
+
+function outlookToAction(outlook: Outlook): "BUY" | "SELL" | null {
+  if (outlook === "BOUNCE_EXPECTED" || outlook === "BREAKOUT_LIKELY") return "BUY";
+  if (outlook === "REJECTION_POSSIBLE" || outlook === "BREAKDOWN_RISK") return "SELL";
+  return null;
+}
+
+// Resolve an ATR figure with fallback chain. Always returns a positive number
+// for positive prices — the final fallback is 0.5% of price so the caller
+// never has to handle null. Fallback chain:
+//   1. 14-period ATR (≥ 15 candles)
+//   2. 7-period ATR (≥ 8 candles)
+//   3. volatility-score derived (price × score × 0.01, ≈ 0.2%–1% of price)
+//   4. Hard floor of 0.5% of price
+function resolveAtr(price: number, recentCandles: Candle[] | undefined, volatilityScore: number): number {
+  if (price <= 0) return 0;
+  const atr14 = computeATR(recentCandles, 14);
+  if (atr14 != null && atr14 > 0) return atr14;
+  const atr7 = computeATR(recentCandles, 7);
+  if (atr7 != null && atr7 > 0) return atr7;
+  // Volatility score sits in [0.2, 1.0]. Multiplying by 0.01 gives 0.2%-1% of
+  // price — same order of magnitude as a real ATR.
+  const fromScore = price * volatilityScore * 0.01;
+  if (fromScore > 0) return fromScore;
+  return price * 0.005;
+}
+
+function buildTradePlan(
+  price: number,
+  outlook: Outlook,
+  confidence: number,
+  recentCandles: Candle[] | undefined,
+  volatilityScore: number,
+): TradePlan | null {
+  const action = outlookToAction(outlook);
+  if (!action) return null;
+  if (confidence < TRADE_PLAN_MIN_CONFIDENCE) return null;
+  if (price <= 0) return null;
+
+  const atr = resolveAtr(price, recentCandles, volatilityScore);
+  if (atr <= 0) return null;
+
+  const stopDist = atr * STOP_ATR_MULT;
+  const targetDist = atr * TARGET_ATR_MULT;
+
+  const entry = round2(price);
+  if (action === "BUY") {
+    return {
+      action: "BUY",
+      entry,
+      stopLoss: round2(price - stopDist),
+      target: round2(price + targetDist),
+      riskPercent: round2((stopDist / price) * 100),
+      rewardPercent: round2((targetDist / price) * 100),
+      riskReward: 2.0,
+      atr: round2(atr),
+    };
+  }
+  // SELL — mirror
+  return {
+    action: "SELL",
+    entry,
+    stopLoss: round2(price + stopDist),
+    target: round2(price - targetDist),
+    riskPercent: round2((stopDist / price) * 100),
+    rewardPercent: round2((targetDist / price) * 100),
+    riskReward: 2.0,
+    atr: round2(atr),
+  };
+}
+
 function buildBias(momentumLabel: IntelligenceMomentumLabel, pressureLabel: IntelligencePressureLabel): Bias {
   const momentumUp = momentumLabel === "STRONG_UP" || momentumLabel === "WEAK_UP";
   const momentumDown = momentumLabel === "STRONG_DOWN" || momentumLabel === "WEAK_DOWN";
@@ -326,6 +409,7 @@ export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
   );
   const outlook = buildOutlook(zone, momentum.label, confidenceLabel, isIndex, input.recentCandles);
   const bias = buildBias(momentum.label, pressure.label);
+  const tradePlan = buildTradePlan(input.price, outlook, confidence, input.recentCandles, volatility.score);
 
   const change = input.close !== 0 ? ((input.price - input.close) / input.close) * 100 : 0;
 
@@ -342,6 +426,7 @@ export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
     bias,
     confidence,
     confidenceLabel,
+    tradePlan,
   };
 }
 

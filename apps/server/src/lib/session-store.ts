@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const SESSION_FILE = join(process.cwd(), "data", ".kite-session.json");
 
@@ -16,6 +16,7 @@ const MAX_AGE_MS = 14 * 60 * 60 * 1000;
 
 export function saveSession(accessToken: string): void {
   const data: StoredSession = { accessToken, savedAt: Date.now() };
+  mkdirSync(dirname(SESSION_FILE), { recursive: true });
   writeFileSync(SESSION_FILE, JSON.stringify(data), "utf-8");
 }
 

@@ -16,6 +16,7 @@ import {
   Lightbulb,
   Maximize2,
   Minus,
+  Pause,
   Target,
   TrendingUp,
   Waves,
@@ -28,7 +29,22 @@ import { useMarketData } from "@/hooks/use-market-data";
 import { useAuth } from "@/context/auth-context";
 import { apiFetch } from "@/lib/api";
 import { AddToWatchZoneButton } from "./watch-zone";
-import type { IntelligenceSnapshot, StockDetailSnapshot, Zone } from "@/lib/types";
+import { AiAnalysisCard } from "./ai-analysis-card";
+import { useAiCall } from "@/hooks/use-ai-calls";
+import { useServerConfig } from "@/context/config-context";
+import type { IntelligenceSnapshot, Outlook, StockDetailSnapshot, Zone } from "@/lib/types";
+
+// Map the outlook (already derived from all factors — zone, momentum,
+// pressure, confidence, volume + Donchian gates) into a simple action + setup
+// name. Mirrors the same mapping used by MarketCard.
+type DetailAction = "BUY" | "SELL" | "WAIT";
+const OUTLOOK_TO_ACTION: Record<Outlook, { action: DetailAction; setup: string }> = {
+  BOUNCE_EXPECTED: { action: "BUY", setup: "Bounce" },
+  BREAKOUT_LIKELY: { action: "BUY", setup: "Breakout" },
+  REJECTION_POSSIBLE: { action: "SELL", setup: "Rejection" },
+  BREAKDOWN_RISK: { action: "SELL", setup: "Breakdown" },
+  NO_CLEAR_EDGE: { action: "WAIT", setup: "No setup" },
+};
 import {
   formatTimeAgo,
   marketConditions,
@@ -140,6 +156,11 @@ export function StockDetail({ symbol }: StockDetailProps) {
   const [chartInterval, setChartInterval] = useState("5m");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [, setNowTick] = useState(0);
+
+  // Fire AI POST immediately on mount (in parallel with the snapshot fetch
+  // below — don't make the user wait for both serially). Also auto-refreshes
+  // every 5 min while the page is open. Self-disables when AI mode is off.
+  const ai = useAiCall(symbol);
 
   // Refresh "Updated X min ago" once per minute even without WS ticks.
   useEffect(() => {
@@ -287,6 +308,7 @@ export function StockDetail({ symbol }: StockDetailProps) {
               <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
                 Real-time market activity overview
               </p>
+              <DetailActionBadge intel={intel} />
             </div>
           </div>
           <div className="text-right">
@@ -319,6 +341,18 @@ export function StockDetail({ symbol }: StockDetailProps) {
         </div>
         <div className="pointer-events-none absolute -bottom-20 -right-20 size-48 rounded-full blur-3xl bg-zinc-200/50 dark:bg-zinc-700/10" />
       </div>
+
+      {/* AI Verdict — renders only when AI mode is ON. Hook is lifted to
+          this parent (see useAiCall above) so the POST fires as soon as
+          the page mounts, in parallel with the snapshot fetch — and auto-
+          refreshes every 5 min while the page stays open. */}
+      <AiAnalysisCard
+        symbol={symbol}
+        verdict={ai.verdict}
+        isLoading={ai.isLoading}
+        error={ai.error}
+        refresh={ai.refresh}
+      />
 
       {/* Chart */}
       <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-950/60 p-5">
@@ -603,5 +637,50 @@ export function StockDetail({ symbol }: StockDetailProps) {
         </div>
       )}
     </main>
+  );
+}
+
+// Action + confidence chip rendered under the symbol title in the hero. Reads
+// the existing snapshot's outlook + confidence — no new data path.
+// Hidden when AI mode is ON (AI Analysis card below is the verdict source then).
+function DetailActionBadge({ intel }: { intel: IntelligenceSnapshot }) {
+  const { aiModeEnabled } = useServerConfig();
+  if (aiModeEnabled) return null;
+
+  const { action, setup } = OUTLOOK_TO_ACTION[intel.outlook];
+  const confPct = Math.round(Math.max(0, Math.min(1, intel.confidence)) * 100);
+
+  const actionBadge =
+    action === "BUY"
+      ? "bg-gradient-to-r from-emerald-500 to-emerald-400 text-white shadow-sm shadow-emerald-500/30 ring-1 ring-emerald-300/40"
+      : action === "SELL"
+      ? "bg-gradient-to-r from-rose-500 to-rose-400 text-white shadow-sm shadow-rose-500/30 ring-1 ring-rose-300/40"
+      : "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 ring-1 ring-zinc-300 dark:ring-zinc-700";
+
+  const ActionIcon = action === "BUY" ? ArrowUp : action === "SELL" ? ArrowDown : Pause;
+
+  const confTone =
+    intel.confidenceLabel === "HIGH"
+      ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 ring-emerald-500/30"
+      : intel.confidenceLabel === "MEDIUM"
+      ? "text-amber-700 dark:text-amber-300 bg-amber-500/10 ring-amber-500/30"
+      : "text-zinc-600 dark:text-zinc-400 bg-zinc-500/10 ring-zinc-500/20";
+
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      <span
+        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-bold tracking-wider ${actionBadge}`}
+      >
+        <ActionIcon className="size-3.5" strokeWidth={3.5} />
+        {action}
+      </span>
+      <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{setup}</span>
+      <span
+        className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold ring-1 ${confTone}`}
+      >
+        <span className="text-[9px] uppercase tracking-widest opacity-70">Conf</span>
+        <span className="tabular-nums">{confPct}%</span>
+      </span>
+    </div>
   );
 }

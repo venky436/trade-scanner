@@ -59,6 +59,51 @@ export interface IntelligenceSnapshot {
 // Alias kept so existing imports of StockData keep working — they all become intelligence now.
 export type StockData = IntelligenceSnapshot;
 
+// ── AI Verdict Module (Experimental) ──
+// Mirrors the server's AiCallRecord shape. Optional — present only when the
+// server has AI_MODE_ENABLED=true. Frontend components self-disable when the
+// /api/config endpoint reports aiModeEnabled = false.
+
+export type AiVerdictAction = "BUY" | "SELL" | "WAIT";
+
+export type AiReasonCode =
+  | "SUPPORT_BOUNCE" | "RESISTANCE_REJECTION" | "BREAKOUT" | "BREAKDOWN"
+  | "HAMMER" | "ENGULFING" | "MORNING_STAR" | "EVENING_STAR"
+  | "BUY_PRESSURE" | "SELL_PRESSURE" | "STRONG_MOMENTUM"
+  | "MARKET_ALIGNED" | "RVOL_SURGE" | "STRUCTURAL_LEVEL"
+  | "RISK_REWARD_FAVOURABLE";
+
+export type AiRiskFlag =
+  | "LOW_VOLUME" | "HIGH_VOLATILITY" | "WEAK_PATTERN" | "AGAINST_MARKET_TREND"
+  | "POOR_RR" | "NARROW_RANGE" | "OVEREXTENDED_MOVE" | "WEAK_CONFIRMATION"
+  | "SMALL_BODY" | "OPENING_NOISE" | "CLOSING_VOLATILITY"
+  | "INSUFFICIENT_CONFLUENCE";
+
+export interface AiVerdict {
+  id: number;
+  symbol: string;
+  computedAt: number;
+  verdict: AiVerdictAction;
+  /** 0..1 — RANK, not probability. Use for sorting, not for confidence math. */
+  confidence: number;
+  patterns: string[];
+  reasons: AiReasonCode[];
+  reasoning: string;
+  risk_flags: AiRiskFlag[];
+  // Trade plan (null when WAIT)
+  entry: number | null;
+  stopLoss: number | null;
+  target: number | null;
+  riskReward: number | null;
+  // Snapshot of rule engine for agreement comparison
+  ruleVerdict: AiVerdictAction;
+  ruleConfidence: number;
+  marketRegime: "TRENDING_UP" | "TRENDING_DOWN" | "RANGING" | "HIGH_VOLATILITY";
+  /** True when server-side validation forced verdict to WAIT due to bad math. */
+  downgraded: boolean;
+  downgradeReason: string | null;
+}
+
 export type MarketCondition = "TRENDING" | "SIDEWAYS";
 export type IndexDirection = "UP" | "DOWN" | "FLAT";
 

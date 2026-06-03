@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Minus } from "lucide-react";
-import type { IntelligenceSnapshot } from "@/lib/types";
+import { ArrowDown, ArrowUp, Minus, Pause } from "lucide-react";
+import type { IntelligenceSnapshot, Outlook } from "@/lib/types";
+import { AiVerdictChip } from "./ai-verdict-chip";
+import { useServerConfig } from "@/context/config-context";
 import {
   formatTimeAgo,
   marketObservation,
@@ -19,6 +21,18 @@ import {
 interface MarketCardProps {
   data: IntelligenceSnapshot;
 }
+
+// Map the outlook (already derived from all factors — zone, momentum,
+// pressure, confidence, volume + Donchian gates for breakouts) into a simple
+// action + setup name. Personal-use mode: we expose the directional call.
+type CardAction = "BUY" | "SELL" | "WAIT";
+const OUTLOOK_TO_ACTION: Record<Outlook, { action: CardAction; setup: string }> = {
+  BOUNCE_EXPECTED: { action: "BUY", setup: "Bounce" },
+  BREAKOUT_LIKELY: { action: "BUY", setup: "Breakout" },
+  REJECTION_POSSIBLE: { action: "SELL", setup: "Rejection" },
+  BREAKDOWN_RISK: { action: "SELL", setup: "Breakdown" },
+  NO_CLEAR_EDGE: { action: "WAIT", setup: "No setup" },
+};
 
 const ZONE_GRADIENT: Record<string, string> = {
   NEAR_SUPPORT: "from-emerald-400/40 via-emerald-400/0 to-transparent",
@@ -153,6 +167,13 @@ export function MarketCard({ data }: MarketCardProps) {
         </div>
       </div>
 
+      {/* Verdict slot — exclusively ONE of these renders based on AI mode:
+          • AI mode ON  → AI verdict chip (BUY/SELL/WAIT comes from Gemini)
+          • AI mode OFF → rule-engine chip (BUY/SELL/WAIT comes from Outlook)
+          Single source of truth for "what's the call on this stock" so the
+          user is never seeing two competing verdicts. */}
+      <VerdictSlot data={data} />
+
       {/* Metric rows: Momentum / Pressure / Volatility */}
       <div className="mt-5 space-y-3">
         <MetricRow
@@ -208,6 +229,62 @@ export function MarketCard({ data }: MarketCardProps) {
         </span>
       </div>
     </Link>
+  );
+}
+
+// Single-verdict-source slot. Reads aiModeEnabled from ConfigProvider and
+// picks ONE component:
+//   AI ON  → AiVerdictChip (which falls back to a "warming up" pill when no
+//            verdict is cached yet for this symbol)
+//   AI OFF → ActionConfidenceRow (the rule-based BUY/SELL/WAIT chip)
+function VerdictSlot({ data }: { data: IntelligenceSnapshot }) {
+  const { aiModeEnabled } = useServerConfig();
+  if (aiModeEnabled) {
+    return <AiVerdictChip symbol={data.symbol} />;
+  }
+  return <ActionConfidenceRow data={data} />;
+}
+
+function ActionConfidenceRow({ data }: { data: IntelligenceSnapshot }) {
+  const { action, setup } = OUTLOOK_TO_ACTION[data.outlook];
+  const confPct = Math.round(Math.max(0, Math.min(1, data.confidence)) * 100);
+
+  const actionBadge =
+    action === "BUY"
+      ? "bg-gradient-to-r from-emerald-500 to-emerald-400 text-white shadow-sm shadow-emerald-500/30 ring-1 ring-emerald-300/40"
+      : action === "SELL"
+      ? "bg-gradient-to-r from-rose-500 to-rose-400 text-white shadow-sm shadow-rose-500/30 ring-1 ring-rose-300/40"
+      : "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 ring-1 ring-zinc-300 dark:ring-zinc-700";
+
+  const ActionIcon = action === "BUY" ? ArrowUp : action === "SELL" ? ArrowDown : Pause;
+
+  const confTone =
+    data.confidenceLabel === "HIGH"
+      ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 ring-emerald-500/30"
+      : data.confidenceLabel === "MEDIUM"
+      ? "text-amber-700 dark:text-amber-300 bg-amber-500/10 ring-amber-500/30"
+      : "text-zinc-600 dark:text-zinc-400 bg-zinc-500/10 ring-zinc-500/20";
+
+  return (
+    <div className="mt-4 flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold tracking-wider ${actionBadge}`}
+        >
+          <ActionIcon className="size-3" strokeWidth={3.5} />
+          {action}
+        </span>
+        <span className="truncate text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">
+          {setup}
+        </span>
+      </div>
+      <span
+        className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold ring-1 ${confTone}`}
+      >
+        <span className="text-[9px] uppercase tracking-widest opacity-70">Conf</span>
+        <span className="tabular-nums">{confPct}%</span>
+      </span>
+    </div>
   );
 }
 

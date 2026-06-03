@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useAuth } from "@/context/auth-context";
 import { WatchZoneSheet } from "./watch-zone";
+import { AiModeToggle } from "./ai-mode-toggle";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { INDEX_NAMES } from "@/lib/constants";
 import { apiFetch, API_URL } from "@/lib/api";
@@ -294,6 +295,7 @@ export function GlobalNav() {
                   <TrendingUp className="size-4" />
                 </Button>
               </Link>
+              <AiModeToggle />
             </>
           )}
 
