@@ -28,6 +28,12 @@ type ScannerMode = "stocks" | "options";
 const STRONG_ALIGNMENT_CAP = 6;
 const ZONE_SECTION_CAP = 6;
 
+// Confidence floor for Near Support / Near Resistance sections. Drops
+// low-conviction stocks that happen to be at a level but lack the momentum +
+// pressure alignment to be a real setup. 0.65 matches the existing
+// "Actionable" filter threshold from market-intelligence.md.
+const ZONE_SECTION_CONF_FLOOR = 0.65;
+
 // Confidence threshold for "Strong Factor Alignment". Backend keeps producing
 // the score for ranking; UI never displays the % to the user.
 // Strict 0.85 floor on purpose: this card is the home-page elevator pitch
@@ -211,15 +217,21 @@ export function Dashboard() {
     [allStocks],
   );
 
-  // Section 2: Near Support Zones
+  // Section 2: Near Support Zones — only stocks with confidence ≥ 65%
   const nearSupport = useMemo(
-    () => allStocks.filter((s) => s.context.zone === "NEAR_SUPPORT").slice(0, ZONE_SECTION_CAP),
+    () =>
+      allStocks
+        .filter((s) => s.context.zone === "NEAR_SUPPORT" && s.confidence >= ZONE_SECTION_CONF_FLOOR)
+        .slice(0, ZONE_SECTION_CAP),
     [allStocks],
   );
 
-  // Section 3: Near Resistance Zones
+  // Section 3: Near Resistance Zones — only stocks with confidence ≥ 65%
   const nearResistance = useMemo(
-    () => allStocks.filter((s) => s.context.zone === "NEAR_RESISTANCE").slice(0, ZONE_SECTION_CAP),
+    () =>
+      allStocks
+        .filter((s) => s.context.zone === "NEAR_RESISTANCE" && s.confidence >= ZONE_SECTION_CONF_FLOOR)
+        .slice(0, ZONE_SECTION_CAP),
     [allStocks],
   );
 

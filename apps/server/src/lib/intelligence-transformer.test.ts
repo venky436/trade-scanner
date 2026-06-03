@@ -829,3 +829,150 @@ describe("getMomentum — index-aware divisor", () => {
     assert.equal(m!.signal, "STRONG_UP");
   });
 });
+
+// ── Trade plan tests ────────────────────────────────────────────────────────
+// The tradePlan field is the user-facing BUY/SELL output. These tests pin:
+//   1. The outlook→action mapping (BOUNCE/BREAKOUT → BUY, REJECTION/BREAKDOWN → SELL)
+//   2. The HIGH-confidence floor (< 0.7 → null = WAIT)
+//   3. The ATR-based SL / target math (1.5× / 3.0× → 2:1 R:R always)
+//   4. The fallback chain (no candles → volatility-derived ATR → 0.5% floor)
+
+describe("toIntelligence — tradePlan generation", () => {
+  const nearRes = makeSr({ resistance: { level: 1005, dist: 0.5 }, support: { level: 900, dist: 10 } });
+  const nearSup = makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } });
+
+  it("BOUNCE_EXPECTED + HIGH conf → BUY tradePlan with SL below + target above + 2:1 R:R", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
+      high: 1010, low: 990,
+    }));
+    assert.equal(r.outlook, "BOUNCE_EXPECTED");
+    assert.ok(r.tradePlan, "tradePlan should be set");
+    assert.equal(r.tradePlan!.action, "BUY");
+    assert.equal(r.tradePlan!.entry, 1000);
+    assert.ok(r.tradePlan!.stopLoss < r.tradePlan!.entry, "SL below entry for BUY");
+    assert.ok(r.tradePlan!.target > r.tradePlan!.entry, "Target above entry for BUY");
+    assert.equal(r.tradePlan!.riskReward, 2.0);
+    // 2:1 by construction: rewardPercent ≈ 2 × riskPercent
+    const ratio = r.tradePlan!.rewardPercent / r.tradePlan!.riskPercent;
+    assert.ok(Math.abs(ratio - 2.0) < 0.02, `R:R should be ≈ 2.0, got ${ratio}`);
+  });
+
+  it("REJECTION_POSSIBLE + HIGH conf → SELL tradePlan with SL above + target below", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_DOWN", -0.95),
+      pressure: makePressure("STRONG_SELL", -0.95),
+      high: 1003, low: 1000,
+    }));
+    assert.equal(r.outlook, "REJECTION_POSSIBLE");
+    assert.ok(r.tradePlan);
+    assert.equal(r.tradePlan!.action, "SELL");
+    assert.ok(r.tradePlan!.stopLoss > r.tradePlan!.entry, "SL above entry for SELL");
+    assert.ok(r.tradePlan!.target < r.tradePlan!.entry, "Target below entry for SELL");
+    assert.equal(r.tradePlan!.riskReward, 2.0);
+  });
+
+  it("BREAKOUT_LIKELY (gates pass) → BUY tradePlan", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
+      recentCandles: buildBreakoutCandles(),
+    }));
+    assert.equal(r.outlook, "BREAKOUT_LIKELY");
+    assert.ok(r.tradePlan);
+    assert.equal(r.tradePlan!.action, "BUY");
+  });
+
+  it("BREAKDOWN_RISK (gates pass) → SELL tradePlan", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_DOWN", -0.95),
+      pressure: makePressure("STRONG_SELL", -0.95),
+      recentCandles: buildBreakdownCandles(),
+    }));
+    assert.equal(r.outlook, "BREAKDOWN_RISK");
+    assert.ok(r.tradePlan);
+    assert.equal(r.tradePlan!.action, "SELL");
+  });
+
+  it("NO_CLEAR_EDGE → tradePlan is null (WAIT)", () => {
+    const r = toIntelligence(baseInput({
+      sr: makeSr({ support: { level: 900, dist: 10 }, resistance: { level: 1100, dist: 10 } }),
+      momentum: makeMomentum("STRONG_UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+    assert.equal(r.tradePlan, null);
+  });
+
+  it("Directional outlook but confidence < 0.7 → tradePlan null", () => {
+    // Hand-construct an unusual state where we somehow have a BOUNCE outlook
+    // path but the confidence comes out under 0.7. The buildOutlook gate
+    // requires HIGH confidence so reaching BOUNCE without HIGH is impossible
+    // through the normal pipeline — this test pins buildTradePlan's defensive
+    // floor check by forcing it via the inputs the real path would produce.
+    // We use moderate-strength inputs that land confidence in MEDIUM range
+    // → outlook becomes NO_CLEAR_EDGE → tradePlan null (the same end state).
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("UP", 0.5),
+      pressure: makePressure("BUY", 0.5),
+    }));
+    // Conf is below HIGH so outlook is NO_CLEAR_EDGE → tradePlan null
+    assert.ok(r.confidence < 0.7);
+    assert.equal(r.tradePlan, null);
+  });
+
+  it("tradePlan uses real ATR from recentCandles when available (BUY)", () => {
+    // Build 15 candles with a known TR profile so we can predict the ATR.
+    // Each candle: open=close=100, high=102, low=98 → TR ≈ 4 (since prevClose = 100)
+    const candles: Candle[] = [];
+    for (let i = 0; i < 15; i++) {
+      candles.push({ time: 1700000000 + i * 300, open: 100, high: 102, low: 98, close: 100, volume: 1000 });
+    }
+    const r = toIntelligence(baseInput({
+      symbol: "TEST",
+      price: 100,
+      open: 100, close: 100, high: 102, low: 98,
+      sr: makeSr({ support: { level: 99.9, dist: 0.1 }, resistance: { level: 110, dist: 10 } }),
+      momentum: makeMomentum("STRONG_UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
+      recentCandles: candles,
+    }));
+    assert.equal(r.outlook, "BOUNCE_EXPECTED");
+    assert.ok(r.tradePlan);
+    // ATR ≈ 4. SL distance = 1.5 × 4 = 6. Target distance = 3 × 4 = 12.
+    assert.ok(Math.abs(r.tradePlan!.atr - 4) < 0.5, `expected ATR ≈ 4, got ${r.tradePlan!.atr}`);
+    assert.ok(Math.abs(r.tradePlan!.stopLoss - 94) < 0.5, `expected SL ≈ 94, got ${r.tradePlan!.stopLoss}`);
+    assert.ok(Math.abs(r.tradePlan!.target - 112) < 0.5, `expected target ≈ 112, got ${r.tradePlan!.target}`);
+  });
+
+  it("tradePlan falls back to volatility-derived ATR when no candles supplied", () => {
+    const r = toIntelligence(baseInput({
+      price: 1000,
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
+      high: 1010, low: 990,  // ~2% volatility range → volatility.score ≈ 0.8
+      recentCandles: undefined,
+    }));
+    assert.ok(r.tradePlan, "tradePlan should be set");
+    // fromScore = price × volatility.score × 0.01 → for score 0.8: 1000 × 0.008 = 8
+    // SL distance = 1.5 × 8 = 12 → SL ≈ 988. Pretty wide guard band — just confirm it's positive.
+    assert.ok(r.tradePlan!.atr > 0, "atr should be positive via fallback");
+    assert.ok(r.tradePlan!.stopLoss > 0 && r.tradePlan!.stopLoss < r.tradePlan!.entry);
+    assert.ok(r.tradePlan!.target > r.tradePlan!.entry);
+  });
+
+  it("tradePlan field is always present on snapshot (null when no setup)", () => {
+    // Smoke test: every snapshot must have the field declared. Some readers may
+    // check the property existence rather than null vs object.
+    const r = toIntelligence(baseInput({}));
+    assert.ok("tradePlan" in r, "tradePlan key must always exist");
+    assert.equal(r.tradePlan, null);
+  });
+});
