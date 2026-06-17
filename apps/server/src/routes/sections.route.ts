@@ -6,6 +6,7 @@ import {
   selectNearResistance,
   selectStrongAlignment,
   selectVolatile,
+  selectDayMovers,
   ZONE_SECTION_CAP,
   ZONE_SECTION_CONF_FLOOR,
   STRONG_ALIGNMENT_CAP,
@@ -13,6 +14,9 @@ import {
   VOLATILE_ATR_PCT_FLOOR,
   VOLATILE_RVOL_FLOOR,
   VOLATILE_CAP,
+  DAY_MOVERS_PCT_FLOOR,
+  DAY_MOVERS_RVOL_FLOOR,
+  DAY_MOVERS_CAP,
 } from "../lib/section-selector.js";
 import { isIndexSymbol } from "../lib/index-symbols.js";
 import { computeATR } from "../lib/atr.js";
@@ -21,6 +25,7 @@ import {
   computeRvol,
   computeCandleVolMultiplier,
   computeCandleDirection,
+  computeDayMovePct,
   computeDayRangePosition,
   computeDistanceToLevel,
   getLastNCandlesNewestFirst,
@@ -31,6 +36,9 @@ import type {
   PressureResult,
   MomentumResult,
   Candle,
+  DayMover,
+  DayMoverDirectionFilter,
+  DayMoverSortKey,
   VolatileStock,
   VolatileSortKey,
   VolatileRecentCandle,
@@ -173,6 +181,114 @@ export async function sectionsRoute(fastify: FastifyInstance, deps: SectionsRout
       },
     };
   });
+
+  // ── Day Movers lane ──
+  //
+  // Returns stocks that have made a large *cumulative* move from today's
+  // open. Sibling to /api/sections/volatile — different mental model
+  // (reversal-hunt vs momentum-scalp). Independent filter, so a stock can
+  // appear in one, both, or neither.
+  fastify.get("/api/sections/day-movers", async (request) => {
+    const q = (request.query ?? {}) as {
+      direction?: string;
+      priceMin?: string;
+      priceMax?: string;
+      sortBy?: string;
+    };
+    const direction = parseDayMoverDirection(q.direction);
+    const priceMin = parseNumericQuery(q.priceMin);
+    const priceMax = parseNumericQuery(q.priceMax);
+    const sortBy = parseDayMoverSortKey(q.sortBy);
+
+    const symbols = deps.getAllSymbols();
+    const candidates: DayMover[] = [];
+    let gainersCount = 0;
+    let losersCount = 0;
+
+    for (const sym of symbols) {
+      if (isIndexSymbol(sym)) continue;
+      const quote = marketDataService.getQuote(sym);
+      if (!quote || quote.lastPrice <= 0) continue;
+      // dayOpen is required — if Kite hasn't pushed an opening tick yet
+      // there's nothing meaningful to compute.
+      if (!Number.isFinite(quote.open) || quote.open <= 0) continue;
+
+      const candles = deps.getRecentCandles(sym, 24);
+      if (candles.length < 6) continue;       // RVOL baseline
+
+      const dayMovePct = computeDayMovePct(quote.lastPrice, quote.open);
+      if (dayMovePct === null) continue;
+      const absDayMovePct = Math.abs(dayMovePct);
+
+      // Cheap rejection: skip candidates below the magnitude floor before
+      // doing the more expensive enrichment.
+      if (absDayMovePct < DAY_MOVERS_PCT_FLOOR) continue;
+
+      const rvol = computeRvol(candles);
+      if (rvol === null || rvol < DAY_MOVERS_RVOL_FLOOR) continue;
+
+      const distHigh = computeDistanceToLevel(quote.lastPrice, quote.high);
+      const distLow = computeDistanceToLevel(quote.lastPrice, quote.low);
+
+      const sr = deps.getCachedLevels()[sym] ?? null;
+      const intel = toIntelligence({
+        symbol: sym,
+        price: quote.lastPrice,
+        open: quote.open,
+        high: quote.high,
+        low: quote.low,
+        close: quote.close,
+        timestamp: quote.timestamp,
+        pressure: deps.getPressure(sym),
+        momentum: deps.getMomentum(sym),
+        sr,
+        recentCandles: candles,
+      });
+
+      const dir: DayMover["direction"] = dayMovePct >= 0 ? "up" : "down";
+      if (dir === "up") gainersCount++;
+      else losersCount++;
+
+      candidates.push({
+        symbol: sym,
+        price: quote.lastPrice,
+        dayOpen: quote.open,
+        dayHigh: quote.high,
+        dayLow: quote.low,
+        dayMovePct,
+        absDayMovePct,
+        direction: dir,
+        distanceFromHighAbs: distHigh?.abs ?? 0,
+        distanceFromHighPct: distHigh?.pct ?? 0,
+        distanceFromLowAbs: distLow?.abs ?? 0,
+        distanceFromLowPct: distLow?.pct ?? 0,
+        dayRangePosition: computeDayRangePosition(quote.lastPrice, quote.high, quote.low),
+        rvol,
+        recentCandles: buildRecentCandles(candles),
+        zone: intel.context.zone,
+        pattern: null,
+      });
+    }
+
+    const stocks = selectDayMovers(candidates, { direction, priceMin, priceMax, sortBy });
+
+    return {
+      stocks,
+      meta: {
+        dayMovePctFloor: DAY_MOVERS_PCT_FLOOR,
+        rvolFloor: DAY_MOVERS_RVOL_FLOOR,
+        cap: DAY_MOVERS_CAP,
+        direction,
+        sortBy,
+        priceMin,
+        priceMax,
+        poolSize: symbols.length,
+        matchedCount: stocks.length,
+        gainersCount,
+        losersCount,
+      },
+    };
+  });
 }
 
 // ── Helpers (local to this route file) ──
@@ -210,6 +326,33 @@ function pickNearestLevel(
     return { kind: "SUPPORT", price: supLevel!, distanceAbs: supDist.abs, distancePct: supDist.pct };
   }
   return { kind: "RESISTANCE", price: resLevel!, distanceAbs: resDist!.abs, distancePct: resDist!.pct };
+}
+
+const VALID_DAY_MOVER_SORT: ReadonlySet<DayMoverSortKey> = new Set([
+  "absDayMove",
+  "signedDayMove",
+  "rvol",
+  "lastCandleVolSpike",
+]);
+
+function parseDayMoverSortKey(v: string | undefined): DayMoverSortKey {
+  if (v && (VALID_DAY_MOVER_SORT as Set<string>).has(v)) {
+    return v as DayMoverSortKey;
+  }
+  return "absDayMove";
+}
+
+const VALID_DAY_MOVER_DIRECTION: ReadonlySet<DayMoverDirectionFilter> = new Set([
+  "all",
+  "gainers",
+  "losers",
+]);
+
+function parseDayMoverDirection(v: string | undefined): DayMoverDirectionFilter {
+  if (v && (VALID_DAY_MOVER_DIRECTION as Set<string>).has(v)) {
+    return v as DayMoverDirectionFilter;
+  }
+  return "all";
 }
 
 function buildRecentCandles(allCandles: Candle[]): VolatileRecentCandle[] {

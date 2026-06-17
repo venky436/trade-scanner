@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  ArrowUpDown,
   BarChart3,
   Flame,
   Hammer,
@@ -20,13 +21,21 @@ import { IndexCard } from "./index-card";
 import { StockTableSkeleton } from "./stock-table-skeleton";
 import { VolatileCard } from "./volatile-card";
 import { VolatileFilterBar } from "./volatile-filter-bar";
+import { DayMoverCard } from "./day-mover-card";
+import { DayMoversFilterBar } from "./day-movers-filter-bar";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useVolatileStocks } from "@/hooks/use-volatile-stocks";
+import { useDayMovers } from "@/hooks/use-day-movers";
 import { apiFetch } from "@/lib/api";
 import { INDEX_NAMES } from "@/lib/constants";
-import type { IntelligenceSnapshot, VolatileSortKey } from "@/lib/types";
+import type {
+  DayMoverDirectionFilter,
+  DayMoverSortKey,
+  IntelligenceSnapshot,
+  VolatileSortKey,
+} from "@/lib/types";
 
-type ScannerMode = "stocks" | "options" | "volatile";
+type ScannerMode = "stocks" | "options" | "volatile" | "dayMovers";
 
 // Section caps — keep each list digestible at a glance.
 const STRONG_ALIGNMENT_CAP = 6;
@@ -163,6 +172,17 @@ function ModeToggle({
       >
         <Flame className="size-3.5" />
         Volatile
+      </button>
+      <button
+        onClick={() => onChange("dayMovers")}
+        className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
+          mode === "dayMovers"
+            ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+            : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+        }`}
+      >
+        <ArrowUpDown className="size-3.5" />
+        Day Movers
       </button>
       <button
         onClick={() => onChange("options")}
@@ -407,6 +427,9 @@ export function Dashboard() {
             {/* Volatile tab — intraday-trading aid (ATR% + RVOL gated) */}
             {mode === "volatile" && <VolatileSection />}
 
+            {/* Day Movers tab — reversal-hunting (|Day Move %| ≥ 3 + RVOL gated) */}
+            {mode === "dayMovers" && <DayMoversSection />}
+
             {/* Options view — coming soon placeholder */}
             {mode === "options" && <OptionsComingSoon />}
           </>
@@ -468,6 +491,81 @@ function VolatileSection() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {stocks.map((s) => (
             <VolatileCard key={s.symbol} data={s} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Day Movers tab — sibling to Volatile, for reversal-hunting. Surfaces stocks
+// that have already made a meaningful directional move from today's open
+// (|Day Move %| ≥ 3) on at least average volume (RVOL ≥ 1.0). Different
+// mental model: not "what's moving now" but "what's already moved a lot."
+function DayMoversSection() {
+  const [direction, setDirection] = useState<DayMoverDirectionFilter>("all");
+  const [priceMin, setPriceMin] = useState<number | null>(null);
+  const [priceMax, setPriceMax] = useState<number | null>(null);
+  const [sortBy, setSortBy] = useState<DayMoverSortKey>("absDayMove");
+
+  const { stocks, meta, isLoading } = useDayMovers({
+    direction,
+    priceMin,
+    priceMax,
+    sortBy,
+  });
+
+  return (
+    <section className="space-y-6">
+      <SectionHeader
+        Icon={ArrowUpDown}
+        title="Day Movers"
+        subtitle="Stocks already up or down sharply today — for reversal hunts"
+        count={stocks.length}
+        iconBg="bg-gradient-to-br from-emerald-500/25 to-rose-500/20"
+        iconRing="ring-emerald-400/40"
+        iconColor="text-emerald-600 dark:text-emerald-300"
+      />
+
+      <DayMoversFilterBar
+        direction={direction}
+        priceMin={priceMin}
+        priceMax={priceMax}
+        sortBy={sortBy}
+        onDirectionChange={setDirection}
+        onPriceBandChange={(min, max) => {
+          setPriceMin(min);
+          setPriceMax(max);
+        }}
+        onSortChange={setSortBy}
+        matchedCount={meta?.matchedCount}
+        poolSize={meta?.poolSize}
+        gainersCount={meta?.gainersCount}
+        losersCount={meta?.losersCount}
+      />
+
+      {isLoading && stocks.length === 0 ? (
+        <StockTableSkeleton />
+      ) : stocks.length === 0 ? (
+        <EmptyState
+          Icon={ArrowUpDown}
+          heading="No big movers right now"
+          subtext={
+            direction === "gainers"
+              ? "No stocks up ≥ 3% on average-or-better volume yet. Try the Losers tab or wait for more action."
+              : direction === "losers"
+              ? "No stocks down ≤ -3% on average-or-better volume yet. Try the Gainers tab or wait for more action."
+              : "Market is calm — no stocks have moved ≥ 3% from open on average-or-better volume yet. They'll appear here as the day unfolds."
+          }
+          iconBg="bg-gradient-to-br from-emerald-500/20 to-rose-500/15"
+          iconRing="ring-emerald-400/40"
+          iconColor="text-emerald-500 dark:text-emerald-300"
+          glow="bg-emerald-400/15"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {stocks.map((s) => (
+            <DayMoverCard key={s.symbol} data={s} />
           ))}
         </div>
       )}
