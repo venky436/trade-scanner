@@ -4,6 +4,7 @@ import { marketDataService } from "./market-data.service.js";
 import { toIntelligence, buildMarketContext } from "../lib/intelligence-transformer.js";
 import { detectPattern } from "../lib/pattern-engine.js";
 import { computeATR } from "../lib/atr.js";
+import { computeRvol } from "../lib/volatility-metrics.js";
 import { isIndexSymbol } from "../lib/index-symbols.js";
 import { selectAiTargets } from "../lib/section-selector.js";
 import { callGemini, GEMINI_MODEL } from "../lib/gemini-client.js";
@@ -63,23 +64,6 @@ function nowIstTotalMinutes(date = new Date()): number {
 function isWithinActiveWindow(date = new Date()): boolean {
   const m = nowIstTotalMinutes(date);
   return m >= ACTIVE_WINDOW_START_MIN && m < ACTIVE_WINDOW_END_MIN;
-}
-
-/**
- * Estimate Relative Volume from in-session candles: current candle volume vs
- * the mean of the last 20 candles. Returns null when insufficient history.
- * Not exact (we don't have 20-day historical avg here), but consistent with
- * how the dashboard surfaces volume context.
- */
-function computeRvol(candles: Candle[]): number | null {
-  if (candles.length < 6) return null;          // need a meaningful baseline
-  const recent = candles[candles.length - 1];
-  if (recent.volume <= 0) return null;
-  const sample = candles.slice(-Math.min(20, candles.length - 1), -1);
-  if (sample.length === 0) return null;
-  const avg = sample.reduce((s, c) => s + c.volume, 0) / sample.length;
-  if (avg <= 0) return null;
-  return recent.volume / avg;
 }
 
 function mapOutlookToRuleVerdict(outlook: string): "BUY" | "SELL" | "WAIT" {
