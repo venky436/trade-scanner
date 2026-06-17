@@ -303,3 +303,48 @@ export interface VolatileStock {
   /** Pattern name if one was detected on the last candle, else null. */
   pattern: string | null;
 }
+
+// ── Day Movers Screen ──
+//
+// Sibling to the Volatile lane — surfaces stocks that have made a large
+// directional move from today's open, regardless of direction. Use case:
+// reversal-hunting (a stock up 14% today might be exhausted; a stock down 8%
+// at support might be ready to bounce).
+
+export type DayMoverSortKey =
+  | "absDayMove"      // |dayMovePct| DESC — biggest movers either direction
+  | "signedDayMove"   // dayMovePct DESC — gainers first
+  | "rvol"
+  | "lastCandleVolSpike";
+
+export type DayMoverDirectionFilter = "all" | "gainers" | "losers";
+
+export type DayMoverDirection = "up" | "down";
+
+export interface DayMover {
+  symbol: string;
+  price: number;
+  /** Today's opening price (from quote.open). */
+  dayOpen: number;
+  dayHigh: number;
+  dayLow: number;
+  /** Signed % move from open: (price - open) / open × 100. */
+  dayMovePct: number;
+  /** Absolute value of dayMovePct — used for ranking by magnitude. */
+  absDayMovePct: number;
+  /** Up = above open, down = below open. */
+  direction: DayMoverDirection;
+  // Distances (always positive)
+  distanceFromHighAbs: number;
+  distanceFromHighPct: number;
+  distanceFromLowAbs: number;
+  distanceFromLowPct: number;
+  /** Where in today's H-L the price sits, 0..1 (null when range is degenerate). */
+  dayRangePosition: number | null;
+  /** Most recent closed candle's volume vs the mean of the prior ≤20. */
+  rvol: number;
+  /** Last 3 closed 5-min candles, newest first. Length ≤ 3. */
+  recentCandles: VolatileRecentCandle[];
+  zone: Zone;
+  pattern: string | null;
+}

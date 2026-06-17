@@ -1,4 +1,12 @@
-import type { IntelligenceSnapshot, Outlook, VolatileStock, VolatileSortKey } from "./types.js";
+import type {
+  DayMover,
+  DayMoverDirectionFilter,
+  DayMoverSortKey,
+  IntelligenceSnapshot,
+  Outlook,
+  VolatileSortKey,
+  VolatileStock,
+} from "./types.js";
 import { isIndexSymbol } from "./index-symbols.js";
 
 // Single source of truth for the three "lane" selections shown on the home
@@ -152,6 +160,84 @@ export function selectVolatile(
     )
     .sort((a, b) => volatileSortValue(b, sortBy) - volatileSortValue(a, sortBy))
     .slice(0, VOLATILE_CAP);
+}
+
+// ─── Day Movers lane ───────────────────────────────────────────────────────
+//
+// Surfaces stocks that have made a large *cumulative* move from today's open,
+// in either direction. Reversal-hunting use case: "a stock up 14% today might
+// be exhausted; a stock down 8% might be ready to bounce."
+//
+// Independent of the Volatile lane — a stock can show up in one, both, or
+// neither depending on what kind of movement it has.
+
+/** |Day Move %| must be at least this to qualify. */
+export const DAY_MOVERS_PCT_FLOOR = 3.0;
+/** RVOL must be at least this — looser than Volatile because the move itself proves activity. */
+export const DAY_MOVERS_RVOL_FLOOR = 1.0;
+/** Hard cap on cards rendered. */
+export const DAY_MOVERS_CAP = 20;
+
+export interface SelectDayMoversOpts {
+  /** "all" → both gainers and losers shown. */
+  direction?: DayMoverDirectionFilter;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  /** Default: "absDayMove" — biggest magnitude movers first. */
+  sortBy?: DayMoverSortKey;
+}
+
+function dayMoverSortValue(s: DayMover, key: DayMoverSortKey): number {
+  switch (key) {
+    case "absDayMove":
+      return s.absDayMovePct;
+    case "signedDayMove":
+      return s.dayMovePct;
+    case "rvol":
+      return s.rvol;
+    case "lastCandleVolSpike":
+      return s.recentCandles[0]?.volMultiplier ?? 0;
+  }
+}
+
+function passesDirectionFilter(
+  s: DayMover,
+  direction: DayMoverDirectionFilter,
+): boolean {
+  if (direction === "all") return true;
+  if (direction === "gainers") return s.direction === "up";
+  return s.direction === "down";
+}
+
+/**
+ * Filter day movers by magnitude floor + RVOL floor + direction chip +
+ * optional price band, then sort by the chosen key (descending), cap at
+ * DAY_MOVERS_CAP.
+ *
+ * Pure function — the route handler is responsible for building the candidate
+ * pool (computing dayMovePct, rvol, distances, recentCandles, etc.) before
+ * calling this.
+ */
+export function selectDayMovers(
+  candidates: DayMover[],
+  opts: SelectDayMoversOpts = {},
+): DayMover[] {
+  const direction = opts.direction ?? "all";
+  const sortBy = opts.sortBy ?? "absDayMove";
+  const priceMin = opts.priceMin ?? null;
+  const priceMax = opts.priceMax ?? null;
+
+  return [...candidates]
+    .filter(
+      (c) =>
+        c.absDayMovePct >= DAY_MOVERS_PCT_FLOOR &&
+        c.rvol >= DAY_MOVERS_RVOL_FLOOR &&
+        passesDirectionFilter(c, direction) &&
+        (priceMin === null || c.price >= priceMin) &&
+        (priceMax === null || c.price <= priceMax),
+    )
+    .sort((a, b) => dayMoverSortValue(b, sortBy) - dayMoverSortValue(a, sortBy))
+    .slice(0, DAY_MOVERS_CAP);
 }
 
 /**

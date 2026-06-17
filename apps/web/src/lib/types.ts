@@ -206,3 +206,53 @@ export interface VolatileStocksResponse {
     matchedCount: number;
   };
 }
+
+// ── Day Movers screen ──
+// Mirrors apps/server/src/lib/types.ts:DayMover.
+
+export type DayMoverSortKey =
+  | "absDayMove"
+  | "signedDayMove"
+  | "rvol"
+  | "lastCandleVolSpike";
+
+export type DayMoverDirectionFilter = "all" | "gainers" | "losers";
+
+export type DayMoverDirection = "up" | "down";
+
+export interface DayMover {
+  symbol: string;
+  price: number;
+  dayOpen: number;
+  dayHigh: number;
+  dayLow: number;
+  dayMovePct: number;
+  absDayMovePct: number;
+  direction: DayMoverDirection;
+  distanceFromHighAbs: number;
+  distanceFromHighPct: number;
+  distanceFromLowAbs: number;
+  distanceFromLowPct: number;
+  dayRangePosition: number | null;
+  rvol: number;
+  recentCandles: VolatileRecentCandle[];
+  zone: Zone;
+  pattern: string | null;
+}
+
+export interface DayMoversResponse {
+  stocks: DayMover[];
+  meta: {
+    dayMovePctFloor: number;
+    rvolFloor: number;
+    cap: number;
+    direction: DayMoverDirectionFilter;
+    sortBy: DayMoverSortKey;
+    priceMin: number | null;
+    priceMax: number | null;
+    poolSize: number;
+    matchedCount: number;
+    gainersCount: number;
+    losersCount: number;
+  };
+}

@@ -8,13 +8,23 @@ import {
   VOLATILE_ATR_PCT_FLOOR,
   VOLATILE_RVOL_FLOOR,
   VOLATILE_CAP,
+  DAY_MOVERS_PCT_FLOOR,
+  DAY_MOVERS_RVOL_FLOOR,
+  DAY_MOVERS_CAP,
   selectNearSupport,
   selectNearResistance,
   selectStrongAlignment,
   selectAiTargets,
   selectVolatile,
+  selectDayMovers,
 } from "./section-selector.js";
-import type { IntelligenceSnapshot, Zone, Outlook, VolatileStock } from "./types.js";
+import type {
+  DayMover,
+  IntelligenceSnapshot,
+  Outlook,
+  VolatileStock,
+  Zone,
+} from "./types.js";
 
 function snap(opts: {
   symbol: string;
@@ -409,5 +419,191 @@ describe("section-selector — selectVolatile", () => {
     selectVolatile(input);
     const afterSyms = input.map((s) => s.symbol);
     assert.deepEqual(afterSyms, beforeSyms);
+  });
+});
+
+// ─── selectDayMovers ───────────────────────────────────────────────────────
+
+function dm(opts: {
+  symbol: string;
+  price?: number;
+  dayOpen?: number;
+  dayMovePct?: number;
+  rvol?: number;
+  lastVolMultiplier?: number;
+  zone?: Zone;
+}): DayMover {
+  // When dayMovePct is provided, use it directly (and infer signs/direction).
+  // Otherwise derive from price + dayOpen.
+  const price = opts.price ?? 100;
+  const dayOpen = opts.dayOpen ?? 100;
+  const dayMovePct =
+    opts.dayMovePct !== undefined ? opts.dayMovePct : ((price - dayOpen) / dayOpen) * 100;
+  const absDayMovePct = Math.abs(dayMovePct);
+  return {
+    symbol: opts.symbol,
+    price,
+    dayOpen,
+    dayHigh: Math.max(price, dayOpen) * 1.01,
+    dayLow: Math.min(price, dayOpen) * 0.99,
+    dayMovePct,
+    absDayMovePct,
+    direction: dayMovePct >= 0 ? "up" : "down",
+    distanceFromHighAbs: 1,
+    distanceFromHighPct: 0.5,
+    distanceFromLowAbs: 1,
+    distanceFromLowPct: 0.5,
+    dayRangePosition: 0.5,
+    rvol: opts.rvol ?? 1.5,
+    recentCandles: [
+      {
+        time: 0,
+        direction: "up",
+        volume: 1000,
+        volMultiplier: opts.lastVolMultiplier ?? 1.0,
+      },
+    ],
+    zone: opts.zone ?? "MID_RANGE",
+    pattern: null,
+  };
+}
+
+describe("section-selector — selectDayMovers", () => {
+  it("filters out stocks below the |Day Move %| floor", () => {
+    const result = selectDayMovers([
+      dm({ symbol: "SMALL", dayMovePct: 2 }),     // below 3% floor
+      dm({ symbol: "OK", dayMovePct: 5 }),
+      dm({ symbol: "OK_DOWN", dayMovePct: -4 }),
+    ]);
+    assert.deepEqual(
+      result.map((s) => s.symbol).sort(),
+      ["OK", "OK_DOWN"].sort(),
+    );
+  });
+
+  it("treats |dayMovePct| at exactly the floor as passing (≥)", () => {
+    const result = selectDayMovers([
+      dm({ symbol: "AT_FLOOR_UP", dayMovePct: DAY_MOVERS_PCT_FLOOR }),
+      dm({ symbol: "AT_FLOOR_DOWN", dayMovePct: -DAY_MOVERS_PCT_FLOOR }),
+    ]);
+    assert.equal(result.length, 2);
+  });
+
+  it("filters out stocks below the RVOL floor", () => {
+    const result = selectDayMovers([
+      dm({ symbol: "BIG_BUT_QUIET", dayMovePct: 10, rvol: 0.5 }),
+      dm({ symbol: "OK", dayMovePct: 5, rvol: 1.0 }),
+    ]);
+    assert.deepEqual(result.map((s) => s.symbol), ["OK"]);
+  });
+
+  it("direction filter 'gainers' keeps only ups", () => {
+    const result = selectDayMovers(
+      [
+        dm({ symbol: "UP_5", dayMovePct: 5 }),
+        dm({ symbol: "DOWN_4", dayMovePct: -4 }),
+        dm({ symbol: "UP_10", dayMovePct: 10 }),
+      ],
+      { direction: "gainers" },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["UP_10", "UP_5"]);
+  });
+
+  it("direction filter 'losers' keeps only downs", () => {
+    const result = selectDayMovers(
+      [
+        dm({ symbol: "UP_5", dayMovePct: 5 }),
+        dm({ symbol: "DOWN_4", dayMovePct: -4 }),
+        dm({ symbol: "DOWN_8", dayMovePct: -8 }),
+      ],
+      { direction: "losers" },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["DOWN_8", "DOWN_4"]);
+  });
+
+  it("applies the price band (inclusive)", () => {
+    const result = selectDayMovers(
+      [
+        dm({ symbol: "CHEAP", price: 100, dayMovePct: 5 }),
+        dm({ symbol: "MID", price: 300, dayMovePct: 5 }),
+        dm({ symbol: "EXP", price: 1500, dayMovePct: 5 }),
+      ],
+      { priceMin: 250, priceMax: 500 },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["MID"]);
+  });
+
+  it("default sort = absDayMove DESC (so a -10% and a +5% both surface, -10% first)", () => {
+    const result = selectDayMovers([
+      dm({ symbol: "UP_5", dayMovePct: 5 }),
+      dm({ symbol: "DOWN_10", dayMovePct: -10 }),
+      dm({ symbol: "UP_4", dayMovePct: 4 }),
+    ]);
+    assert.deepEqual(result.map((s) => s.symbol), ["DOWN_10", "UP_5", "UP_4"]);
+  });
+
+  it("signedDayMove sort places largest gainers first, biggest losers last", () => {
+    const result = selectDayMovers(
+      [
+        dm({ symbol: "UP_5", dayMovePct: 5 }),
+        dm({ symbol: "DOWN_10", dayMovePct: -10 }),
+        dm({ symbol: "UP_15", dayMovePct: 15 }),
+      ],
+      { sortBy: "signedDayMove" },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["UP_15", "UP_5", "DOWN_10"]);
+  });
+
+  it("rvol sort ranks by volume", () => {
+    const result = selectDayMovers(
+      [
+        dm({ symbol: "A", dayMovePct: 5, rvol: 1.2 }),
+        dm({ symbol: "SPIKE", dayMovePct: 5, rvol: 5.0 }),
+        dm({ symbol: "B", dayMovePct: 5, rvol: 2.0 }),
+      ],
+      { sortBy: "rvol" },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["SPIKE", "B", "A"]);
+  });
+
+  it("lastCandleVolSpike sort uses the newest candle's multiplier", () => {
+    const result = selectDayMovers(
+      [
+        dm({ symbol: "A", dayMovePct: 5, lastVolMultiplier: 1.2 }),
+        dm({ symbol: "SPIKE", dayMovePct: 5, lastVolMultiplier: 4.5 }),
+        dm({ symbol: "B", dayMovePct: 5, lastVolMultiplier: 2.0 }),
+      ],
+      { sortBy: "lastCandleVolSpike" },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["SPIKE", "B", "A"]);
+  });
+
+  it("caps at DAY_MOVERS_CAP", () => {
+    const many: DayMover[] = [];
+    for (let i = 0; i < DAY_MOVERS_CAP + 10; i++) {
+      many.push(dm({ symbol: `S_${i}`, dayMovePct: 3 + i * 0.1, rvol: 1.5 }));
+    }
+    const result = selectDayMovers(many);
+    assert.equal(result.length, DAY_MOVERS_CAP);
+  });
+
+  it("does not mutate the input array", () => {
+    const input = [
+      dm({ symbol: "A", dayMovePct: 5 }),
+      dm({ symbol: "B", dayMovePct: 8 }),
+    ];
+    const beforeSyms = input.map((s) => s.symbol);
+    selectDayMovers(input);
+    assert.deepEqual(input.map((s) => s.symbol), beforeSyms);
+  });
+
+  it("RVOL floor for day movers (1.0) is intentionally looser than Volatile (1.5)", () => {
+    // Sanity check on the constant — a stock at exactly 1.0 RVOL with a big
+    // day move qualifies, while the Volatile lane would reject it.
+    assert.equal(DAY_MOVERS_RVOL_FLOOR, 1.0);
+    const result = selectDayMovers([
+      dm({ symbol: "STILL_OK", dayMovePct: 7, rvol: DAY_MOVERS_RVOL_FLOOR }),
+    ]);
+    assert.equal(result.length, 1);
   });
 });
