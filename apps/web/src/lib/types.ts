@@ -151,3 +151,58 @@ export interface StockDetailSnapshot extends IntelligenceSnapshot {
   dataSource: "live" | "on-demand";
   computedAt: number;
 }
+
+// ── Volatile Stocks screen ──
+// Mirrors apps/server/src/lib/types.ts:VolatileStock. Returned by
+// GET /api/sections/volatile.
+
+export type VolatileSortKey =
+  | "atrPct"
+  | "rvol"
+  | "changePct"
+  | "lastCandleVolSpike";
+
+export type VolatileCandleDirection = "up" | "down" | "flat";
+
+export interface VolatileRecentCandle {
+  time: number;
+  direction: VolatileCandleDirection;
+  volume: number;
+  volMultiplier: number | null;
+}
+
+export interface VolatileNearestLevel {
+  kind: "SUPPORT" | "RESISTANCE";
+  price: number;
+  distanceAbs: number;
+  distancePct: number;
+}
+
+export interface VolatileStock {
+  symbol: string;
+  price: number;
+  changePct: number;
+  atrPct: number;
+  rvol: number;
+  dayHigh: number;
+  dayLow: number;
+  dayRangePosition: number | null;
+  nearestLevel: VolatileNearestLevel | null;
+  recentCandles: VolatileRecentCandle[];
+  zone: Zone;
+  pattern: string | null;
+}
+
+export interface VolatileStocksResponse {
+  stocks: VolatileStock[];
+  meta: {
+    atrPctFloor: number;
+    rvolFloor: number;
+    cap: number;
+    sortBy: VolatileSortKey;
+    priceMin: number | null;
+    priceMax: number | null;
+    poolSize: number;
+    matchedCount: number;
+  };
+}

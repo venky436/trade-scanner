@@ -5,6 +5,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BarChart3,
+  Flame,
   Hammer,
   Landmark,
   LayoutGrid,
@@ -17,12 +18,15 @@ import { MarketContextBanner } from "./market-context-banner";
 import { MarketCard } from "./market-card";
 import { IndexCard } from "./index-card";
 import { StockTableSkeleton } from "./stock-table-skeleton";
+import { VolatileCard } from "./volatile-card";
+import { VolatileFilterBar } from "./volatile-filter-bar";
 import { useMarketData } from "@/hooks/use-market-data";
+import { useVolatileStocks } from "@/hooks/use-volatile-stocks";
 import { apiFetch } from "@/lib/api";
 import { INDEX_NAMES } from "@/lib/constants";
-import type { IntelligenceSnapshot } from "@/lib/types";
+import type { IntelligenceSnapshot, VolatileSortKey } from "@/lib/types";
 
-type ScannerMode = "stocks" | "options";
+type ScannerMode = "stocks" | "options" | "volatile";
 
 // Section caps — keep each list digestible at a glance.
 const STRONG_ALIGNMENT_CAP = 6;
@@ -148,6 +152,17 @@ function ModeToggle({
       >
         <LayoutGrid className="size-3.5" />
         Stocks
+      </button>
+      <button
+        onClick={() => onChange("volatile")}
+        className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
+          mode === "volatile"
+            ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+            : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+        }`}
+      >
+        <Flame className="size-3.5" />
+        Volatile
       </button>
       <button
         onClick={() => onChange("options")}
@@ -389,12 +404,74 @@ export function Dashboard() {
               </>
             )}
 
+            {/* Volatile tab — intraday-trading aid (ATR% + RVOL gated) */}
+            {mode === "volatile" && <VolatileSection />}
+
             {/* Options view — coming soon placeholder */}
             {mode === "options" && <OptionsComingSoon />}
           </>
         )}
       </div>
     </main>
+  );
+}
+
+// Volatile tab — surfaces stocks that are actively moving (ATR% ≥ 1.5%) with
+// real volume behind them (RVOL ≥ 1.5×). Optional price-band + sort chips.
+// Lives behind a tab so the rest of the dashboard is unaffected when the user
+// doesn't want this view.
+function VolatileSection() {
+  const [priceMin, setPriceMin] = useState<number | null>(null);
+  const [priceMax, setPriceMax] = useState<number | null>(null);
+  const [sortBy, setSortBy] = useState<VolatileSortKey>("atrPct");
+
+  const { stocks, meta, isLoading } = useVolatileStocks({ priceMin, priceMax, sortBy });
+
+  return (
+    <section className="space-y-6">
+      <SectionHeader
+        Icon={Flame}
+        title="Volatile Movers"
+        subtitle="Stocks moving with real volume — built for live intraday scanning"
+        count={stocks.length}
+        iconBg="bg-gradient-to-br from-orange-500/25 to-violet-500/20"
+        iconRing="ring-orange-400/40"
+        iconColor="text-orange-600 dark:text-orange-300"
+      />
+
+      <VolatileFilterBar
+        priceMin={priceMin}
+        priceMax={priceMax}
+        sortBy={sortBy}
+        onPriceBandChange={(min, max) => {
+          setPriceMin(min);
+          setPriceMax(max);
+        }}
+        onSortChange={setSortBy}
+        matchedCount={meta?.matchedCount}
+        poolSize={meta?.poolSize}
+      />
+
+      {isLoading && stocks.length === 0 ? (
+        <StockTableSkeleton />
+      ) : stocks.length === 0 ? (
+        <EmptyState
+          Icon={Flame}
+          heading="No volatile stocks right now"
+          subtext="Market is calm or still warming up. As stocks build ATR ≥ 1.5% and RVOL ≥ 1.5×, they'll appear here automatically. Try a different price band if you've narrowed the filter."
+          iconBg="bg-gradient-to-br from-orange-500/20 to-violet-500/15"
+          iconRing="ring-orange-400/40"
+          iconColor="text-orange-500 dark:text-orange-300"
+          glow="bg-orange-400/15"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {stocks.map((s) => (
+            <VolatileCard key={s.symbol} data={s} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

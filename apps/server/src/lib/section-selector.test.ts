@@ -5,12 +5,16 @@ import {
   ZONE_SECTION_CONF_FLOOR,
   STRONG_ALIGNMENT_CAP,
   STRONG_ALIGNMENT_FLOOR,
+  VOLATILE_ATR_PCT_FLOOR,
+  VOLATILE_RVOL_FLOOR,
+  VOLATILE_CAP,
   selectNearSupport,
   selectNearResistance,
   selectStrongAlignment,
   selectAiTargets,
+  selectVolatile,
 } from "./section-selector.js";
-import type { IntelligenceSnapshot, Zone, Outlook } from "./types.js";
+import type { IntelligenceSnapshot, Zone, Outlook, VolatileStock } from "./types.js";
 
 function snap(opts: {
   symbol: string;
@@ -238,5 +242,172 @@ describe("section-selector — selectAiTargets (union, deduped)", () => {
     const result = selectAiTargets(candidates);
     const maxExpected = ZONE_SECTION_CAP * 2 + STRONG_ALIGNMENT_CAP;
     assert.ok(result.length <= maxExpected, `expected ≤ ${maxExpected}, got ${result.length}`);
+  });
+});
+
+// ─── selectVolatile ────────────────────────────────────────────────────────
+
+function vol(opts: {
+  symbol: string;
+  price?: number;
+  changePct?: number;
+  atrPct?: number;
+  rvol?: number;
+  lastVolMultiplier?: number;
+  zone?: Zone;
+}): VolatileStock {
+  return {
+    symbol: opts.symbol,
+    price: opts.price ?? 100,
+    changePct: opts.changePct ?? 0,
+    atrPct: opts.atrPct ?? 2.0,
+    rvol: opts.rvol ?? 2.0,
+    dayHigh: 105,
+    dayLow: 95,
+    dayRangePosition: 0.5,
+    nearestLevel: null,
+    recentCandles: [
+      {
+        time: 0,
+        direction: "up",
+        volume: 1000,
+        volMultiplier: opts.lastVolMultiplier ?? 1.0,
+      },
+    ],
+    zone: opts.zone ?? "MID_RANGE",
+    pattern: null,
+  };
+}
+
+describe("section-selector — selectVolatile", () => {
+  it("filters out stocks below the ATR% floor", () => {
+    const result = selectVolatile([
+      vol({ symbol: "LOW_ATR", atrPct: 1.0, rvol: 2.0 }),
+      vol({ symbol: "OK", atrPct: 2.0, rvol: 2.0 }),
+    ]);
+    assert.deepEqual(result.map((s) => s.symbol), ["OK"]);
+  });
+
+  it("filters out stocks below the RVOL floor", () => {
+    const result = selectVolatile([
+      vol({ symbol: "LOW_VOL", atrPct: 2.0, rvol: 1.0 }),
+      vol({ symbol: "OK", atrPct: 2.0, rvol: 2.0 }),
+    ]);
+    assert.deepEqual(result.map((s) => s.symbol), ["OK"]);
+  });
+
+  it("treats exactly-at-floor as passing (≥, not >)", () => {
+    const result = selectVolatile([
+      vol({
+        symbol: "EXACT",
+        atrPct: VOLATILE_ATR_PCT_FLOOR,
+        rvol: VOLATILE_RVOL_FLOOR,
+      }),
+    ]);
+    assert.equal(result.length, 1);
+  });
+
+  it("applies the priceMin filter", () => {
+    const result = selectVolatile(
+      [
+        vol({ symbol: "CHEAP", price: 100 }),
+        vol({ symbol: "MID", price: 300 }),
+        vol({ symbol: "EXP", price: 1500 }),
+      ],
+      { priceMin: 250 },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["MID", "EXP"]);
+  });
+
+  it("applies the priceMax filter", () => {
+    const result = selectVolatile(
+      [
+        vol({ symbol: "CHEAP", price: 100 }),
+        vol({ symbol: "MID", price: 300 }),
+        vol({ symbol: "EXP", price: 1500 }),
+      ],
+      { priceMax: 500 },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["CHEAP", "MID"]);
+  });
+
+  it("combines priceMin + priceMax (inclusive band)", () => {
+    const result = selectVolatile(
+      [
+        vol({ symbol: "OUT_LOW", price: 200 }),
+        vol({ symbol: "BAND_LOW", price: 250 }),
+        vol({ symbol: "BAND_HIGH", price: 500 }),
+        vol({ symbol: "OUT_HIGH", price: 501 }),
+      ],
+      { priceMin: 250, priceMax: 500 },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["BAND_LOW", "BAND_HIGH"]);
+  });
+
+  it("sorts by ATR% DESC by default", () => {
+    const result = selectVolatile([
+      vol({ symbol: "A", atrPct: 1.6 }),
+      vol({ symbol: "B", atrPct: 3.0 }),
+      vol({ symbol: "C", atrPct: 2.0 }),
+    ]);
+    assert.deepEqual(result.map((s) => s.symbol), ["B", "C", "A"]);
+  });
+
+  it("sorts by RVOL DESC when requested", () => {
+    const result = selectVolatile(
+      [
+        vol({ symbol: "A", rvol: 1.6 }),
+        vol({ symbol: "B", rvol: 3.0 }),
+        vol({ symbol: "C", rvol: 2.0 }),
+      ],
+      { sortBy: "rvol" },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["B", "C", "A"]);
+  });
+
+  it("sorts by absolute changePct (so big drops rank alongside big rises)", () => {
+    const result = selectVolatile(
+      [
+        vol({ symbol: "FLAT", changePct: 0.5 }),
+        vol({ symbol: "BIG_DROP", changePct: -5 }),
+        vol({ symbol: "BIG_RISE", changePct: 4 }),
+      ],
+      { sortBy: "changePct" },
+    );
+    assert.equal(result[0].symbol, "BIG_DROP", "abs(-5) > abs(4) > abs(0.5)");
+    assert.equal(result[1].symbol, "BIG_RISE");
+    assert.equal(result[2].symbol, "FLAT");
+  });
+
+  it("sorts by last-candle volume multiplier DESC", () => {
+    const result = selectVolatile(
+      [
+        vol({ symbol: "A", lastVolMultiplier: 1.2 }),
+        vol({ symbol: "SPIKE", lastVolMultiplier: 4.5 }),
+        vol({ symbol: "B", lastVolMultiplier: 2.0 }),
+      ],
+      { sortBy: "lastCandleVolSpike" },
+    );
+    assert.deepEqual(result.map((s) => s.symbol), ["SPIKE", "B", "A"]);
+  });
+
+  it("caps the result at VOLATILE_CAP", () => {
+    const many: VolatileStock[] = [];
+    for (let i = 0; i < VOLATILE_CAP + 10; i++) {
+      many.push(vol({ symbol: `S_${i}`, atrPct: 2 + i * 0.01, rvol: 2 }));
+    }
+    const result = selectVolatile(many);
+    assert.equal(result.length, VOLATILE_CAP);
+  });
+
+  it("does not mutate the input array", () => {
+    const input = [
+      vol({ symbol: "A", atrPct: 2 }),
+      vol({ symbol: "B", atrPct: 3 }),
+    ];
+    const beforeSyms = input.map((s) => s.symbol);
+    selectVolatile(input);
+    const afterSyms = input.map((s) => s.symbol);
+    assert.deepEqual(afterSyms, beforeSyms);
   });
 });

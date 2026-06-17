@@ -1,4 +1,4 @@
-import type { IntelligenceSnapshot, Outlook } from "./types.js";
+import type { IntelligenceSnapshot, Outlook, VolatileStock, VolatileSortKey } from "./types.js";
 import { isIndexSymbol } from "./index-symbols.js";
 
 // Single source of truth for the three "lane" selections shown on the home
@@ -88,6 +88,70 @@ export function selectStrongAlignment(snapshots: IntelligenceSnapshot[]): Intell
       (s) => s.confidence >= STRONG_ALIGNMENT_FLOOR && DIRECTIONAL_OUTLOOKS.has(s.outlook),
     ),
   ).slice(0, STRONG_ALIGNMENT_CAP);
+}
+
+// ─── Volatile Stocks lane ──────────────────────────────────────────────────
+//
+// Surfaces stocks that are *moving right now* with enough volume to be
+// actually tradeable. Used by the intraday-trading Volatile screen. The
+// selector takes pre-enriched VolatileStock candidates (the route handler
+// computes the metrics) and filters + sorts + caps.
+
+/** ATR(14) as a % of price must be at least this to qualify as "volatile". */
+export const VOLATILE_ATR_PCT_FLOOR = 1.5;
+/** RVOL must be at least this — confirms the volatility is on real volume. */
+export const VOLATILE_RVOL_FLOOR = 1.5;
+/** Hard cap on cards rendered. Keeps the scan list digestible. */
+export const VOLATILE_CAP = 20;
+
+export interface SelectVolatileOpts {
+  priceMin?: number | null;
+  priceMax?: number | null;
+  /** Default: "atrPct" — biggest movers first. */
+  sortBy?: VolatileSortKey;
+}
+
+function volatileSortValue(s: VolatileStock, key: VolatileSortKey): number {
+  switch (key) {
+    case "atrPct":
+      return s.atrPct;
+    case "rvol":
+      return s.rvol;
+    case "changePct":
+      // Sort by absolute change so a -3% mover ranks alongside a +3% mover.
+      return Math.abs(s.changePct);
+    case "lastCandleVolSpike":
+      // recentCandles is newest-first; index 0 is the just-closed candle.
+      return s.recentCandles[0]?.volMultiplier ?? 0;
+  }
+}
+
+/**
+ * Filter the candidate pool by the volatility floors and optional price band,
+ * sort by the chosen key (descending), cap at VOLATILE_CAP.
+ *
+ * Pure function — no side effects, easy to unit-test. The route handler is
+ * responsible for building the candidate pool (computing atrPct, rvol,
+ * recentCandles, etc.) before calling this.
+ */
+export function selectVolatile(
+  candidates: VolatileStock[],
+  opts: SelectVolatileOpts = {},
+): VolatileStock[] {
+  const sortBy = opts.sortBy ?? "atrPct";
+  const priceMin = opts.priceMin ?? null;
+  const priceMax = opts.priceMax ?? null;
+
+  return [...candidates]
+    .filter(
+      (c) =>
+        c.atrPct >= VOLATILE_ATR_PCT_FLOOR &&
+        c.rvol >= VOLATILE_RVOL_FLOOR &&
+        (priceMin === null || c.price >= priceMin) &&
+        (priceMax === null || c.price <= priceMax),
+    )
+    .sort((a, b) => volatileSortValue(b, sortBy) - volatileSortValue(a, sortBy))
+    .slice(0, VOLATILE_CAP);
 }
 
 /**

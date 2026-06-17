@@ -247,3 +247,59 @@ export interface IntelligenceWsMessage {
   market: MarketContext | null;
   timestamp: number;
 }
+
+// ── Volatile Stocks Screen ──
+//
+// The enriched record returned by GET /api/sections/volatile. Mirrors the
+// frontend's VolatileStock shape in apps/web/src/lib/types.ts. The selector
+// (selectVolatile in section-selector.ts) takes a pool of these candidates
+// and applies floor + price-range + sort + cap.
+
+export type VolatileSortKey =
+  | "atrPct"
+  | "rvol"
+  | "changePct"
+  | "lastCandleVolSpike";
+
+export type VolatileCandleDirection = "up" | "down" | "flat";
+
+export interface VolatileRecentCandle {
+  /** Unix epoch seconds — when this candle closed. */
+  time: number;
+  direction: VolatileCandleDirection;
+  volume: number;
+  /** This candle's volume vs the mean of the prior in-session candles. Null when baseline is insufficient. */
+  volMultiplier: number | null;
+}
+
+export interface VolatileNearestLevel {
+  kind: "SUPPORT" | "RESISTANCE";
+  price: number;
+  distanceAbs: number;
+  distancePct: number;
+}
+
+export interface VolatileStock {
+  symbol: string;
+  price: number;
+  /** Signed % change vs prev close (mirrors IntelligenceSnapshot.change). */
+  changePct: number;
+  // Volatility metrics
+  /** ATR(14) as a percentage of price. Filtered floor for the lane. */
+  atrPct: number;
+  /** Most recent closed candle's volume vs the mean of the prior ≤20. */
+  rvol: number;
+  // Day's range
+  dayHigh: number;
+  dayLow: number;
+  /** Where in today's H-L the price sits, 0..1 (null when range is degenerate). */
+  dayRangePosition: number | null;
+  /** Closer of support / resistance to the current price (null when neither known). */
+  nearestLevel: VolatileNearestLevel | null;
+  /** Last 3 closed 5-min candles, newest first. Length ≤ 3. */
+  recentCandles: VolatileRecentCandle[];
+  /** Mirrored from the snapshot so the card footer stays informative. */
+  zone: Zone;
+  /** Pattern name if one was detected on the last candle, else null. */
+  pattern: string | null;
+}
