@@ -218,6 +218,12 @@ export interface TradePlan {
 
 export interface IntelligenceSnapshot {
   symbol: string;
+  /**
+   * Human-friendly display label. Optional — present only for index-futures
+   * contracts (e.g. "NIFTY (Jun FUT)" for symbol "NIFTY25JUNFUT"). For
+   * stocks + spot indices, this field is omitted and callers render `symbol`.
+   */
+  displayName?: string;
   price: number;
   change: number; // % change vs prev close (so the card can render price delta)
   timestamp: number;
@@ -281,6 +287,8 @@ export interface VolatileNearestLevel {
 
 export interface VolatileStock {
   symbol: string;
+  /** Human-friendly display label — present only for index-futures contracts. */
+  displayName?: string;
   price: number;
   /** Signed % change vs prev close (mirrors IntelligenceSnapshot.change). */
   changePct: number;
@@ -323,6 +331,8 @@ export type DayMoverDirection = "up" | "down";
 
 export interface DayMover {
   symbol: string;
+  /** Human-friendly display label — present only for index-futures contracts. */
+  displayName?: string;
   price: number;
   /** Today's opening price (from quote.open). */
   dayOpen: number;

@@ -8,7 +8,7 @@ import type { PressureEngine } from "../services/pressure.service.js";
 import type { EodJob } from "../services/eod-job.service.js";
 import { detectPattern } from "../lib/pattern-engine.js";
 import { getMomentum } from "../lib/momentum-engine.js";
-import { isIndexSymbol } from "../lib/index-symbols.js";
+import { isIndexSymbol, isIndexLikeSymbol } from "../lib/index-symbols.js";
 import { pressureFromCandles } from "../lib/pressure-from-candles.js";
 import { toIntelligence } from "../lib/intelligence-transformer.js";
 import { authMiddleware, adminGuard } from "../modules/auth/auth.middleware.js";
@@ -192,7 +192,7 @@ export async function stocksRoute(
           }
 
           // Compute momentum from the same candles
-          const mom = getMomentum(candles, isIndexSymbol(symbol));
+          const mom = getMomentum(candles, isIndexLikeSymbol(symbol));
           if (mom) {
             momentumMap[symbol] = mom;
           }
@@ -428,7 +428,7 @@ export async function stocksRoute(
 
             if (intradayCandles.length >= 3) {
               // Momentum: last 3 × 5-min candles — matches the live candle-tracker feed
-              onDemandMomentum = getMomentum(intradayCandles.slice(-3), isIndexSymbol(symbol));
+              onDemandMomentum = getMomentum(intradayCandles.slice(-3), isIndexLikeSymbol(symbol));
 
               // Pressure: approximate from the same 5-min window
               onDemandPressure = pressureFromCandles(intradayCandles.slice(-3));

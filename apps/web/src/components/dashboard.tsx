@@ -7,10 +7,9 @@ import {
   ArrowUpDown,
   BarChart3,
   Flame,
-  Hammer,
   Landmark,
   LayoutGrid,
-  PhoneCall,
+  LineChart,
   Sparkles,
   TrendingDown,
   TrendingUp,
@@ -27,7 +26,7 @@ import { useMarketData } from "@/hooks/use-market-data";
 import { useVolatileStocks } from "@/hooks/use-volatile-stocks";
 import { useDayMovers } from "@/hooks/use-day-movers";
 import { apiFetch } from "@/lib/api";
-import { INDEX_NAMES } from "@/lib/constants";
+import { INDEX_NAMES, isFutureSymbol } from "@/lib/constants";
 import type {
   DayMoverDirectionFilter,
   DayMoverSortKey,
@@ -35,7 +34,7 @@ import type {
   VolatileSortKey,
 } from "@/lib/types";
 
-type ScannerMode = "stocks" | "options" | "volatile" | "dayMovers";
+type ScannerMode = "stocks" | "indexFutures" | "volatile" | "dayMovers";
 
 // Section caps — keep each list digestible at a glance.
 const STRONG_ALIGNMENT_CAP = 6;
@@ -185,15 +184,15 @@ function ModeToggle({
         Day Movers
       </button>
       <button
-        onClick={() => onChange("options")}
+        onClick={() => onChange("indexFutures")}
         className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
-          mode === "options"
+          mode === "indexFutures"
             ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
             : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
         }`}
       >
-        <PhoneCall className="size-3.5" />
-        Options
+        <LineChart className="size-3.5" />
+        Index Futures
       </button>
     </div>
   );
@@ -430,8 +429,9 @@ export function Dashboard() {
             {/* Day Movers tab — reversal-hunting (|Day Move %| ≥ 3 + RVOL gated) */}
             {mode === "dayMovers" && <DayMoversSection />}
 
-            {/* Options view — coming soon placeholder */}
-            {mode === "options" && <OptionsComingSoon />}
+            {/* Index Futures tab — applies the full engine (pressure, momentum,
+                volatility, S/R, AI verdict, etc.) to NIFTY near-expiry futures. */}
+            {mode === "indexFutures" && <IndexFuturesSection />}
           </>
         )}
       </div>
@@ -573,39 +573,54 @@ function DayMoversSection() {
   );
 }
 
-// Empty-state placeholder for the Options tab. Pure illustration card — no data,
-// no live polling, no API calls. Replaces the previous OptionCard grid until
-// proper options analytics ship.
-function OptionsComingSoon() {
+// Index Futures tab — surfaces the NIFTY near-expiry futures contract (v1 scope).
+// Reads the live futures from the same stockMap that drives the rest of the
+// dashboard; no extra polling. The MarketCard renders pressure / momentum /
+// volatility / S-R / AI verdict identically to a stock card — the engine is
+// fully symbol-agnostic, so the same card "just works" for futures.
+function IndexFuturesSection() {
+  const { stockMap } = useMarketData();
+
+  const futures = useMemo(() => {
+    const list: IntelligenceSnapshot[] = [];
+    for (const snap of stockMap.values()) {
+      if (isFutureSymbol(snap.symbol)) list.push(snap);
+    }
+    // Order by nearest expiry — symbol sorts roughly chronologically (NIFTY25JUN…
+    // sorts before NIFTY25JUL…). Sufficient for v1's single contract; will need
+    // a real expiry comparator once we track multiple contracts.
+    list.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    return list;
+  }, [stockMap]);
+
   return (
-    <section className="flex justify-center py-12">
-      <div className="relative w-full max-w-xl overflow-hidden rounded-3xl border border-zinc-200 dark:border-zinc-800/80 bg-gradient-to-br from-cyan-500/5 via-white to-violet-500/5 dark:from-cyan-500/8 dark:via-zinc-950/60 dark:to-violet-500/8 px-10 py-14 text-center">
-        {/* Decorative glow blobs */}
-        <div className="pointer-events-none absolute -top-16 -left-16 size-48 rounded-full blur-3xl bg-cyan-400/15" />
-        <div className="pointer-events-none absolute -bottom-20 -right-20 size-56 rounded-full blur-3xl bg-violet-400/15" />
-
-        <div className="relative flex flex-col items-center gap-5">
-          <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500/20 to-violet-500/20 ring-1 ring-cyan-400/30 shadow-lg shadow-cyan-500/10">
-            <Hammer className="size-7 text-cyan-600 dark:text-cyan-300" strokeWidth={2} />
-          </div>
-
-          <div className="space-y-2">
-            <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-              Options view coming soon
-            </h2>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-sm mx-auto leading-relaxed">
-              We are building a dedicated options activity surface. Switch back to the Stocks tab for now.
-            </p>
-          </div>
-
-          <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/[0.06] px-4 py-1.5">
-            <span className="size-1.5 animate-pulse rounded-full bg-cyan-400" />
-            <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-cyan-700 dark:text-cyan-300">
-              In development
-            </span>
-          </div>
+    <section className="space-y-6">
+      <SectionHeader
+        Icon={LineChart}
+        title="Index Futures"
+        subtitle="Nearest-expiry NIFTY futures — full pressure, momentum & volatility on tradeable order flow"
+        count={futures.length}
+        iconBg="bg-gradient-to-br from-violet-500/25 to-cyan-500/20"
+        iconRing="ring-violet-400/40"
+        iconColor="text-violet-600 dark:text-violet-300"
+      />
+      {futures.length === 0 ? (
+        <EmptyState
+          Icon={LineChart}
+          heading="No index futures available yet"
+          subtext="The scanner is waiting for the near-expiry NIFTY contract to start streaming. If this persists after a server restart, check the [index_futures] log lines for contract selection."
+          iconBg="bg-gradient-to-br from-violet-500/20 to-cyan-500/15"
+          iconRing="ring-violet-400/40"
+          iconColor="text-violet-500 dark:text-violet-300"
+          glow="bg-violet-400/15"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {futures.map((s) => (
+            <MarketCard key={s.symbol} data={s} />
+          ))}
         </div>
-      </div>
+      )}
     </section>
   );
 }

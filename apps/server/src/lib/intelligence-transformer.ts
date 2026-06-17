@@ -21,6 +21,7 @@ import type {
 } from "./types.js";
 import { isIndexSymbol } from "./index-symbols.js";
 import { computeATR } from "./atr.js";
+import { getFutureDisplayName } from "../services/instrument.service.js";
 
 export interface IntelligenceInput {
   symbol: string;
@@ -413,8 +414,13 @@ export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
 
   const change = input.close !== 0 ? ((input.price - input.close) / input.close) * 100 : 0;
 
+  // Display name override — only populated for index-futures contracts
+  // (the instrument loader populated futuresDisplayNames at server boot).
+  const displayName = getFutureDisplayName(input.symbol);
+
   return {
     symbol: input.symbol,
+    ...(displayName ? { displayName } : {}),
     price: input.price,
     change: round2(change),
     timestamp: input.timestamp,

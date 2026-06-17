@@ -21,3 +21,12 @@ export const INDEX_NAMES = new Set([
   "NIFTY MEDIA",
   "INDIA VIX",
 ]);
+
+/**
+ * Detect whether a Kite trading symbol is a monthly index-futures contract,
+ * e.g. "NIFTY25JUNFUT". Matches the server-side `isFutureSymbol` in
+ * apps/server/src/lib/index-futures-config.ts — keep them in sync.
+ */
+export function isFutureSymbol(symbol: string): boolean {
+  return /^[A-Z]+\d{2}[A-Z]{3}FUT$/i.test(symbol);
+}
