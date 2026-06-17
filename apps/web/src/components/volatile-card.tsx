@@ -104,8 +104,11 @@ export function VolatileCard({ data }: VolatileCardProps) {
 
       {/* Hero — symbol / price */}
       <div className="relative">
-        <div className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-          {data.symbol}
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+            {data.displayName ?? data.symbol}
+          </span>
+          {data.displayName && <FutChip />}
         </div>
         <div className="mt-1 flex items-baseline gap-2">
           <span
@@ -156,6 +159,15 @@ export function VolatileCard({ data }: VolatileCardProps) {
       {/* Footer — zone, pattern, live pulse */}
       <CardFooter zone={data.zone} pattern={data.pattern} />
     </Link>
+  );
+}
+
+// Index-future visual differentiator. Rendered only when displayName is set.
+function FutChip() {
+  return (
+    <span className="shrink-0 inline-flex items-center rounded-md border border-amber-400/40 bg-amber-500/[0.10] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-300">
+      Fut
+    </span>
   );
 }
 

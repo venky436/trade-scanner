@@ -1,5 +1,13 @@
 import { KiteConnect } from "kiteconnect";
 import type { InstrumentMaps } from "../lib/types.js";
+import {
+  FUTURES_EXPIRY_MODE,
+  INDEX_FUTURE_UNDERLYINGS,
+  INDEX_FUTURES_EXCHANGE,
+  INDEX_FUTURES_SEGMENT,
+  formatFutureDisplayName,
+  isMonthlyContract,
+} from "../lib/index-futures-config.js";
 
 export type MarketMode = "commodity" | "equity";
 
@@ -254,6 +262,120 @@ export async function loadIndices(
   console.log(
     `[indices] Selected ${symbols.length} indices: ${symbols.join(", ")}`
   );
+
+  return { tokenToSymbol, symbolToToken, symbols };
+}
+
+// ─── Index futures (NIFTY, BANKNIFTY, …) ────────────────────────────────────
+//
+// Module-level map of (trading symbol → human-friendly display name), populated
+// by loadIndexFutures() and queried later by the snapshot transformer.
+// Empty when index-futures loading hasn't run or returned no contracts.
+const futuresDisplayNames = new Map<string, string>();
+
+/**
+ * Look up the display name for an index-futures trading symbol.
+ *   getFutureDisplayName("NIFTY25JUNFUT") → "NIFTY (Jun FUT)"
+ * Returns null if the symbol isn't a tracked future (so callers know to use
+ * the raw symbol).
+ */
+export function getFutureDisplayName(tradingSymbol: string): string | null {
+  return futuresDisplayNames.get(tradingSymbol) ?? null;
+}
+
+/**
+ * Load the near-month futures contract(s) for every underlying in
+ * INDEX_FUTURE_UNDERLYINGS (v1: just NIFTY). Reuses the "group by name,
+ * sort by expiry, pick nearest" pattern that already powers commodity-mode
+ * contract selection.
+ *
+ * Returns an InstrumentMaps shaped the same as loadInstruments() / loadIndices()
+ * so the caller can merge it into the global subscription set.
+ *
+ * As a side-effect, populates the module-level futuresDisplayNames map so
+ * the snapshot transformer can render "NIFTY (Jun FUT)" on cards.
+ *
+ * Fail-soft: if Kite returns no matching futures (e.g. all underlyings have
+ * already expired and the next contract hasn't been listed yet), returns
+ * empty maps + logs a warning. Server keeps booting.
+ */
+export async function loadIndexFutures(
+  apiKey: string,
+  accessToken: string,
+): Promise<InstrumentMaps> {
+  const kc = new KiteConnect({ api_key: apiKey });
+  kc.setAccessToken(accessToken);
+
+  console.log(
+    `[index_futures] Fetching ${INDEX_FUTURES_EXCHANGE} instruments for: ${INDEX_FUTURE_UNDERLYINGS.join(", ")}`,
+  );
+  const instruments = await kc.getInstruments(INDEX_FUTURES_EXCHANGE as any);
+  console.log(`[index_futures] Fetched ${instruments.length} total ${INDEX_FUTURES_EXCHANGE} instruments`);
+
+  const underlyingSet = new Set(INDEX_FUTURE_UNDERLYINGS);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Filter: futures segment, our underlyings only, not yet expired.
+  // In monthly mode, also exclude weekly contracts (= anything not expiring
+  // on a Thursday). Weekly mode keeps all expiries — the picker below then
+  // chooses whichever is nearest.
+  const candidates = instruments.filter((i: any) => {
+    if (i.segment !== INDEX_FUTURES_SEGMENT) return false;
+    if (!underlyingSet.has(i.name as string)) return false;
+    if (!i.expiry) return false;
+    if (new Date(i.expiry) < today) return false;
+    if (FUTURES_EXPIRY_MODE === "monthly" && !isMonthlyContract(i.expiry)) return false;
+    return true;
+  });
+  console.log(
+    `[index_futures] mode=${FUTURES_EXPIRY_MODE}: ${candidates.length} active candidates for tracked underlyings`,
+  );
+
+  // Group by underlying name, then pick the nearest expiry per group
+  const grouped = new Map<string, any[]>();
+  for (const inst of candidates) {
+    const name = inst.name as string;
+    if (!grouped.has(name)) grouped.set(name, []);
+    grouped.get(name)!.push(inst);
+  }
+
+  const selected: any[] = [];
+  for (const [, contracts] of grouped) {
+    contracts.sort(
+      (a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime(),
+    );
+    selected.push(contracts[0]);
+  }
+
+  // Clear any stale entries from a previous load (e.g. on rollover restart)
+  // and rebuild from the fresh selection.
+  futuresDisplayNames.clear();
+
+  const tokenToSymbol = new Map<number, string>();
+  const symbolToToken = new Map<string, number>();
+  const symbols: string[] = [];
+
+  for (const inst of selected) {
+    const token = Number(inst.instrument_token);
+    const symbol = inst.tradingsymbol as string;
+    const displayName = formatFutureDisplayName(symbol, inst.expiry);
+    tokenToSymbol.set(token, symbol);
+    symbolToToken.set(symbol, token);
+    symbols.push(symbol);
+    futuresDisplayNames.set(symbol, displayName);
+  }
+
+  if (symbols.length === 0) {
+    console.warn(
+      `[index_futures] No active futures found for ${INDEX_FUTURE_UNDERLYINGS.join(", ")} — index futures will be unavailable until a contract is listed. Scanner continues normally.`,
+    );
+  } else {
+    const description = symbols
+      .map((s) => `${s} → ${futuresDisplayNames.get(s) ?? s}`)
+      .join(", ");
+    console.log(`[index_futures] Selected ${symbols.length} near-month contract(s): ${description}`);
+  }
 
   return { tokenToSymbol, symbolToToken, symbols };
 }

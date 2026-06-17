@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { buildServer } from "./server.js";
-import { loadInstruments, loadIndices, type MarketMode } from "./services/instrument.service.js";
+import { loadInstruments, loadIndices, loadIndexFutures, type MarketMode } from "./services/instrument.service.js";
 import { createKiteTickerManager } from "./services/kite-ticker.service.js";
 import { createWsManager, type WsManager } from "./ws/ws-server.js";
 import { createBroadcastEngine } from "./services/broadcast.service.js";
@@ -19,7 +19,7 @@ import { redisService } from "./services/redis.service.js";
 import { getIntradaySR } from "./services/intraday-levels.service.js";
 import { getMomentum } from "./lib/momentum-engine.js";
 import { detectPattern } from "./lib/pattern-engine.js";
-import { INDEX_SYMBOLS, isIndexSymbol } from "./lib/index-symbols.js";
+import { INDEX_SYMBOLS, isIndexSymbol, isIndexLikeSymbol } from "./lib/index-symbols.js";
 import { loadSession } from "./lib/session-store.js";
 import type { InstrumentMaps, SupportResistanceResult, MomentumResult, PatternSignal } from "./lib/types.js";
 import { marketDataService } from "./services/market-data.service.js";
@@ -86,6 +86,10 @@ async function main() {
     const instrumentMaps = await loadInstruments(apiKey, accessToken, marketMode);
 
     // Load indices separately and merge into instrument maps
+    // Index FUTURES (NIFTY for v1) are loaded next and merged into the same
+    // maps — they ride through the existing pipeline as ordinary symbols
+    // because every downstream engine is symbol-agnostic.
+    const futuresSymbols: string[] = [];
     if (marketMode === "equity") {
       const indexMaps = await loadIndices(apiKey, accessToken);
       for (const [token, symbol] of indexMaps.tokenToSymbol) {
@@ -94,6 +98,24 @@ async function main() {
         instrumentMaps.symbols.push(symbol);
       }
       console.log(`[equity] Total instruments (stocks + indices): ${instrumentMaps.symbols.length}`);
+
+      // Fail-soft: any error here must NOT block the rest of the boot. The
+      // scanner is still useful without futures, and an outage of the NFO
+      // instrument list should not take the whole app down.
+      try {
+        const futuresMaps = await loadIndexFutures(apiKey, accessToken);
+        for (const [token, symbol] of futuresMaps.tokenToSymbol) {
+          instrumentMaps.tokenToSymbol.set(token, symbol);
+          instrumentMaps.symbolToToken.set(symbol, token);
+          instrumentMaps.symbols.push(symbol);
+          futuresSymbols.push(symbol);
+        }
+        if (futuresMaps.symbols.length > 0) {
+          console.log(`[equity] Added ${futuresMaps.symbols.length} index future(s): ${futuresMaps.symbols.join(", ")}`);
+        }
+      } catch (err) {
+        console.error("[index_futures] Failed to load — scanner continuing without futures:", (err as Error).message);
+      }
     }
 
     // Store for history route
@@ -137,6 +159,13 @@ async function main() {
     const patternVersion = new Map<string, number>();
 
     // Create stock filter (fast eligibility layer)
+    // alwaysInclude: indices (no volume → never pass naturally) AND any index
+    // futures we picked up — they have huge volume and would pass the change/
+    // RVOL filter most days, but pinning them ensures they never drop off
+    // the dashboard during a quiet hour.
+    const alwaysIncludeSet = futuresSymbols.length > 0
+      ? new Set([...INDEX_SYMBOLS, ...futuresSymbols])
+      : INDEX_SYMBOLS;
     if (stockFilterInstance) stockFilterInstance.stop();
     const stockFilter = createStockFilter({
       maxStocks: 150,
@@ -145,7 +174,7 @@ async function main() {
       minPrice: 50,
       refreshIntervalMs: 5000,
       allSymbols: instrumentMaps.symbols,
-      alwaysInclude: INDEX_SYMBOLS,
+      alwaysInclude: alwaysIncludeSet,
     });
     stockFilterInstance = stockFilter;
 
@@ -218,7 +247,7 @@ async function main() {
         // Compute momentum (3× more sensitive divisor for indices — they
         // move 0.05–0.2% per candle vs stocks at 0.3–1%, so the same
         // threshold puts indices perpetually in FLAT)
-        const mom = getMomentum(candles, isIndexSymbol(symbol));
+        const mom = getMomentum(candles, isIndexLikeSymbol(symbol));
         if (mom) momentumMap.set(symbol, mom);
         else momentumMap.delete(symbol);
         momentumVersion.set(symbol, (momentumVersion.get(symbol) ?? 0) + 1);

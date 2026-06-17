@@ -43,6 +43,12 @@ export interface IntelligenceVolatility {
 
 export interface IntelligenceSnapshot {
   symbol: string;
+  /**
+   * Human-friendly display label. Present only for index-futures contracts
+   * (e.g. "NIFTY (Jun FUT)" for symbol "NIFTY25JUNFUT"). Cards should render
+   * `displayName ?? symbol`.
+   */
+  displayName?: string;
   price: number;
   change: number;
   timestamp: number;
@@ -180,6 +186,8 @@ export interface VolatileNearestLevel {
 
 export interface VolatileStock {
   symbol: string;
+  /** Human-friendly display label — present only for index-futures. */
+  displayName?: string;
   price: number;
   changePct: number;
   atrPct: number;
@@ -222,6 +230,8 @@ export type DayMoverDirection = "up" | "down";
 
 export interface DayMover {
   symbol: string;
+  /** Human-friendly display label — present only for index-futures. */
+  displayName?: string;
   price: number;
   dayOpen: number;
   dayHigh: number;

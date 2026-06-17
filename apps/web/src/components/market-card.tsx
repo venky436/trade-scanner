@@ -147,8 +147,11 @@ export function MarketCard({ data }: MarketCardProps) {
       {/* Hero — symbol + zone label / price + change */}
       <div className="relative flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {data.symbol}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="truncate text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+              {data.displayName ?? data.symbol}
+            </span>
+            {data.displayName && <FutChip />}
           </div>
           <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
             {zoneDisplay(zone)}
@@ -229,6 +232,16 @@ export function MarketCard({ data }: MarketCardProps) {
         </span>
       </div>
     </Link>
+  );
+}
+
+// Index-future visual differentiator. Rendered only when displayName is set
+// (which the backend populates exclusively for futures contracts).
+function FutChip() {
+  return (
+    <span className="shrink-0 inline-flex items-center rounded-md border border-amber-400/40 bg-amber-500/[0.10] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-300">
+      Fut
+    </span>
   );
 }
 

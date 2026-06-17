@@ -151,6 +151,7 @@ export async function sectionsRoute(fastify: FastifyInstance, deps: SectionsRout
 
       candidates.push({
         symbol: sym,
+        ...(intel.displayName ? { displayName: intel.displayName } : {}),
         price: quote.lastPrice,
         changePct: intel.change,
         atrPct,
@@ -251,6 +252,7 @@ export async function sectionsRoute(fastify: FastifyInstance, deps: SectionsRout
 
       candidates.push({
         symbol: sym,
+        ...(intel.displayName ? { displayName: intel.displayName } : {}),
         price: quote.lastPrice,
         dayOpen: quote.open,
         dayHigh: quote.high,
