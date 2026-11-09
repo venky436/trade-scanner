@@ -9,6 +9,7 @@ import {
   HistogramSeries,
   LineSeries,
   LineStyle,
+  TickMarkType,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
@@ -16,11 +17,51 @@ import {
   type LineData,
   type Time,
   type IPriceLine,
+  type AutoscaleInfo,
 } from "lightweight-charts";
 import type { CandleData } from "@/lib/types";
 
 // Minimal tick shape for live chart updates — kept narrow so the chart doesn't
 // depend on the full IntelligenceSnapshot (volume isn't part of the public payload).
+// lightweight-charts always shows times as UTC. NSE runs on IST (UTC+5:30), so
+// we shift every timestamp by +5:30 ONLY when handing it to the chart — the
+// axis and crosshair then read 09:15, 10:00 … 15:30 India time. Candle data
+// and live-tick bucketing stay in real epoch seconds (5:30 is a whole number
+// of 5-min candles, so candle boundaries are unaffected).
+const IST_OFFSET_SECONDS = 5.5 * 60 * 60;
+function toChartTime(epochSeconds: number): Time {
+  return (epochSeconds + IST_OFFSET_SECONDS) as Time;
+}
+
+// ── Time axis labels (IST) ──────────────────────────────────────────────────
+// Chart times are already shifted to IST (toChartTime), so read them with UTC
+// getters. Every label is a clock time; the first candle of a day also gets
+// the date, e.g. "9 Nov 09:15".
+const CANDLE_SPACING_PX = 46;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+function chartDate(time: Time): Date {
+  return new Date((time as number) * 1000);
+}
+
+function hhmm(d: Date): string {
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+}
+
+function formatTickMark(time: Time, tickMarkType: TickMarkType): string {
+  const d = chartDate(time);
+  if (tickMarkType === TickMarkType.Time || tickMarkType === TickMarkType.TimeWithSeconds) return hhmm(d);
+  // Day / month / year boundary = first candle of a new session
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${hhmm(d)}`;
+}
+
+function formatCrosshairTime(time: Time): string {
+  const d = chartDate(time);
+  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}  ${hhmm(d)}`;
+}
+
 export interface ChartTick {
   price: number;
   timestamp: number;
@@ -47,7 +88,7 @@ function computeMA(candles: CandleData[], period: number): LineData<Time>[] {
     for (let j = i - period + 1; j <= i; j++) {
       sum += candles[j].close;
     }
-    result.push({ time: candles[i].time as Time, value: sum / period });
+    result.push({ time: toChartTime(candles[i].time), value: sum / period });
   }
   return result;
 }
@@ -61,7 +102,16 @@ interface CandlestickChartProps {
   resistanceLevel?: number | null;
   supportTouches?: number;
   resistanceTouches?: number;
+  /** Your ACTIVE trade on this stock → entry / stop-loss / target lines. null = none. */
+  tradeLevels?: TradeLevels | null;
   className?: string;
+}
+
+export interface TradeLevels {
+  side: "BUY" | "SELL";
+  entry: number | null; // null until the entry fills
+  stopLoss: number;
+  target: number;
 }
 
 export function CandlestickChart({
@@ -73,6 +123,7 @@ export function CandlestickChart({
   resistanceLevel,
   supportTouches,
   resistanceTouches,
+  tradeLevels,
   className,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -121,7 +172,15 @@ export function CandlestickChart({
         borderColor: colors.border,
         timeVisible: true,
         secondsVisible: false,
+        // Wide enough that every 5-min candle gets its own time label
+        // (09:15, 09:20, …). Zooming out still works; labels then thin out.
+        barSpacing: CANDLE_SPACING_PX,
+        minBarSpacing: 2,
+        rightOffset: 2,
+        tickMarkFormatter: formatTickMark,
       },
+      // Crosshair label: full date + time of the hovered candle (IST)
+      localization: { timeFormatter: formatCrosshairTime },
       autoSize: true,
     });
 
@@ -197,6 +256,69 @@ export function CandlestickChart({
     });
   }, [resolvedTheme, getThemeColors]);
 
+  // Active trade lines: entry (dotted), stop-loss (red), target (green).
+  // The price scale is widened to include them so they're always visible.
+  const tradeLinesRef = useRef<IPriceLine[]>([]);
+  const tradeLevelsRef = useRef<TradeLevels | null>(null);
+  useEffect(() => {
+    if (!chartReady || !candleSeriesRef.current) return;
+    const series = candleSeriesRef.current;
+    for (const line of tradeLinesRef.current) series.removePriceLine(line);
+    tradeLinesRef.current = [];
+    tradeLevelsRef.current = tradeLevels ?? null;
+
+    if (tradeLevels) {
+      const fmt = (p: number) => p.toFixed(2);
+      tradeLinesRef.current.push(
+        series.createPriceLine({
+          price: tradeLevels.stopLoss,
+          color: "#f43f5e",
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: `SL ${fmt(tradeLevels.stopLoss)}`,
+        }),
+        series.createPriceLine({
+          price: tradeLevels.target,
+          color: "#10b981",
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: `Target ${fmt(tradeLevels.target)}`,
+        }),
+      );
+      if (tradeLevels.entry != null) {
+        tradeLinesRef.current.push(
+          series.createPriceLine({
+            price: tradeLevels.entry,
+            color: tradeLevels.side === "BUY" ? "#3b82f6" : "#f97316",
+            lineWidth: 1,
+            lineStyle: LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: `${tradeLevels.side === "BUY" ? "Buy" : "Sell"} ${fmt(tradeLevels.entry)}`,
+          }),
+        );
+      }
+    }
+
+    // keep SL / target / entry inside the visible price range
+    series.applyOptions({
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+        const base = original();
+        const lv = tradeLevelsRef.current;
+        if (!base || !base.priceRange || !lv) return base;
+        const vals = [lv.stopLoss, lv.target, ...(lv.entry != null ? [lv.entry] : [])];
+        return {
+          ...base,
+          priceRange: {
+            minValue: Math.min(base.priceRange.minValue, ...vals),
+            maxValue: Math.max(base.priceRange.maxValue, ...vals),
+          },
+        };
+      },
+    });
+  }, [tradeLevels?.side, tradeLevels?.entry, tradeLevels?.stopLoss, tradeLevels?.target, chartReady]);
+
   // Draw S/R price lines.
   // Belt-and-suspenders inversion guard: even if a caller forgets to pre-validate,
   // never draw a "support" line above the live price (or "resistance" below).
@@ -264,7 +386,7 @@ export function CandlestickChart({
       if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
 
       const candleData: CandlestickData<Time>[] = candles.map((c) => ({
-        time: c.time as Time,
+        time: toChartTime(c.time),
         open: c.open,
         high: c.high,
         low: c.low,
@@ -272,7 +394,7 @@ export function CandlestickChart({
       }));
 
       const volumeData: HistogramData<Time>[] = candles.map((c) => ({
-        time: c.time as Time,
+        time: toChartTime(c.time),
         value: c.volume,
         color: c.close >= c.open ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)",
       }));
@@ -292,7 +414,10 @@ export function CandlestickChart({
         lastCandleRef.current = candles[candles.length - 1];
       }
 
-      chartRef.current?.timeScale().fitContent();
+      // Show the LATEST candles at full width (one time label per candle);
+      // scroll left for earlier ones. (fitContent would squeeze all 5 days in.)
+      chartRef.current?.timeScale().applyOptions({ barSpacing: CANDLE_SPACING_PX });
+      chartRef.current?.timeScale().scrollToRealTime();
     } catch {
       // ignore fetch errors
     }
@@ -325,14 +450,14 @@ export function CandlestickChart({
       lastCandleRef.current = updated;
 
       candleSeriesRef.current.update({
-        time: last.time as Time,
+        time: toChartTime(last.time),
         open: updated.open,
         high: updated.high,
         low: updated.low,
         close: updated.close,
       });
       volumeSeriesRef.current.update({
-        time: last.time as Time,
+        time: toChartTime(last.time),
         value: updated.volume,
         color:
           updated.close >= updated.open
@@ -351,14 +476,14 @@ export function CandlestickChart({
       lastCandleRef.current = newCandle;
 
       candleSeriesRef.current.update({
-        time: candleStart as Time,
+        time: toChartTime(candleStart),
         open: newCandle.open,
         high: newCandle.high,
         low: newCandle.low,
         close: newCandle.close,
       });
       volumeSeriesRef.current.update({
-        time: candleStart as Time,
+        time: toChartTime(candleStart),
         value: newCandle.volume,
         color: "rgba(34,197,94,0.3)",
       });

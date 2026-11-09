@@ -10,13 +10,21 @@ function candle(open: number, close: number, volume: number): Candle {
 }
 
 describe("pressureFromCandles", () => {
-  it("returns null when fewer than 3 candles are provided", () => {
+  // Since 2026-11-09 pressure uses the last 2 candles (0.3 / 0.7).
+  it("returns null when fewer than 2 candles are provided", () => {
     assert.equal(pressureFromCandles([]), null);
     assert.equal(pressureFromCandles([candle(100, 101, 1000)]), null);
-    assert.equal(
-      pressureFromCandles([candle(100, 101, 1000), candle(101, 102, 1000)]),
-      null,
-    );
+  });
+
+  it("2 candles are enough; newest weighs 0.7, older 0.3, ×1.15 when both agree", () => {
+    // equal volume → volumeStrength 1 → each green candle scores 0.7 + 0.3 = 1.0
+    const r = pressureFromCandles([candle(100, 101, 1000), candle(101, 102, 1000)]);
+    assert.ok(r);
+    assert.equal(r!.value, 1); // (1×0.3 + 1×0.7) × 1.15 = 1.15 → clamped to 1
+    assert.equal(r!.signal, "STRONG_BUY");
+    // only the LAST 2 count: an old red candle in front changes nothing
+    const withOld = pressureFromCandles([candle(103, 99, 50_000), candle(100, 101, 1000), candle(101, 102, 1000)]);
+    assert.deepEqual(withOld, r);
   });
 
   it("returns null when total volume is zero", () => {

@@ -6,6 +6,7 @@ import { createWsManager, type WsManager } from "./ws/ws-server.js";
 import { createBroadcastEngine } from "./services/broadcast.service.js";
 import { createPressureEngine, type PressureEngine } from "./services/pressure.service.js";
 import { createCandleTracker } from "./services/candle-tracker.service.js";
+import { createHistoryBackfill, type HistoryBackfill } from "./services/history-backfill.service.js";
 import { createSignalWorker, type SignalWorker } from "./services/signal-worker.service.js";
 import { createLevelsWorker, type LevelsWorker } from "./services/levels-worker.service.js";
 import { createStockFilter, type StockFilter } from "./services/stock-filter.service.js";
@@ -23,6 +24,12 @@ import { INDEX_SYMBOLS, isIndexSymbol, isIndexLikeSymbol } from "./lib/index-sym
 import { loadSession } from "./lib/session-store.js";
 import type { InstrumentMaps, SupportResistanceResult, MomentumResult, PatternSignal } from "./lib/types.js";
 import { marketDataService } from "./services/market-data.service.js";
+import { createOrderExecutionService } from "./services/order-execution.service.js";
+import { createAutoTrader } from "./services/auto-trader.service.js";
+import { buildTradeSetups, inCallWindow, CALL_WINDOW_LABEL } from "./lib/trade-setups.js";
+import { db } from "./db/index.js";
+import { users } from "./db/schema/users.js";
+import { eq } from "drizzle-orm";
 
 const PORT = Number(process.env.PORT) || 4002;
 
@@ -39,6 +46,8 @@ async function main() {
   // WsManager starts empty — symbols added after auth
   let wsManager: WsManager | null = null;
   let tickerDisconnect: (() => void) | null = null;
+  // Loads today's 5-min candles from Kite after (re)connect so engines are warm in minutes
+  let historyBackfillInstance: HistoryBackfill | null = null;
   let broadcastStop: (() => void) | null = null;
   let signalWorkerInstance: SignalWorker | null = null;
   let levelsWorkerInstance: LevelsWorker | null = null;
@@ -64,6 +73,55 @@ async function main() {
   let currentMomentumMap: Map<string, MomentumResult> | null = null;
   // Exposed for sections route (reads recent candles) — assigned in startMarketData
   let currentCandleTracker: ReturnType<typeof createCandleTracker> | null = null;
+
+  // Order execution (manual trades from the Trade screen / order window).
+  // Paper / Real comes ONLY from the navbar switch (saved in data/trade-mode.json).
+  // Never used yet → PAPER. Real Zerodha orders only after switching to Real.
+  const orderExecution = createOrderExecutionService({
+    apiKey,
+    getAccessToken: () => currentAccessToken,
+    getInstrumentMaps: () => currentInstrumentMaps,
+    paperCapital: Number(process.env.PAPER_CAPITAL) || 25_000,
+    modeFile: "data/trade-mode.json",
+    entryCutoff: process.env.ENTRY_CUTOFF,
+    squareOffAt: process.env.SQUARE_OFF_AT,
+  });
+
+  // Auto-trader: PAPER only (pauses while the switch is on Real).
+  // ≥90% confidence, max 3 active trades, 100 shares each. See auto-trader.service.ts.
+  let adminUserId: string | null = null;
+  const autoTrader = createAutoTrader({
+    getMode: () => orderExecution.mode,
+    getUserId: async () => {
+      if (!adminUserId) {
+        const [u] = await db.select({ id: users.id }).from(users).where(eq(users.role, "ADMIN")).limit(1);
+        adminUserId = u?.id ?? null;
+      }
+      return adminUserId;
+    },
+    getReadySetups: () =>
+      buildTradeSetups(
+        {
+          getCachedLevels: () => cachedLevels,
+          getPressure: (s) => currentPressureEngine?.getPressure(s) ?? null,
+          getMomentum: (s) => currentMomentumMap?.get(s) ?? null,
+          getRecentCandles: (s, n) => currentCandleTracker?.getRecentCandles(s, n) ?? [],
+          getAllSymbols: () => currentInstrumentMaps?.symbols ?? [],
+        },
+        20,
+      ).ready,
+    getTodayTrades: async (userId) => {
+      const [today, active] = await Promise.all([
+        orderExecution.listTrades(userId, { range: "today" }),
+        orderExecution.listTrades(userId, { range: "all", status: "active" }),
+      ]);
+      const seen = new Set(today.map((t) => t.id));
+      return [...today, ...active.filter((t) => !seen.has(t.id))];
+    },
+    placeTrade: (userId, input) => orderExecution.placeTrade(userId, input),
+    callWindow: { isOpen: () => inCallWindow(Date.now()), label: CALL_WINDOW_LABEL },
+    stateFile: "data/auto-trade.json",
+  });
 
   // Shared S/R levels cache (populated by levels-worker, read by signal-worker + broadcast)
   let cachedLevels: Record<string, SupportResistanceResult> = {};
@@ -331,7 +389,9 @@ async function main() {
     // Start workers
     stockFilter.start();
     signalWorker.start();
-    levelsWorker.start();
+    // levelsWorker starts AFTER the startup history jobs (see below) — it uses
+    // the same Kite historical-data rate limit; until then daily S/R comes
+    // from the Redis cache loaded above.
     accuracyService.start();
     trackingService.start();
 
@@ -381,9 +441,24 @@ async function main() {
         });
         candleTracker.processTick(symbol, quote.lastPrice, quote.volume, quote.timestamp);
       },
+      // Zerodha order status changes → update the matching trade row
+      onOrderUpdate: (order) => orderExecution.handleOrderUpdate(order),
     });
     ticker.connect();
     tickerDisconnect = ticker.disconnect;
+
+    // Warm the engines from Kite's historical 5-min candles (most active first)
+    // instead of waiting 15–20 min for live candles. See history-backfill.service.ts.
+    if (historyBackfillInstance) historyBackfillInstance.stop();
+    const historyBackfill = createHistoryBackfill({
+      apiKey,
+      getAccessToken: () => currentAccessToken,
+      getInstrumentMaps: () => currentInstrumentMaps,
+      getPrioritySymbols: () => stockFilter.getEligibleSymbols(),
+      candleTracker,
+      pressureEngine,
+    });
+    historyBackfillInstance = historyBackfill;
 
     console.log("Market data pipeline started");
 
@@ -405,15 +480,28 @@ async function main() {
       }, delay);
     }
 
-    // Auto-trigger EOD job on deployment (non-blocking)
+    // Startup jobs (non-blocking), one after the other so they don't fight
+    // over Kite's historical-data rate limit:
+    //   1. history backfill — engines warm within minutes (waits 6 s so the
+    //      stock filter has picked the most active symbols to load first)
+    //   2. EOD job — daily S/R precomputation (as before)
+    //   3. levels worker — continuous daily S/R refresh
     setTimeout(async () => {
+      try {
+        await historyBackfill.run();
+      } catch (err) {
+        console.error("[Startup] History backfill failed:", err);
+      }
       try {
         console.log("[Startup] Auto-triggering EOD precomputation...");
         await eodJob.run();
       } catch (err) {
         console.error("[Startup] EOD auto-trigger failed:", err);
+      } finally {
+        //   3. continuous daily-S/R refresh (only if this is still the current pipeline)
+        if (levelsWorkerInstance === levelsWorker) levelsWorker.start();
       }
-    }, 5000);
+    }, 6000);
   }
 
   // Try saved session first, then env variable
@@ -446,9 +534,13 @@ async function main() {
     getMomentumSignal: (s) => currentMomentumMap?.get(s) ?? null,
     getRecentCandles: (s, n) => currentCandleTracker?.getRecentCandles(s, n) ?? [],
     getAllSymbols: () => currentInstrumentMaps?.symbols ?? [],
+    getOrderExecution: () => orderExecution,
+    getAutoTrader: () => autoTrader,
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });
+  orderExecution.start();
+  autoTrader.start();
   console.log(`Server running on http://localhost:${PORT}`);
 
   // If we already have an access token from env, start immediately
@@ -473,6 +565,9 @@ async function main() {
     if (trackingServiceInstance) trackingServiceInstance.stop();
     if (aiCallServiceInstance) aiCallServiceInstance.stop();
     if (aiOutcomeServiceInstance) aiOutcomeServiceInstance.stop();
+    orderExecution.stop();
+    autoTrader.stop();
+    if (historyBackfillInstance) historyBackfillInstance.stop();
     if (broadcastStop) broadcastStop();
     if (tickerDisconnect) tickerDisconnect();
     if (wsManager) wsManager.close();

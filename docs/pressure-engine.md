@@ -1,5 +1,14 @@
 # Pressure Detection Engine
 
+> **Changed 2026-11-09 — 5-minute candles.** Pressure used to score 1-minute
+> windows that started at whichever tick arrived (so they drifted). It now
+> scores **5-minute candles aligned to the clock (09:15, 09:20, …)** — the same
+> slots the candle tracker uses for momentum, patterns and intraday S/R. The
+> first, partial candle after a symbol starts streaming is discarded; the
+> volume baseline is the average per 5-min candle; each closed candle's
+> breakdown is available via `getRecentCandles()`. Score formula, weights and
+> thresholds are unchanged. Warm-up is now ~15–20 minutes (was ~3).
+
 ## What It Does
 
 The Pressure Engine infers **buy/sell pressure** for each stock in real time. Since the Kite API does not provide separate buy and sell volume, we estimate buyer and seller activity by looking at the **direction of price movement** on each tick. If the price goes up between ticks, the volume traded in that interval is attributed to buyers. If the price goes down, it's attributed to sellers.
@@ -26,7 +35,7 @@ The idea is simple: if the price moved **up** since the last tick, whoever trade
 
 ### Running Average Instead of 20-Day Historical
 
-The spec originally called for `avgVolume20 / 375` (20-day average volume divided by market minutes) for normalization. Fetching 20-day historical data per symbol on startup adds complexity and latency. Instead, we use a **running estimate**: `totalVolumeProcessed / elapsedMinutes`. After a few minutes this converges to a good approximation, and since the engine already requires 3 candle closes (~3 minutes) before producing any output, the estimate is warm by first use.
+The spec originally called for `avgVolume20 / 375` (20-day average volume divided by market minutes) for normalization. Fetching 20-day historical data per symbol on startup adds complexity and latency. Instead, we use a **running estimate**: `totalVolumeProcessed / elapsedCandles` (5-min slots since the first full candle). Since the engine already requires 3 candle closes (~15 minutes) before producing any output, the estimate is warm by first use.
 
 ---
 
@@ -40,7 +49,7 @@ Kite Ticker
 Pressure Engine (per-symbol state)
     │
     │  processTick() — O(1), no async
-    │  closeCandle() — every 60s
+    │  closeCandle() — every 5-min clock slot (09:15, 09:20 …)
     │  getPressure() — returns result after 3 candles
     │
     ├──► Broadcast Engine ──► WebSocket clients (pressure field on each snapshot)
@@ -71,13 +80,14 @@ Every tick from Kite is forwarded to the engine. For each symbol, we maintain a 
 
 ```
 prevPrice, prevVolume     ← tracking between ticks
-buyerVolume, sellerVolume ← accumulated within current 1-min candle
+buyerVolume, sellerVolume ← accumulated within current 5-min candle
 delta                     ← buyerVolume - sellerVolume (net)
 candleVolume              ← total volume in current candle
-candleOpenPrice/Time      ← candle boundaries
-totalVolumeProcessed      ← lifetime volume (for running average)
+bucket                    ← current 5-min slot = floor(timestamp / 300 000)
+isPartial                 ← first slot we see (joined mid-candle) → discarded
+totalVolumeProcessed      ← volume since the first full candle (running average)
 firstTickTime             ← when we first saw this symbol
-candleScores[]            ← ring buffer of last 3 candle scores
+closedCandles[]           ← last 3 closed candles (buyer/seller/delta/score/bias)
 ```
 
 On each tick:
@@ -86,14 +96,14 @@ On each tick:
 2. If price went **up** → add `volumeDiff` to `buyerVolume` and `delta`.
 3. If price went **down** → add `volumeDiff` to `sellerVolume` and subtract from `delta`.
 4. Accumulate into `candleVolume` and `totalVolumeProcessed`.
-5. If 60 seconds have passed since `candleOpenTime`, close the candle.
+5. If this tick is in a new 5-min slot, close the previous candle FIRST (before counting this tick).
 6. Update `prevPrice` and `prevVolume`.
 
 This is O(1) per tick — no loops, no async, no allocations.
 
 ### 2. Candle Close (`closeCandle`)
 
-When a 1-minute candle closes, we score it using two components — pure order flow:
+When a 5-minute candle closes, we score it using two components — pure order flow:
 
 #### Delta Strength (weight: 70%)
 ```
@@ -103,7 +113,7 @@ This is the net buy/sell ratio. Ranges from -1 (all sellers) to +1 (all buyers).
 
 #### Volume Strength (weight: 30%)
 ```
-avgCandleVolume = totalVolumeProcessed / elapsedMinutes
+avgCandleVolume = totalVolumeProcessed / elapsedCandles   // 5-min slots since first full candle
 volumeStrength = clamp(candleVolume / avgCandleVolume, 0, 1)
 ```
 Was this candle's volume above or below average? High-volume candles carry more conviction. This component is signed by `deltaStrength` — high volume only amplifies the existing direction, it doesn't create one.
@@ -121,7 +131,7 @@ After scoring, the candle state resets: buyer/seller volumes go to zero, delta r
 
 ### 3. Signal Generation (`getPressure`)
 
-Only returns a result after **3 candle scores** exist (~3 minutes of market data).
+Only returns a result after **3 full 5-min candle scores** exist (~15–20 minutes of market data).
 
 #### Weighted Average
 Recent candles matter more:
@@ -237,7 +247,7 @@ Returns pressure for all symbols that have warmed up (3+ candle closes).
 
 Returns `503` if the engine is not initialized (Kite not connected).
 
-Returns `{ pressure: {}, timestamp: ... }` during the first ~3 minutes while candles warm up.
+Returns `{ pressure: {}, timestamp: ... }` during the first ~15–20 minutes while candles warm up.
 
 ### WebSocket (`market_update` messages)
 
@@ -270,11 +280,11 @@ The `pressure` field is `undefined` (omitted from JSON) until the symbol has 3 c
 
 ## Warm-Up Period
 
-The engine produces no output for the first ~3 minutes per symbol. This is by design:
+The engine produces no output for the first ~15–20 minutes per symbol. This is by design:
 
-1. **First tick**: Initializes state, sets baseline price and volume.
-2. **Minutes 1-3**: Accumulates tick data, closes candles, builds up 3 candle scores.
-3. **After 3rd candle close**: `getPressure()` starts returning results.
+1. **First tick**: Initializes state, sets baseline price and volume. The 5-min slot it lands in is partial → discarded when it closes.
+2. **Next 3 slots**: Accumulates tick data, closes 3 full 5-min candles.
+3. **After the 3rd full candle closes**: `getPressure()` starts returning results.
 
 During warm-up, the REST endpoint returns an empty object and WebSocket snapshots omit the pressure field. The running volume average also becomes more accurate over time.
 
@@ -285,9 +295,9 @@ During warm-up, the REST endpoint returns an empty object and WebSocket snapshot
 | Decision | Rationale |
 |----------|-----------|
 | Price-direction heuristic for buy/sell | No order book data from Kite; standard volume delta approach |
-| Running volume average instead of 20-day historical | Zero external API calls, warm after 3 minutes |
-| 1-minute candles | Balances responsiveness with noise reduction |
-| 3-candle ring buffer | ~3 minutes of context, enough for trend detection without lag |
+| Running volume average instead of 20-day historical | Zero external API calls, warm by first output |
+| 5-minute clock-aligned candles | Same timeframe as momentum / patterns / intraday S/R; less tick noise |
+| 3-candle ring buffer | ~15 minutes of context, matching momentum's 3 × 5-min window |
 | Weighted average (0.2/0.3/0.5) | Recent data weighted more heavily for responsiveness |
 | Noise filter at 0.3 | Prevents signal flickering on low-activity symbols |
 | Consistency boost at 15% | Rewards sustained directional pressure |

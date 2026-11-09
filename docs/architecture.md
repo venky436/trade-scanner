@@ -162,11 +162,11 @@ Kite tick → { symbol, lastPrice, volume, timestamp }
 
 ### Pressure Engine
 
-Analyzes buy/sell volume pressure using 1-minute candles.
+Analyzes buy/sell volume pressure using 5-minute candles aligned to the clock (09:15, 09:20 …) — the same slots as the candle tracker.
 
 ```
 Every tick: classify volume delta by price direction
-Every 1-min candle close:
+Every 5-min candle close (first partial candle discarded):
   → Compute score: deltaStrength(0.7) + volumeStrength(0.3) — pure flow, no momentum (momentum is a separate input to confidence)
   → Ring buffer (last 3 scores)
   → Increment version counter
@@ -179,7 +179,7 @@ After 3 candles: weighted average → signal
   else   → NEUTRAL
 ```
 
-**Cold start:** 3 minutes (3 × 1-min candles)
+**Cold start:** ~15–20 minutes (3 full × 5-min candles)
 
 ### Candle Tracker
 
@@ -341,13 +341,13 @@ Produces signals **progressively** — shows early direction immediately, upgrad
 │ Confidence: LOW                                                 │
 │ Reason: "STRONG_UP momentum (INCREASING)"                       │
 ├─────────────────────────────────────────────────────────────────┤
-│ STAGE 3: PRESSURE (~3 minutes)                                  │
-│ Input: pressure engine (3 × 1-min candles)                      │
+│ STAGE 3: PRESSURE (~15–20 minutes)                              │
+│ Input: pressure engine (3 × 5-min candles)                      │
 │ Signal: BUY/SELL confirmed by volume pressure                   │
 │ Confidence: MEDIUM (normal) / HIGH (STRONG_*)                   │
 │ Reason: "STRONG_BUY pressure (rising)"                          │
 ├─────────────────────────────────────────────────────────────────┤
-│ STAGE 4: CONFIRMED (~5+ minutes)                                │
+│ STAGE 4: CONFIRMED (~15–20 minutes)                             │
 │ Input: full signal engine (S/R + pressure + momentum + pattern) │
 │ Signal: BUY/SELL with type (BOUNCE/REJECTION/BREAKOUT/BREAKDOWN)│
 │ Confidence: HIGH                                                │
@@ -527,7 +527,7 @@ KEY LEVELS (Near Support + Near Resistance, top 7 each)
 │       ↓                                                       │
 │  O(1) per tick:                                               │
 │    ├─ Quote update + dirty mark                               │
-│    ├─ Pressure engine (1-min candles)                         │
+│    ├─ Pressure engine (5-min candles)                         │
 │    └─ Candle tracker (5-min candles)                          │
 │              ↓ (on candle close)                              │
 │       Momentum + Pattern engines                              │
@@ -572,9 +572,9 @@ First tick arrives:
   0s     → Prices available in frontend
   <1s    → ACTIVITY signals (BUY/SELL from price direction, LOW confidence)
   1-3s   → MOMENTUM signals (from 5-min candles if available)
-  3 min  → PRESSURE signals (3 × 1-min candles warm up, MEDIUM/HIGH confidence)
+  15–20 min → PRESSURE signals (3 × 5-min candles warm up, MEDIUM/HIGH confidence)
   ~66s   → EOD complete: 247 S/R levels ready
-  5 min  → CONFIRMED signals (full engine: S/R + pressure + momentum + pattern)
+  15–20 min → CONFIRMED signals (full engine: S/R + pressure + momentum + pattern)
 
 During market:
   0-5 min      → OPENING phase: all signals forced WAIT, score ×0.6

@@ -1,15 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
-import { Sun, Moon, LogOut, TrendingUp, Search, X, Shield, BookOpen, Telescope } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { LogOut, TrendingUp, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useAuth } from "@/context/auth-context";
-import { WatchZoneSheet } from "./watch-zone";
-import { AiModeToggle } from "./ai-mode-toggle";
+import { AccountChip } from "./trading/account-chip";
+import { TradeModeSwitch } from "./trading/trade-mode";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { INDEX_NAMES } from "@/lib/constants";
 import { apiFetch, API_URL } from "@/lib/api";
@@ -24,9 +23,8 @@ interface SearchResult {
 export function GlobalNav() {
   const { stockMap, isConnected } = useMarketData();
   const { user, logout } = useAuth();
-  const { theme, setTheme } = useTheme();
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
+  const pathname = usePathname();
   const [kiteConnected, setKiteConnected] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -35,8 +33,6 @@ export function GlobalNav() {
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  useEffect(() => setMounted(true), []);
 
   // Poll auth status
   useEffect(() => {
@@ -120,7 +116,8 @@ export function GlobalNav() {
   return (
     <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-sm border-b border-border/50">
       <div className="max-w-[1400px] mx-auto flex items-center justify-between gap-4 px-4 h-14">
-        {/* Logo */}
+        {/* Logo + trading sections */}
+        <div className="flex items-center gap-6 min-w-0">
         <Link href="/" className="flex items-center gap-2 shrink-0">
           <div className="flex items-center justify-center size-8 rounded-lg bg-green-500/15">
             <TrendingUp className="size-4 text-green-500" />
@@ -129,6 +126,31 @@ export function GlobalNav() {
             TradeScanner
           </span>
         </Link>
+        {user?.role === "ADMIN" && (
+          <nav aria-label="Trading" className="hidden md:flex items-center gap-1">
+            {[
+              { href: "/trade", label: "Trade" },
+              { href: "/orders", label: "Orders" },
+              { href: "/pnl", label: "P&L" },
+              { href: "/account", label: "Account" },
+            ].map((item) => {
+              const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`h-8 px-3 inline-flex items-center rounded-md text-sm transition-colors ${
+                    active ? "text-foreground bg-muted font-medium" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
+        </div>
 
         {/* Right side */}
         <div className="flex items-center gap-3">
@@ -203,6 +225,10 @@ export function GlobalNav() {
           )}
         </div>
 
+          {/* Global Paper / Real switch + balance for that mode (admin only) */}
+          <TradeModeSwitch />
+          {kiteConnected && <AccountChip />}
+
           {/* Live status — show market phase context */}
           {kiteConnected ? (() => {
             const now = new Date();
@@ -262,14 +288,6 @@ export function GlobalNav() {
             </a>
           )}
 
-          {/* Visible to all authenticated users — System Observation Stocks feed.
-              Telescope distinguishes it from the personal Watch Zone (Eye icon). */}
-          <Link href="/social">
-            <Button variant="ghost" size="icon-sm" aria-label="System Observations" className="text-muted-foreground hover:text-foreground">
-              <Telescope className="size-4" />
-            </Button>
-          </Link>
-
           {/* Admin only: Re-login + admin tools */}
           {user?.role === "ADMIN" && (
             <>
@@ -280,33 +298,8 @@ export function GlobalNav() {
                   </Button>
                 </a>
               )}
-              <Link href="/docs">
-                <Button variant="ghost" size="icon-sm" aria-label="Documentation" className="text-muted-foreground hover:text-foreground">
-                  <BookOpen className="size-4" />
-                </Button>
-              </Link>
-              <Link href="/admin">
-                <Button variant="ghost" size="icon-sm" aria-label="Admin Dashboard" className="text-muted-foreground hover:text-foreground">
-                  <Shield className="size-4" />
-                </Button>
-              </Link>
-              <Link href="/admin/tracking">
-                <Button variant="ghost" size="icon-sm" aria-label="Signal Tracking" className="text-muted-foreground hover:text-foreground">
-                  <TrendingUp className="size-4" />
-                </Button>
-              </Link>
-              <AiModeToggle />
+              {/* Docs / Admin / Signal tracking links hidden — pages still reachable at /docs, /admin, /admin/tracking */}
             </>
-          )}
-
-          {/* Watch Zone */}
-          <WatchZoneSheet stockMap={stockMap} isLoggedIn={!!user} />
-
-          {/* Theme toggle */}
-          {mounted && (
-            <Button variant="ghost" size="icon-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">
-              {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-            </Button>
           )}
 
           {/* User + Logout */}

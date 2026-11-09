@@ -10,3 +10,6 @@ dist
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Local runtime state: Kite session (access token), Paper/Real switch, auto-trader switch, recordings
+apps/server/data/

@@ -7,3 +7,4 @@ export { refreshTokens } from "./refresh-tokens.js";
 export { watchZone } from "./watch-zone.js";
 export { aiCalls } from "./ai-calls.js";
 export { aiCallOutcomes } from "./ai-call-outcomes.js";
+export { trades, tradeEvents } from "./trades.js";

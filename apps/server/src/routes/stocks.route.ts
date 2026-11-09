@@ -239,14 +239,10 @@ export async function stocksRoute(
     }
 
     const { symbol } = req.params;
-    const interval = (req.query.interval || "minute") as string;
+    // Intraday tool: the chart is ALWAYS 5-minute candles (same timeframe as
+    // the engines). Any `interval` query param is ignored on purpose.
+    const interval: KiteInterval = "5minute";
     const days = Math.min(Math.max(Number(req.query.days) || 1, 1), 365);
-
-    if (!VALID_INTERVALS.includes(interval as KiteInterval)) {
-      return reply
-        .status(400)
-        .send({ error: `Invalid interval. Valid: ${VALID_INTERVALS.join(", ")}` });
-    }
 
     let instrumentToken = instrumentMaps.symbolToToken.get(symbol);
     // Fallback: search in allInstruments for untracked stocks
@@ -264,20 +260,30 @@ export async function stocksRoute(
 
       const to = new Date();
       const from = new Date();
-      if (interval === "day") {
-        from.setDate(from.getDate() - days);
-      } else {
-        // For intraday, go back `days` trading days
-        from.setDate(from.getDate() - days);
-        from.setHours(0, 0, 0, 0);
-      }
+      // Go back `days` calendar days, from midnight
+      from.setDate(from.getDate() - days);
+      from.setHours(0, 0, 0, 0);
 
-      const data = await kc.getHistoricalData(
-        instrumentToken,
-        interval as KiteInterval,
-        formatDate(from),
-        formatDate(to)
-      );
+      // Retry Kite's rate-limit answer ("Too many requests") — startup jobs
+      // share the same historical-data limit; any other error is thrown.
+      let data: any;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          data = await kc.getHistoricalData(
+            instrumentToken,
+            interval as KiteInterval,
+            formatDate(from),
+            formatDate(to)
+          );
+          break;
+        } catch (e: any) {
+          if (attempt < 4 && /too many requests/i.test(String(e?.message ?? e))) {
+            await new Promise((r) => setTimeout(r, 700 * attempt));
+            continue;
+          }
+          throw e;
+        }
+      }
 
       const candles: Candle[] = data.map((d: any) => ({
         time: Math.floor(new Date(d.date).getTime() / 1000),

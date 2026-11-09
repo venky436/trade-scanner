@@ -14,6 +14,7 @@ import type {
   MomentumResult,
   Outlook,
   PressureResult,
+  SRZone,
   SupportResistanceResult,
   TradePlan,
   VolatilityLabel,
@@ -77,7 +78,7 @@ function getDirectionalScore(value: number, direction: ImpliedDirection): number
 function computeZone(
   price: number,
   sr: SupportResistanceResult | null,
-): { zone: Zone; distanceToLevel: number | null; level: number | null } {
+): { zone: Zone; distanceToLevel: number | null; level: number | null; srZone: SRZone | null } {
   const supportZone = sr?.supportZone ?? null;
   const resistanceZone = sr?.resistanceZone ?? null;
 
@@ -92,12 +93,12 @@ function computeZone(
   const rNear = rDist <= NEAR_ZONE_PERCENT;
 
   if (rNear && (!sNear || rDist <= sDist)) {
-    return { zone: "NEAR_RESISTANCE", distanceToLevel: round2(rDist), level: resistanceZone!.level };
+    return { zone: "NEAR_RESISTANCE", distanceToLevel: round2(rDist), level: resistanceZone!.level, srZone: resistanceZone };
   }
   if (sNear) {
-    return { zone: "NEAR_SUPPORT", distanceToLevel: round2(sDist), level: supportZone!.level };
+    return { zone: "NEAR_SUPPORT", distanceToLevel: round2(sDist), level: supportZone!.level, srZone: supportZone };
   }
-  return { zone: "MID_RANGE", distanceToLevel: null, level: null };
+  return { zone: "MID_RANGE", distanceToLevel: null, level: null, srZone: null };
 }
 
 function round2(n: number): number {
@@ -204,109 +205,116 @@ function buildConfidence(
   return { confidence: round2(confidence), confidenceLabel };
 }
 
-// ── Breakout / Breakdown gates ──────────────────────────────────────────────
-// Re-enabled 2026-05-10 after the 2026-05-07 retirement (coin-flip expectancy
-// without filters). Two strict gates target the two failure modes that drove
-// the prior bad accuracy:
+// ── Outlook: a call only AFTER the level gives its answer ───────────────────
 //
-//   G1 Volume surge — current 5-min candle volume must be ≥ 1.5× MEDIAN of
-//                     the prior 5 candles' volume. Filters thin-volume
-//                     fakeouts (institutions don't commit on low volume).
-//                     Median (not mean) because volume is heavily right-
-//                     skewed: one earlier spike inflates a mean baseline,
-//                     causing the next real surge to fail "1.5× of inflated
-//                     mean". Median ignores the outlier and reflects the
-//                     symbol's typical volume.
-//                     Tightened from 20→5 lookback on 2026-05-12 after
-//                     prod data showed 21-candle warmup blocked all
-//                     Breakout/Breakdown signals before 11:00 AM.
-//   G2 Donchian-style confirmation — last 2 candle closes must be beyond the
-//                     max-high (Breakout) / min-low (Breakdown) of the prior
-//                     5 candles. Filters single-bar piercings. Deliberately
-//                     candle-relative (not S/R-relative) so it's robust to
-//                     mid-evaluation S/R recompute.
+// Changed 2026-11-09 (user rule): never call while price is merely AT
+// support / resistance — strong buying INTO resistance (or selling into
+// support) is a test, not a signal. Wait for the LAST CLOSED 5-min candle to
+// show the answer, and require momentum + pressure to agree:
+//
+//   at RESISTANCE
+//     BREAKOUT  → BUY   last candle CLOSED ABOVE the zone (zone.max)
+//                       + momentum up + pressure buying + volume surge
+//     REJECTION → SELL  price tested the zone (high ≥ zone.min in the last
+//                       2 candles), last candle CLOSED BACK BELOW it (zone.min)
+//                       as a red candle + momentum down + pressure selling
+//   at SUPPORT
+//     BREAKDOWN → SELL  last candle CLOSED BELOW the zone (zone.min)
+//                       + momentum down + pressure selling + volume surge
+//     BOUNCE    → BUY   price tested the zone (low ≤ zone.max in the last 2
+//                       candles), last candle CLOSED BACK ABOVE it (zone.max)
+//                       as a green candle + momentum up + pressure buying
+//   anything else (still inside the zone, no closed candle, engines disagree)
+//     → NO_CLEAR_EDGE = WAIT
+//
+// One closed candle is enough (user's choice). The HIGH-confidence floor and
+// the volume surge gate on breakouts / breakdowns are kept from before.
+// Indices: no breakout / breakdown (no traded volume) — as before.
+//
+// Volume surge: last closed candle ≥ 1.5 × MEDIAN volume of the 5 before it
+// (median, not mean: one earlier spike must not inflate the baseline).
 
 const VOLUME_SURGE_MULTIPLIER = 1.5;
 const VOLUME_LOOKBACK = 5;
-const CONFIRMATION_CANDLES = 2;
-const DONCHIAN_LOOKBACK = 5;
 
 function passesVolumeGate(recentCandles?: Candle[]): boolean {
   if (!recentCandles || recentCandles.length < VOLUME_LOOKBACK + 1) return false;
   const current = recentCandles[recentCandles.length - 1];
   const prior = recentCandles.slice(-(VOLUME_LOOKBACK + 1), -1);
-  // Median of the prior 5 candles. For odd counts (5), median is the middle
-  // element after sort. The Math.floor form keeps the code generic if the
-  // lookback ever changes to an even number.
   const sortedVols = prior.map((c) => c.volume).sort((a, b) => a - b);
   const median = sortedVols[Math.floor(sortedVols.length / 2)];
   if (median <= 0) return false;
   return current.volume >= median * VOLUME_SURGE_MULTIPLIER;
 }
 
-function passesConfirmationGate(
-  recentCandles: Candle[] | undefined,
-  side: "above" | "below",
-): boolean {
-  const needed = CONFIRMATION_CANDLES + DONCHIAN_LOOKBACK;
-  if (!recentCandles || recentCandles.length < needed) return false;
-  const confirm = recentCandles.slice(-CONFIRMATION_CANDLES);
-  const prior = recentCandles.slice(-needed, -CONFIRMATION_CANDLES);
-  if (side === "above") {
-    let maxHigh = -Infinity;
-    for (const c of prior) if (c.high > maxHigh) maxHigh = c.high;
-    return confirm.every((c) => c.close > maxHigh);
-  }
-  let minLow = Infinity;
-  for (const c of prior) if (c.low < minLow) minLow = c.low;
-  return confirm.every((c) => c.close < minLow);
-}
-
-// Outlook decision table. Bounce + Rejection paths are unchanged from the
-// 2026-05-07 single-pool refactor. Breakout + Breakdown are re-enabled but
-// only when both gates above pass; indices skip them entirely (volume = 0
-// makes G1 unsatisfiable, and indices behave differently at S/R).
 function buildOutlook(
   zone: Zone,
+  srZone: SRZone | null,
   momentumLabel: IntelligenceMomentumLabel,
+  pressureLabel: IntelligencePressureLabel,
   confidenceLabel: ConfidenceLabel,
   isIndex: boolean,
   recentCandles: Candle[] | undefined,
 ): Outlook {
-  if (zone === "MID_RANGE") return "NO_CLEAR_EDGE";
+  if (zone === "MID_RANGE" || !srZone) return "NO_CLEAR_EDGE";
   if (confidenceLabel !== "HIGH") return "NO_CLEAR_EDGE";
 
+  const last = recentCandles?.[recentCandles.length - 1];
+  const prev = recentCandles && recentCandles.length >= 2 ? recentCandles[recentCandles.length - 2] : undefined;
+  if (!last) return "NO_CLEAR_EDGE"; // no closed candle → nothing confirmed yet
+
+  const momentumUp = momentumLabel === "STRONG_UP" || momentumLabel === "WEAK_UP";
+  const momentumDown = momentumLabel === "STRONG_DOWN" || momentumLabel === "WEAK_DOWN";
+  const buyers = pressureLabel === "BUY";
+  const sellers = pressureLabel === "SELL";
+
   if (zone === "NEAR_RESISTANCE") {
-    // Rejection path — UNCHANGED
-    if (momentumLabel === "STRONG_DOWN" || momentumLabel === "WEAK_DOWN") return "REJECTION_POSSIBLE";
-    // Breakout path — gated
-    if (isIndex) return "NO_CLEAR_EDGE";
-    if (momentumLabel !== "STRONG_UP" && momentumLabel !== "WEAK_UP") return "NO_CLEAR_EDGE";
-    if (!passesVolumeGate(recentCandles)) return "NO_CLEAR_EDGE";
-    if (!passesConfirmationGate(recentCandles, "above")) return "NO_CLEAR_EDGE";
-    return "BREAKOUT_LIKELY";
+    // Breakout: closed above the resistance zone
+    if (last.close > srZone.max) {
+      if (isIndex) return "NO_CLEAR_EDGE";
+      return momentumUp && buyers && passesVolumeGate(recentCandles) ? "BREAKOUT_LIKELY" : "NO_CLEAR_EDGE";
+    }
+    // Rejection: tested the zone, then closed back below it as a red candle
+    const tested = Math.max(last.high, prev?.high ?? -Infinity) >= srZone.min;
+    if (tested && last.close < srZone.min && last.close < last.open && momentumDown && sellers) {
+      return "REJECTION_POSSIBLE";
+    }
+    return "NO_CLEAR_EDGE"; // still testing the level → WAIT
   }
 
   // NEAR_SUPPORT
-  // Bounce path — UNCHANGED
-  if (momentumLabel === "STRONG_UP" || momentumLabel === "WEAK_UP") return "BOUNCE_EXPECTED";
-  // Breakdown path — gated
-  if (isIndex) return "NO_CLEAR_EDGE";
-  if (momentumLabel !== "STRONG_DOWN" && momentumLabel !== "WEAK_DOWN") return "NO_CLEAR_EDGE";
-  if (!passesVolumeGate(recentCandles)) return "NO_CLEAR_EDGE";
-  if (!passesConfirmationGate(recentCandles, "below")) return "NO_CLEAR_EDGE";
-  return "BREAKDOWN_RISK";
+  // Breakdown: closed below the support zone
+  if (last.close < srZone.min) {
+    if (isIndex) return "NO_CLEAR_EDGE";
+    return momentumDown && sellers && passesVolumeGate(recentCandles) ? "BREAKDOWN_RISK" : "NO_CLEAR_EDGE";
+  }
+  // Bounce: tested the zone, then closed back above it as a green candle
+  const tested = Math.min(last.low, prev?.low ?? Infinity) <= srZone.max;
+  if (tested && last.close > srZone.max && last.close > last.open && momentumUp && buyers) {
+    return "BOUNCE_EXPECTED";
+  }
+  return "NO_CLEAR_EDGE"; // still testing the level → WAIT
 }
 
 // ── Trade plan ──────────────────────────────────────────────────────────────
-// Translate the existing Outlook into an explicit BUY/SELL with ATR-derived
-// entry / stop-loss / target. Personal-use mode — replaces the prior
-// non-directive framing. The outlook gate already encodes direction + the
-// HIGH-confidence floor + (for Breakout/Breakdown) the volume + Donchian
-// gates, so we just route here based on outlook.
+// Translate the Outlook into an explicit BUY/SELL with entry / stop-loss /
+// target, anchored to the support/resistance LEVEL the call is about.
+// The outlook already encodes the confirmed level answer, direction, the
+// HIGH-confidence floor and (for Breakout / Breakdown) the volume gate.
+//
+// Two level rules (replay 154 stocks × 14 days, 2026-11-09):
+//   Fix 1 — "near" means really near: price must be within
+//           NEAR_LEVEL_MAX_ATR typical 5-min candles (ATR) of the level,
+//           otherwise the move already happened → no plan (no late calls).
+//   Fix 3 — stop-loss just beyond the level zone (BUY: below the zone's
+//           bottom, SELL: above its top) by LEVEL_SL_BUFFER_ATR × ATR;
+//           target = 2 × that risk (2:1 reward:risk).
+// "Level" = the zone the call is about: support for Bounce / Breakdown,
+// resistance for Rejection / Breakout (the zone computeZone picked).
 
-const STOP_ATR_MULT = 1.5;
-const TARGET_ATR_MULT = 3.0; // → fixed 2:1 R:R
+export const NEAR_LEVEL_MAX_ATR = 1.5;
+export const LEVEL_SL_BUFFER_ATR = 0.2;
+const REWARD_RISK = 2;
 const TRADE_PLAN_MIN_CONFIDENCE = 0.7;
 
 function outlookToAction(outlook: Outlook): "BUY" | "SELL" | null {
@@ -341,40 +349,33 @@ function buildTradePlan(
   confidence: number,
   recentCandles: Candle[] | undefined,
   volatilityScore: number,
+  srZone: SRZone | null,
 ): TradePlan | null {
   const action = outlookToAction(outlook);
   if (!action) return null;
   if (confidence < TRADE_PLAN_MIN_CONFIDENCE) return null;
-  if (price <= 0) return null;
+  if (price <= 0 || !srZone) return null;
 
   const atr = resolveAtr(price, recentCandles, volatilityScore);
   if (atr <= 0) return null;
 
-  const stopDist = atr * STOP_ATR_MULT;
-  const targetDist = atr * TARGET_ATR_MULT;
+  // Fix 1 — too far from the level → the move already happened, no call
+  if (Math.abs(price - srZone.level) > NEAR_LEVEL_MAX_ATR * atr) return null;
 
-  const entry = round2(price);
-  if (action === "BUY") {
-    return {
-      action: "BUY",
-      entry,
-      stopLoss: round2(price - stopDist),
-      target: round2(price + targetDist),
-      riskPercent: round2((stopDist / price) * 100),
-      rewardPercent: round2((targetDist / price) * 100),
-      riskReward: 2.0,
-      atr: round2(atr),
-    };
-  }
-  // SELL — mirror
+  // Fix 3 — stop just beyond the level zone, target 2 × risk
+  const stopLoss = action === "BUY" ? srZone.min - LEVEL_SL_BUFFER_ATR * atr : srZone.max + LEVEL_SL_BUFFER_ATR * atr;
+  const stopDist = action === "BUY" ? price - stopLoss : stopLoss - price;
+  if (!(stopDist > 0)) return null; // price already beyond the stop → no valid plan
+  const targetDist = stopDist * REWARD_RISK;
+
   return {
-    action: "SELL",
-    entry,
-    stopLoss: round2(price + stopDist),
-    target: round2(price - targetDist),
+    action,
+    entry: round2(price),
+    stopLoss: round2(stopLoss),
+    target: round2(action === "BUY" ? price + targetDist : price - targetDist),
     riskPercent: round2((stopDist / price) * 100),
     rewardPercent: round2((targetDist / price) * 100),
-    riskReward: 2.0,
+    riskReward: REWARD_RISK,
     atr: round2(atr),
   };
 }
@@ -389,7 +390,7 @@ function buildBias(momentumLabel: IntelligenceMomentumLabel, pressureLabel: Inte
 
 export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
   const isIndex = isIndexSymbol(input.symbol);
-  const { zone, distanceToLevel, level } = computeZone(input.price, input.sr);
+  const { zone, distanceToLevel, level, srZone } = computeZone(input.price, input.sr);
   const momentum = buildMomentum(input.momentum);
   // Pressure is structurally unmeasurable for indices (Kite index ticks
   // carry volume=0). Show NOT_APPLICABLE so the UI renders an honest "N/A"
@@ -408,9 +409,9 @@ export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
     volatility.score,
     direction,
   );
-  const outlook = buildOutlook(zone, momentum.label, confidenceLabel, isIndex, input.recentCandles);
+  const outlook = buildOutlook(zone, srZone, momentum.label, pressure.label, confidenceLabel, isIndex, input.recentCandles);
   const bias = buildBias(momentum.label, pressure.label);
-  const tradePlan = buildTradePlan(input.price, outlook, confidence, input.recentCandles, volatility.score);
+  const tradePlan = buildTradePlan(input.price, outlook, confidence, input.recentCandles, volatility.score, srZone);
 
   const change = input.close !== 0 ? ((input.price - input.close) / input.close) * 100 : 0;
 

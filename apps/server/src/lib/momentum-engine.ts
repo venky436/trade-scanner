@@ -40,36 +40,32 @@ function getQualityMultiplier(signal: MomentumSignal, acceleration: MomentumAcce
 const STOCK_MOMENTUM_DIVISOR = 0.003;
 const INDEX_MOMENTUM_DIVISOR = 0.001;
 
+/**
+ * Momentum from the LAST 2 closed 5-min candles (changed 2026-11-09, was 3):
+ *   r = (close − open) / open for each candle
+ *   velocity = r_previous × 0.3 + r_newest × 0.7      (newest candle dominates)
+ *   value    = clamp(velocity / divisor, −1, 1)       (divisor unchanged)
+ *   acceleration = r_newest − r_previous             (speeding up / easing)
+ * Same weights as the pressure engine, so both read the same 10 minutes.
+ */
 export function getMomentum(candles: Candle[], isIndex = false): MomentumResult | null {
-  if (candles.length < 3) return null;
+  if (candles.length < 2) return null;
 
   const len = candles.length;
-  const c3 = candles[len - 3];
-  const c2 = candles[len - 2];
-  const c1 = candles[len - 1];
+  const prev = candles[len - 2];
+  const last = candles[len - 1];
 
-  const r3 = (c3.close - c3.open) / c3.open;
-  const r2 = (c2.close - c2.open) / c2.open;
-  const r1 = (c1.close - c1.open) / c1.open;
+  const rPrev = (prev.close - prev.open) / prev.open;
+  const rLast = (last.close - last.open) / last.open;
 
-  // Velocity: unchanged 3-candle weighted average
-  const momentum = r3 * 0.2 + r2 * 0.3 + r1 * 0.5;
+  // Velocity: 2-candle weighted average (newest 70 %)
+  const momentum = rPrev * 0.3 + rLast * 0.7;
   const divisor = isIndex ? INDEX_MOMENTUM_DIVISOR : STOCK_MOMENTUM_DIVISOR;
   const value = clamp(momentum / divisor, -1, 1);
   const signal = getSignal(value);
 
-  // Acceleration: sliding window if 4+ candles, fallback to r1-r2
-  let accelerationRaw: number;
-  if (candles.length >= 4) {
-    const c4 = candles[len - 4];
-    const r4 = (c4.close - c4.open) / c4.open;
-    const vNow = r3 * 0.2 + r2 * 0.3 + r1 * 0.5;
-    const vPrev = r4 * 0.2 + r3 * 0.3 + r2 * 0.5;
-    accelerationRaw = vNow - vPrev;
-  } else {
-    accelerationRaw = r1 - r2;
-  }
-
+  // Acceleration: is the newest candle stronger or weaker than the one before?
+  const accelerationRaw = rLast - rPrev;
   const acceleration = getAcceleration(accelerationRaw);
 
   // Quality: value adjusted by momentum + acceleration combo

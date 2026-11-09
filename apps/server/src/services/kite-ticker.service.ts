@@ -7,6 +7,8 @@ interface KiteTickerConfig {
   accessToken: string;
   instrumentMaps: InstrumentMaps;
   onTick?: (symbol: string, quote: Quote) => void;
+  /** Zerodha pushes every status change of YOUR orders on the same socket. */
+  onOrderUpdate?: (order: any) => void;
 }
 
 export function createKiteTickerManager(config: KiteTickerConfig) {
@@ -44,6 +46,14 @@ export function createKiteTickerManager(config: KiteTickerConfig) {
 
       marketDataService.updateQuote(symbol, quote);
       if (config.onTick) config.onTick(symbol, quote);
+    }
+  });
+
+  ticker.on("order_update", (order: any) => {
+    try {
+      config.onOrderUpdate?.(order);
+    } catch (err) {
+      console.error("[KiteTicker] order_update handler failed:", err);
     }
   });
 

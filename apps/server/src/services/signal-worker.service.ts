@@ -531,9 +531,17 @@ export function createSignalWorker(config: SignalWorkerConfig) {
     return Date.now() - cached.computedAt < withinMs;
   }
 
+  // Pressure moved from 1-min to 5-min candles, so its version (a recompute
+  // trigger below) now changes every 5 min instead of every minute. Keep the
+  // old ~1-min refresh cadence for batch-lane symbols with this age cap, so
+  // price-vs-level reactions don't go up to 5 min stale.
+  const MAX_SIGNAL_AGE_MS = 60_000;
+
   function shouldSkip(symbol: string): boolean {
     const cached = signalCache.get(symbol);
     if (!cached) return false;
+
+    if (Date.now() - cached.computedAt > MAX_SIGNAL_AGE_MS) return false;
 
     // Force recompute if market phase changed (OPENING→STABILIZING→NORMAL)
     const { phase } = getMarketPhase();

@@ -11,6 +11,8 @@ import { aiRoute } from "./routes/ai.route.js";
 import { adminAiRoute } from "./routes/admin-ai.route.js";
 import { sectionsRoute } from "./routes/sections.route.js";
 import { userAuthRoute } from "./modules/auth/auth.routes.js";
+import { tradeRoute } from "./routes/trade.route.js";
+import type { AutoTrader } from "./services/auto-trader.service.js";
 import type { WsManager } from "./ws/ws-server.js";
 import type { InstrumentMaps, SupportResistanceResult, Candle, MomentumResult, PressureResult } from "./lib/types.js";
 import type { PressureEngine } from "./services/pressure.service.js";
@@ -18,6 +20,7 @@ import type { EodJob } from "./services/eod-job.service.js";
 import type { SignalAccuracyService } from "./services/signal-accuracy.service.js";
 import type { SignalTrackingService } from "./services/signal-tracking.service.js";
 import type { AiCallService } from "./services/ai-call.service.js";
+import type { OrderExecutionService } from "./services/order-execution.service.js";
 
 interface ServerDeps {
   apiKey: string;
@@ -45,6 +48,9 @@ interface ServerDeps {
   getMomentumSignal?: (symbol: string) => MomentumResult | null;
   getRecentCandles?: (symbol: string, n: number) => Candle[];
   getAllSymbols?: () => string[];
+  // Order execution (Trade / Orders / P&L screens)
+  getOrderExecution?: () => OrderExecutionService | null;
+  getAutoTrader?: () => AutoTrader | null;
 }
 
 export async function buildServer(deps: ServerDeps) {
@@ -99,6 +105,19 @@ export async function buildServer(deps: ServerDeps) {
       getMomentum: deps.getMomentumSignal,
       getRecentCandles: deps.getRecentCandles,
       getAllSymbols: deps.getAllSymbols,
+    });
+  }
+
+  // Trading endpoints (admin only) — Trade desk, order window, Orders, P&L
+  if (deps.getOrderExecution && deps.getCachedLevelsMap && deps.getPressureSignal && deps.getMomentumSignal && deps.getRecentCandles && deps.getAllSymbols) {
+    await server.register(tradeRoute, {
+      getOrderExecution: deps.getOrderExecution,
+      getCachedLevels: deps.getCachedLevelsMap,
+      getPressure: deps.getPressureSignal,
+      getMomentum: deps.getMomentumSignal,
+      getRecentCandles: deps.getRecentCandles,
+      getAllSymbols: deps.getAllSymbols,
+      getAutoTrader: deps.getAutoTrader,
     });
   }
 
