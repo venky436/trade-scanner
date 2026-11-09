@@ -9,6 +9,7 @@ export interface InstrumentMaps {
   symbolToToken: Map<string, number>;
   symbols: string[]; // ordered list of tracked symbols
   allInstruments?: SearchableInstrument[]; // full list for search
+  tickSizes?: Map<string, number>; // symbol → exchange tick size (₹), for valid order prices
 }
 
 export interface StockSnapshot {
@@ -99,6 +100,24 @@ export interface PressureResult {
   signal: PressureSignal;
   trend: PressureTrend;
   confidence: number;
+}
+
+/**
+ * Order flow inside ONE closed 5-minute candle (e.g. 09:15:00–09:19:59).
+ * The pressure signal is built from the last 2 of these (0.3 / 0.7).
+ */
+export interface PressureCandle {
+  time: number; // candle START, unix seconds, aligned to the 5-min clock (09:15, 09:20 …)
+  buyerVolume: number; // qty traded on up-ticks
+  sellerVolume: number; // qty traded on down-ticks
+  delta: number; // buyerVolume − sellerVolume
+  volume: number; // all qty in the candle (incl. unchanged-price ticks)
+  deltaStrength: number; // delta / (buyer + seller), −1 … +1
+  volumeStrength: number; // volume vs average per candle so far, 0 … 1
+  score: number; // deltaStrength×0.7 + volumeStrength×0.3×sign(delta)
+  bias: "BUY" | "SELL" | "NEUTRAL"; // sign of score
+  /** true = estimated from a historical candle (startup backfill), not from live ticks */
+  estimated?: boolean;
 }
 
 export type MomentumSignal = "STRONG_UP" | "UP" | "FLAT" | "DOWN" | "STRONG_DOWN";
@@ -203,7 +222,7 @@ export interface IntelligenceVolatility {
 // Trade plan — explicit BUY/SELL with ATR-derived entry / SL / target.
 // null = WAIT (no actionable setup). Personal-use mode; superseded the
 // non-directive "intelligence-only" framing from the May 2026 redesign.
-// Stop = entry ± 1.5 × ATR, Target = entry ± 3.0 × ATR (fixed 2:1 R:R).
+// Stop = just beyond the S/R level zone (0.2 × ATR buffer), Target = entry ± 2 × risk (2:1 R:R). Only when price is within 1.5 × ATR of the level.
 // See docs/market-intelligence.md § "Trade Plan".
 export interface TradePlan {
   action: "BUY" | "SELL";

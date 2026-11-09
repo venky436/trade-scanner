@@ -4,6 +4,8 @@ import { usePathname } from "next/navigation";
 import { AuthProvider, useAuth } from "@/context/auth-context";
 import { GlobalNav } from "./global-nav";
 import { SiteFooter } from "./site-footer";
+import { OrderWindowProvider } from "./trading/order-window";
+import { TradeModeProvider } from "./trading/trade-mode";
 
 // Routes that render without the auth wall — login/signup forms and the
 // public landing page at "/".
@@ -33,11 +35,13 @@ function AppContent({ children }: { children: React.ReactNode }) {
   // Authenticated — full chrome (nav + footer)
   if (isAuthenticated) {
     return (
-      <>
-        <GlobalNav />
-        {children}
-        <SiteFooter />
-      </>
+      <OrderWindowProvider>
+        <TradeModeProvider>
+          <GlobalNav />
+          {children}
+          <SiteFooter />
+        </TradeModeProvider>
+      </OrderWindowProvider>
     );
   }
 

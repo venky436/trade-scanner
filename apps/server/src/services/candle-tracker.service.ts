@@ -13,11 +13,15 @@ interface SymbolState {
     volume: number;
     openTime: number;
   };
-  completed: Candle[]; // ring buffer, last 3 (for momentum/pattern)
-  sessionCandles: Candle[]; // all candles for current trading day (for intraday S/R)
+  completed: Candle[]; // ring buffer, last 3 (momentum/pressure use the last 2, patterns up to 3) — may include previous days after a backfill
+  sessionCandles: Candle[]; // candles of the CURRENT trading day only (for intraday S/R, RVOL)
   sessionDate: string; // IST date string for session reset detection
   bucket: number; // Math.floor(timestamp / 300_000) — 5-min slot
   prevVolume: number;
+  /** true while the candle forming now started mid-slot (first tick after a (re)start) */
+  currentPartial: boolean;
+  /** slot of the live candle that closed partial (prefer Zerodha's complete version of it) */
+  partialSlot: number | null;
 }
 
 const FIVE_MIN_MS = 300_000;
@@ -27,8 +31,19 @@ function getISTDate(): string {
   return new Date().toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
 }
 
+function istDateOf(ms: number): string {
+  return new Date(ms).toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
+}
+
+/** 5-min slot of a candle (candle.time is unix SECONDS). */
+function slotOf(c: Candle): number {
+  return Math.floor((c.time * 1000) / FIVE_MIN_MS);
+}
+
 export function createCandleTracker(config: CandleTrackerConfig) {
   const stateMap = new Map<string, SymbolState>();
+  // Historical candles for symbols that haven't ticked yet — applied on their first tick.
+  const pendingHistory = new Map<string, Candle[]>();
 
   function processTick(
     symbol: string,
@@ -40,8 +55,8 @@ export function createCandleTracker(config: CandleTrackerConfig) {
     let state = stateMap.get(symbol);
 
     if (!state) {
-      // First tick — initialize
-      stateMap.set(symbol, {
+      // First tick — initialize (this candle started mid-slot → partial)
+      state = {
         currentCandle: {
           open: price,
           high: price,
@@ -55,7 +70,15 @@ export function createCandleTracker(config: CandleTrackerConfig) {
         sessionDate: getISTDate(),
         bucket,
         prevVolume: volume,
-      });
+        currentPartial: true,
+        partialSlot: null,
+      };
+      stateMap.set(symbol, state);
+      const pending = pendingHistory.get(symbol);
+      if (pending) {
+        pendingHistory.delete(symbol);
+        applyHistory(symbol, state, pending);
+      }
       return;
     }
 
@@ -73,6 +96,10 @@ export function createCandleTracker(config: CandleTrackerConfig) {
         close: state.currentCandle.close,
         volume: state.currentCandle.volume,
       };
+      if (state.currentPartial) {
+        state.partialSlot = state.bucket;
+        state.currentPartial = false;
+      }
 
       state.completed.push(closed);
       if (state.completed.length > 3) state.completed.shift();
@@ -86,8 +113,8 @@ export function createCandleTracker(config: CandleTrackerConfig) {
       state.sessionCandles.push(closed);
       if (state.sessionCandles.length > MAX_SESSION_CANDLES) state.sessionCandles.shift();
 
-      // Fire callback if we have 3+ completed candles
-      if (state.completed.length >= 3) {
+      // Fire callback once 2+ completed candles exist (momentum + pressure use the last 2)
+      if (state.completed.length >= 2) {
         config.onCandleClose(symbol, [...state.completed]);
       }
 
@@ -108,6 +135,68 @@ export function createCandleTracker(config: CandleTrackerConfig) {
       state.currentCandle.close = price;
       state.currentCandle.volume += volumeDiff;
     }
+  }
+
+  /**
+   * Merge Zerodha's historical 5-min candles into a symbol's state.
+   *   - Closed candles: history + live, one per 5-min slot. Live candles win,
+   *     EXCEPT the live candle that started mid-slot (partial) when history
+   *     has that slot complete.
+   *   - completed (momentum / patterns): last 3 — MAY be previous days; each
+   *     new live candle pushes the oldest out (rolling).
+   *   - sessionCandles (intraday S/R, RVOL): TODAY's candles only.
+   *   - The candle forming right now: take its real open/high/low/volume from
+   *     Zerodha (we only saw part of it).
+   *   - Then fire onCandleClose so momentum / patterns / intraday S/R
+   *     recompute immediately.
+   */
+  function applyHistory(symbol: string, state: SymbolState, history: Candle[]): void {
+    const forming = state.bucket;
+    const bySlot = new Map<number, Candle>();
+    for (const c of history) {
+      if (slotOf(c) < forming) bySlot.set(slotOf(c), c);
+    }
+    for (const c of [...state.sessionCandles, ...state.completed]) {
+      const slot = slotOf(c);
+      // the live candle that started mid-slot is incomplete → keep Zerodha's complete one
+      if (slot === state.partialSlot && bySlot.has(slot)) continue;
+      bySlot.set(slot, c);
+    }
+    const merged = [...bySlot.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c);
+
+    state.completed = merged.slice(-3);
+    const today = getISTDate();
+    state.sessionCandles = merged.filter((c) => istDateOf(c.time * 1000) === today).slice(-MAX_SESSION_CANDLES);
+    state.sessionDate = today;
+
+    const formingHist = history.find((c) => slotOf(c) === forming);
+    if (formingHist && state.currentPartial) {
+      const cur = state.currentCandle;
+      cur.open = formingHist.open;
+      cur.high = Math.max(cur.high, formingHist.high);
+      cur.low = Math.min(cur.low, formingHist.low);
+      cur.volume = Math.max(cur.volume, formingHist.volume);
+      cur.openTime = formingHist.time * 1000;
+      state.currentPartial = false;
+    }
+
+    if (state.completed.length >= 2) {
+      config.onCandleClose(symbol, [...state.completed]);
+    }
+  }
+
+  /**
+   * Load historical 5-min candles (oldest first, from Kite) — used after a
+   * (re)start so engines don't wait 15+ minutes for live candles.
+   */
+  function seedHistory(symbol: string, history: Candle[]): void {
+    if (history.length === 0) return;
+    const state = stateMap.get(symbol);
+    if (!state) {
+      pendingHistory.set(symbol, history);
+      return;
+    }
+    applyHistory(symbol, state, history);
   }
 
   function getSessionCandles(symbol: string): Candle[] {
@@ -134,5 +223,7 @@ export function createCandleTracker(config: CandleTrackerConfig) {
     return all.slice(-n);
   }
 
-  return { processTick, getSessionCandles, getSessionCandleCount, getLastCandle, getRecentCandles };
+  return { processTick, seedHistory, getSessionCandles, getSessionCandleCount, getLastCandle, getRecentCandles };
 }
+
+export type CandleTracker = ReturnType<typeof createCandleTracker>;

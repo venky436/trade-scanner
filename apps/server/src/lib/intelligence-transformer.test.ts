@@ -223,124 +223,81 @@ describe("toIntelligence — confidence formula", () => {
   });
 });
 
-describe("toIntelligence — outlook decision table", () => {
+// ── Level-confirmation rules (2026-11-09) ───────────────────────────────────
+// A call only after the LAST CLOSED 5-min candle shows the level's answer and
+// momentum + pressure agree. makeZone(level) spans level ± 1, so:
+//   resistance 1005 → zone 1004–1006      support 995 → zone 994–996
+function cd(i: number, open: number, high: number, low: number, close: number, volume = 1000): Candle {
+  return { time: 1700000000 + i * 300, open, high, low, close, volume };
+}
+// tested resistance, then closed back BELOW the zone as a red candle (CAMS case)
+const rejectionCandles = (): Candle[] => [cd(0, 1002, 1006.5, 1001, 1005), cd(1, 1005, 1005.5, 1000, 1001)];
+// buying INTO resistance — last close still inside the zone
+const testingResistanceCandles = (): Candle[] => [cd(0, 1000, 1004, 999, 1003.5), cd(1, 1003.5, 1006, 1003, 1005)];
+// tested support, then closed back ABOVE the zone as a green candle
+const bounceCandles = (): Candle[] => [cd(0, 998, 999, 994.5, 995.5), cd(1, 995.5, 999.5, 995, 999)];
+// selling INTO support — last close still inside the zone
+const testingSupportCandles = (): Candle[] => [cd(0, 1000, 1001, 996, 996.5), cd(1, 996.5, 997, 994, 995)];
+// failed breakdown: wick BELOW support, closed back, then green close above the zone (GUJALKALI case)
+const failedBreakdownCandles = (): Candle[] => [cd(0, 996, 997, 991, 995.5), cd(1, 995.5, 999.5, 995, 998.5)];
+
+describe("toIntelligence — outlook: wait for the level's answer", () => {
   const nearRes = makeSr({ resistance: { level: 1005, dist: 0.5 }, support: { level: 900, dist: 10 } });
   const nearSup = makeSr({ support: { level: 995, dist: 0.5 }, resistance: { level: 1100, dist: 10 } });
 
-  // Re-enabled 2026-05-10 with strict gates. Without recentCandles the volume
-  // and Donchian-style confirmation gates fail closed, so we still get
-  // NO_CLEAR_EDGE — the gates only let signals through when we have candle
-  // data to evaluate. See "Breakout / Breakdown gates" describe block below
-  // for explicit pass/fail tests.
-  it("NEAR_RESISTANCE + STRONG_UP + HIGH conf, no candles → NO_CLEAR_EDGE (gates fail closed)", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearRes,
-      momentum: makeMomentum("STRONG_UP", 0.95),
-      pressure: makePressure("STRONG_BUY", 0.95),
-      high: 1030, low: 1000,
-    }));
+  it("no closed candle yet → WAIT, even with strong aligned engines", () => {
+    const r = toIntelligence(baseInput({ sr: nearRes, momentum: makeMomentum("STRONG_DOWN", -0.95), pressure: makePressure("STRONG_SELL", -0.95) }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("NEAR_RESISTANCE + STRONG_UP + LOW conf → NO_CLEAR_EDGE", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearRes,
-      momentum: makeMomentum("STRONG_UP", 0.95),
-      pressure: makePressure("NEUTRAL", 0),
-      high: 1003, low: 1000,
-    }));
+  it("strong buying INTO resistance (close still in the zone) → WAIT, not a call", () => {
+    const r = toIntelligence(baseInput({ sr: nearRes, momentum: makeMomentum("STRONG_UP", 0.95), pressure: makePressure("STRONG_BUY", 0.95), recentCandles: testingResistanceCandles() }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
+    assert.equal(r.tradePlan, null);
   });
 
-  it("NEAR_RESISTANCE + STRONG_DOWN + HIGH conf → REJECTION_POSSIBLE", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearRes,
-      momentum: makeMomentum("STRONG_DOWN", -0.95),
-      pressure: makePressure("STRONG_SELL", -0.95),
-      high: 1003, low: 1000,
-    }));
+  it("rejection confirmed: tested, closed back below, red + momentum down + sellers → REJECTION_POSSIBLE", () => {
+    const r = toIntelligence(baseInput({ sr: nearRes, momentum: makeMomentum("STRONG_DOWN", -0.95), pressure: makePressure("STRONG_SELL", -0.95), recentCandles: rejectionCandles() }));
     assert.equal(r.outlook, "REJECTION_POSSIBLE");
   });
 
-  it("NEAR_RESISTANCE + STRONG_DOWN + MED/LOW conf → NO_CLEAR_EDGE (HIGH floor filters mid-grade setups)", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearRes,
-      momentum: makeMomentum("STRONG_DOWN", -0.7),
-      pressure: makePressure("STRONG_SELL", -0.7),
-    }));
+  it("rejection candle but pressure still buying → WAIT (engines must agree)", () => {
+    const r = toIntelligence(baseInput({ sr: nearRes, momentum: makeMomentum("STRONG_DOWN", -0.95), pressure: makePressure("STRONG_BUY", 0.95), recentCandles: rejectionCandles() }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("NEAR_RESISTANCE + WEAK_DOWN → NO_CLEAR_EDGE (HIGH floor filters weak setups)", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearRes,
-      momentum: makeMomentum("DOWN", -0.4),
-      pressure: makePressure("SELL", -0.4),
-    }));
+  it("closed below the zone but as a GREEN candle → WAIT (not a rejection candle)", () => {
+    const r = toIntelligence(baseInput({ sr: nearRes, momentum: makeMomentum("STRONG_DOWN", -0.95), pressure: makePressure("STRONG_SELL", -0.95), recentCandles: [cd(0, 1002, 1006.5, 1001, 1005), cd(1, 1000, 1004.5, 999, 1002)] }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("NEAR_RESISTANCE + NEUTRAL momentum → NO_CLEAR_EDGE (not REJECTION)", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearRes,
-      momentum: makeMomentum("FLAT", 0),
-      pressure: makePressure("NEUTRAL", 0),
-    }));
+  it("selling INTO support (close still in the zone) → WAIT, no breakdown call", () => {
+    const r = toIntelligence(baseInput({ sr: nearSup, momentum: makeMomentum("STRONG_DOWN", -0.95), pressure: makePressure("STRONG_SELL", -0.95), recentCandles: testingSupportCandles() }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  // Re-enabled 2026-05-10 with strict gates. Without recentCandles the gates
-  // fail closed (insufficient data), so still NO_CLEAR_EDGE. Pass/fail tests
-  // with real candle data are in the "Breakout / Breakdown gates" describe
-  // block below.
-  it("NEAR_SUPPORT + STRONG_DOWN + HIGH conf, no candles → NO_CLEAR_EDGE (gates fail closed)", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearSup,
-      momentum: makeMomentum("STRONG_DOWN", -0.95),
-      pressure: makePressure("STRONG_SELL", -0.95),
-      high: 1030, low: 1000,
-    }));
-    assert.equal(r.outlook, "NO_CLEAR_EDGE");
-  });
-
-  // Post-2026-05-07: BOUNCE_EXPECTED needs HIGH confidence (>0.7).
-  // Values below would land in MEDIUM (~0.6) and return NO_CLEAR_EDGE.
-  it("NEAR_SUPPORT + STRONG_UP at HIGH conf → BOUNCE_EXPECTED", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearSup,
-      momentum: makeMomentum("STRONG_UP", 0.9),
-      pressure: makePressure("STRONG_BUY", 0.9),
-    }));
+  it("bounce confirmed: tested, closed back above, green + momentum up + buyers → BOUNCE_EXPECTED", () => {
+    const r = toIntelligence(baseInput({ sr: nearSup, momentum: makeMomentum("STRONG_UP", 0.9), pressure: makePressure("STRONG_BUY", 0.9), recentCandles: bounceCandles() }));
     assert.equal(r.outlook, "BOUNCE_EXPECTED");
   });
 
-  // Post-2026-05-07 single-pool model: BOUNCE_EXPECTED requires HIGH
-  // confidence (>0.7). WEAK_UP at value 0.4 with BUY pressure 0.4 produces
-  // confidence ≈ 0.35 (LOW bucket) → no signal.
-  it("NEAR_SUPPORT + WEAK_UP at low confidence → NO_CLEAR_EDGE", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearSup,
-      momentum: makeMomentum("UP", 0.4),
-      pressure: makePressure("BUY", 0.4),
-    }));
-    assert.equal(r.outlook, "NO_CLEAR_EDGE");
-  });
-
-  it("NEAR_SUPPORT + WEAK_UP at HIGH confidence → BOUNCE_EXPECTED", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearSup,
-      momentum: makeMomentum("UP", 0.9),
-      pressure: makePressure("STRONG_BUY", 0.9),
-    }));
+  it("failed breakdown (wick below support, closes back above) + buyers → BOUNCE_EXPECTED", () => {
+    const r = toIntelligence(baseInput({ sr: nearSup, momentum: makeMomentum("STRONG_UP", 0.9), pressure: makePressure("STRONG_BUY", 0.9), recentCandles: failedBreakdownCandles() }));
     assert.equal(r.outlook, "BOUNCE_EXPECTED");
   });
 
-  it("NEAR_SUPPORT + FLAT → NO_CLEAR_EDGE", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearSup,
-      momentum: makeMomentum("FLAT", 0),
-      pressure: makePressure("NEUTRAL", 0),
-    }));
+  it("bounce candles but momentum down → WAIT", () => {
+    const r = toIntelligence(baseInput({ sr: nearSup, momentum: makeMomentum("STRONG_DOWN", -0.9), pressure: makePressure("STRONG_BUY", 0.9), recentCandles: bounceCandles() }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("confirmed bounce but LOW confidence → WAIT (HIGH floor kept)", () => {
+    const r = toIntelligence(baseInput({ sr: nearSup, momentum: makeMomentum("UP", 0.4), pressure: makePressure("BUY", 0.4), recentCandles: bounceCandles() }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("FLAT momentum → WAIT", () => {
+    const r = toIntelligence(baseInput({ sr: nearSup, momentum: makeMomentum("FLAT", 0), pressure: makePressure("NEUTRAL", 0), recentCandles: bounceCandles() }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
@@ -349,6 +306,7 @@ describe("toIntelligence — outlook decision table", () => {
       sr: makeSr({ support: { level: 900, dist: 10 }, resistance: { level: 1100, dist: 10 } }),
       momentum: makeMomentum("STRONG_UP", 0.9),
       pressure: makePressure("STRONG_BUY", 0.9),
+      recentCandles: bounceCandles(),
     }));
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
@@ -620,9 +578,21 @@ describe("toIntelligence — Breakout / Breakdown gates", () => {
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("Breakout: confirmation fails (only 1 of 2 closes above max-high) → NO_CLEAR_EDGE", () => {
+  it("Breakout: ONE close above the zone is enough (previous candle still inside)", () => {
     const candles = buildBreakoutCandles();
-    candles[candles.length - 2].close = 999; // pull the second-to-last close back below 1000
+    candles[candles.length - 2].close = 999; // previous candle did not break out
+    const r = toIntelligence(baseInput({
+      sr: nearRes,
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
+      recentCandles: candles,
+    }));
+    assert.equal(r.outlook, "BREAKOUT_LIKELY");
+  });
+
+  it("Breakout: last close still inside the zone → NO_CLEAR_EDGE (still testing)", () => {
+    const candles = buildBreakoutCandles();
+    candles[candles.length - 1].close = 1005.5; // ≤ zone.max (1006)
     const r = toIntelligence(baseInput({
       sr: nearRes,
       momentum: makeMomentum("STRONG_UP", 0.95),
@@ -669,9 +639,21 @@ describe("toIntelligence — Breakout / Breakdown gates", () => {
     assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 
-  it("Breakdown: confirmation fails (only 1 close below min-low) → NO_CLEAR_EDGE", () => {
+  it("Breakdown: ONE close below the zone is enough (previous candle still inside)", () => {
     const candles = buildBreakdownCandles();
-    candles[candles.length - 2].close = 1001; // pull second-to-last back above min-low (1000)
+    candles[candles.length - 2].close = 1001;
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_DOWN", -0.95),
+      pressure: makePressure("STRONG_SELL", -0.95),
+      recentCandles: candles,
+    }));
+    assert.equal(r.outlook, "BREAKDOWN_RISK");
+  });
+
+  it("Breakdown: last close still inside the zone → NO_CLEAR_EDGE (still testing)", () => {
+    const candles = buildBreakdownCandles();
+    candles[candles.length - 1].close = 994.5; // ≥ zone.min (994)
     const r = toIntelligence(baseInput({
       sr: nearSup,
       momentum: makeMomentum("STRONG_DOWN", -0.95),
@@ -728,26 +710,25 @@ describe("toIntelligence — Breakout / Breakdown gates", () => {
     assert.equal(r.outlook, "BREAKOUT_LIKELY");
   });
 
-  // Bounce / Rejection paths must remain unaffected by the candles array
-  // length — they don't consult the gates at all.
-  it("Bounce path unaffected by 21-candle stream", () => {
-    const r = toIntelligence(baseInput({
-      sr: nearSup,
-      momentum: makeMomentum("STRONG_UP", 0.9),
-      pressure: makePressure("STRONG_BUY", 0.9),
-      recentCandles: buildBreakoutCandles(),  // 21 candles passed but Bounce ignores gates
-    }));
-    assert.equal(r.outlook, "BOUNCE_EXPECTED");
-  });
-
-  it("Rejection path unaffected by 21-candle stream", () => {
+  // Engines must agree with the break direction.
+  it("Breakout candles but pressure selling → NO_CLEAR_EDGE", () => {
     const r = toIntelligence(baseInput({
       sr: nearRes,
-      momentum: makeMomentum("STRONG_DOWN", -0.9),
-      pressure: makePressure("STRONG_SELL", -0.9),
+      momentum: makeMomentum("STRONG_UP", 0.95),
+      pressure: makePressure("STRONG_SELL", -0.95),
+      recentCandles: buildBreakoutCandles(),
+    }));
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
+  });
+
+  it("Breakdown candles but pressure buying → NO_CLEAR_EDGE", () => {
+    const r = toIntelligence(baseInput({
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_DOWN", -0.95),
+      pressure: makePressure("STRONG_BUY", 0.95),
       recentCandles: buildBreakdownCandles(),
     }));
-    assert.equal(r.outlook, "REJECTION_POSSIBLE");
+    assert.equal(r.outlook, "NO_CLEAR_EDGE");
   });
 });
 
@@ -821,6 +802,22 @@ describe("getMomentum — index-aware divisor", () => {
     assert.equal(m!.signal, "FLAT");
   });
 
+  // 2026-11-09: momentum uses the LAST 2 candles, previous × 0.3 + newest × 0.7
+  it("only the last 2 candles count (0.3 / 0.7) — an older big candle is ignored", () => {
+    // returns: +1.0% (old), −0.1%, +0.2%  →  velocity = −0.001×0.3 + 0.002×0.7 = 0.0011 → 0.367 → UP
+    // (the old 3-candle formula would have said STRONG_UP because of the +1% candle)
+    const c = [flatCandle(1000, 0.01), flatCandle(1010, -0.001), flatCandle(1009, 0.002)];
+    const m = getMomentum(c)!;
+    assert.ok(Math.abs(m.value - 0.0011 / 0.003) < 1e-9, `value ${m.value}`);
+    assert.equal(m.signal, "UP");
+    assert.ok(Math.abs(m.accelerationRaw - (0.002 - -0.001)) < 1e-12, "acceleration = newest − previous");
+  });
+
+  it("2 candles are enough; 1 is not", () => {
+    assert.equal(getMomentum([flatCandle(1000, 0.002)]), null);
+    assert.ok(getMomentum([flatCandle(1000, 0.002), flatCandle(1002, 0.002)]));
+  });
+
   it("indices: 0.2% per candle reads STRONG_UP", () => {
     const c = [flatCandle(24000, 0.002), flatCandle(24048, 0.002), flatCandle(24096, 0.002)];
     const m = getMomentum(c, true);
@@ -834,7 +831,7 @@ describe("getMomentum — index-aware divisor", () => {
 // The tradePlan field is the user-facing BUY/SELL output. These tests pin:
 //   1. The outlook→action mapping (BOUNCE/BREAKOUT → BUY, REJECTION/BREAKDOWN → SELL)
 //   2. The HIGH-confidence floor (< 0.7 → null = WAIT)
-//   3. The ATR-based SL / target math (1.5× / 3.0× → 2:1 R:R always)
+//   3. The ATR-based SL / target math (1.2× / 2.4× → 2:1 R:R always)
 //   4. The fallback chain (no candles → volatility-derived ATR → 0.5% floor)
 
 describe("toIntelligence — tradePlan generation", () => {
@@ -847,6 +844,7 @@ describe("toIntelligence — tradePlan generation", () => {
       momentum: makeMomentum("STRONG_UP", 0.9),
       pressure: makePressure("STRONG_BUY", 0.9),
       high: 1010, low: 990,
+      recentCandles: bounceCandles(),
     }));
     assert.equal(r.outlook, "BOUNCE_EXPECTED");
     assert.ok(r.tradePlan, "tradePlan should be set");
@@ -866,6 +864,7 @@ describe("toIntelligence — tradePlan generation", () => {
       momentum: makeMomentum("STRONG_DOWN", -0.95),
       pressure: makePressure("STRONG_SELL", -0.95),
       high: 1003, low: 1000,
+      recentCandles: rejectionCandles(),
     }));
     assert.equal(r.outlook, "REJECTION_POSSIBLE");
     assert.ok(r.tradePlan);
@@ -877,6 +876,7 @@ describe("toIntelligence — tradePlan generation", () => {
 
   it("BREAKOUT_LIKELY (gates pass) → BUY tradePlan", () => {
     const r = toIntelligence(baseInput({
+      price: 1008, // live price = the breakout candle's close (above the 1004–1006 zone)
       sr: nearRes,
       momentum: makeMomentum("STRONG_UP", 0.95),
       pressure: makePressure("STRONG_BUY", 0.95),
@@ -889,6 +889,7 @@ describe("toIntelligence — tradePlan generation", () => {
 
   it("BREAKDOWN_RISK (gates pass) → SELL tradePlan", () => {
     const r = toIntelligence(baseInput({
+      price: 992, // live price = the breakdown candle's close (below the 994–996 zone)
       sr: nearSup,
       momentum: makeMomentum("STRONG_DOWN", -0.95),
       pressure: makePressure("STRONG_SELL", -0.95),
@@ -931,9 +932,11 @@ describe("toIntelligence — tradePlan generation", () => {
     // Build 15 candles with a known TR profile so we can predict the ATR.
     // Each candle: open=close=100, high=102, low=98 → TR ≈ 4 (since prevClose = 100)
     const candles: Candle[] = [];
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 14; i++) {
       candles.push({ time: 1700000000 + i * 300, open: 100, high: 102, low: 98, close: 100, volume: 1000 });
     }
+    // last candle: tested support (zone 98.9–100.9), closed back above as green → confirmed bounce
+    candles.push({ time: 1700000000 + 14 * 300, open: 100.2, high: 102, low: 98.5, close: 101.2, volume: 1000 });
     const r = toIntelligence(baseInput({
       symbol: "TEST",
       price: 100,
@@ -945,24 +948,71 @@ describe("toIntelligence — tradePlan generation", () => {
     }));
     assert.equal(r.outlook, "BOUNCE_EXPECTED");
     assert.ok(r.tradePlan);
-    // ATR ≈ 4. SL distance = 1.5 × 4 = 6. Target distance = 3 × 4 = 12.
+    // ATR ≈ 4. Support zone 98.9–100.9 → SL = 98.9 − 0.2 × 4 = 98.1 (just below the zone).
+    // Risk = 100 − 98.1 = 1.9 → target = 100 + 2 × 1.9 = 103.8.
     assert.ok(Math.abs(r.tradePlan!.atr - 4) < 0.5, `expected ATR ≈ 4, got ${r.tradePlan!.atr}`);
-    assert.ok(Math.abs(r.tradePlan!.stopLoss - 94) < 0.5, `expected SL ≈ 94, got ${r.tradePlan!.stopLoss}`);
-    assert.ok(Math.abs(r.tradePlan!.target - 112) < 0.5, `expected target ≈ 112, got ${r.tradePlan!.target}`);
+    const atr = r.tradePlan!.atr;
+    const sl = 98.9 - 0.2 * atr;
+    assert.ok(Math.abs(r.tradePlan!.stopLoss - sl) < 0.02, `expected SL ≈ ${sl}, got ${r.tradePlan!.stopLoss}`);
+    assert.ok(Math.abs(r.tradePlan!.target - (100 + 2 * (100 - sl))) < 0.02, `expected target 2× risk, got ${r.tradePlan!.target}`);
+    assert.ok(r.tradePlan!.stopLoss < 98.9, "stop sits BELOW the support zone");
   });
 
-  it("tradePlan falls back to volatility-derived ATR when no candles supplied", () => {
+  // ── Fix 1 + Fix 3 (2026-11-09): plan anchored to the level ──
+  const flatCandles = (n: number, base: number, range: number): Candle[] =>
+    Array.from({ length: n }, (_, i) => ({ time: 1700000000 + i * 300, open: base, high: base + range / 2, low: base - range / 2, close: base, volume: 1000 }));
+
+  it("Fix 1: price more than 1.5 ATR from the level → no plan (the move already happened)", () => {
+    // ₹1000 stock: the old 1% "near" zone is ±₹10, but its 5-min ATR is only ≈ ₹2.
+    // Support 995 (zone 994–996). Last candle tested 995 and closed 997.5 (green) → bounce.
+    const candles = flatCandles(14, 997, 2);
+    candles.push({ time: 1700000000 + 14 * 300, open: 995.5, high: 998, low: 995, close: 997.5, volume: 1000 });
+    const input = (price: number) => baseInput({
+      price, open: 997, close: 997, high: 1001, low: 994,
+      sr: nearSup,
+      momentum: makeMomentum("STRONG_UP", 0.9),
+      pressure: makePressure("STRONG_BUY", 0.9),
+      recentCandles: candles,
+    });
+    const far = toIntelligence(input(1000)); // ₹5 above the level ≈ 2.4 ATR (still inside the old 1%)
+    assert.equal(far.outlook, "BOUNCE_EXPECTED", "the setup itself is still a bounce");
+    assert.equal(far.tradePlan, null, "but too far from support to call — the move already happened");
+    const near = toIntelligence(input(997.5)); // ₹2.5 above ≈ 1.2 ATR → fine
+    assert.ok(near.tradePlan, "close to the level → plan");
+    assert.ok(near.tradePlan!.stopLoss < 994, "stop below the support zone");
+  });
+
+  it("Fix 3: SELL rejection → stop just ABOVE the resistance zone, target 2× risk", () => {
+    const r = toIntelligence(baseInput({
+      price: 1003, sr: nearRes, momentum: makeMomentum("STRONG_DOWN", -0.95), pressure: makePressure("STRONG_SELL", -0.95), recentCandles: rejectionCandles(),
+    }));
+    assert.equal(r.outlook, "REJECTION_POSSIBLE");
+    const p = r.tradePlan!;
+    assert.equal(p.action, "SELL");
+    assert.ok(Math.abs(p.stopLoss - (1006 + 0.2 * p.atr)) < 0.02, `SL just above zone top 1006, got ${p.stopLoss}`);
+    const risk = p.stopLoss - 1003;
+    assert.ok(Math.abs(p.target - (1003 - 2 * risk)) < 0.02, `target = 2× risk below, got ${p.target}`);
+    assert.equal(p.riskReward, 2);
+  });
+
+  it("Fix 3: price already beyond where the stop would go → no plan", () => {
+    // BUY breakout but price fell back below the resistance zone bottom: stop would be above price → invalid.
+    const r = toIntelligence(baseInput({ price: 1000, sr: nearRes, momentum: makeMomentum("STRONG_UP", 0.95), pressure: makePressure("STRONG_BUY", 0.95), recentCandles: buildBreakoutCandles() }));
+    assert.equal(r.tradePlan, null);
+  });
+
+  it("tradePlan falls back to volatility-derived ATR when too few candles for ATR", () => {
     const r = toIntelligence(baseInput({
       price: 1000,
       sr: nearSup,
       momentum: makeMomentum("STRONG_UP", 0.9),
       pressure: makePressure("STRONG_BUY", 0.9),
       high: 1010, low: 990,  // ~2% volatility range → volatility.score ≈ 0.8
-      recentCandles: undefined,
+      recentCandles: bounceCandles(), // 2 candles: enough to confirm, too few for ATR
     }));
     assert.ok(r.tradePlan, "tradePlan should be set");
     // fromScore = price × volatility.score × 0.01 → for score 0.8: 1000 × 0.008 = 8
-    // SL distance = 1.5 × 8 = 12 → SL ≈ 988. Pretty wide guard band — just confirm it's positive.
+    // SL distance = 1.2 × 8 = 9.6 → SL ≈ 990.4. Pretty wide guard band — just confirm it's positive.
     assert.ok(r.tradePlan!.atr > 0, "atr should be positive via fallback");
     assert.ok(r.tradePlan!.stopLoss > 0 && r.tradePlan!.stopLoss < r.tradePlan!.entry);
     assert.ok(r.tradePlan!.target > r.tradePlan!.entry);

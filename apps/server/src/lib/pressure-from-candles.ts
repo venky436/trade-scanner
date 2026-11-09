@@ -2,7 +2,7 @@
 //
 // The real pressure engine (`services/pressure.service.ts`) is tick-based: for every
 // Kite tick it classifies the volume delta as buyer (price up) or seller (price down),
-// accumulates within a 1-min window, and produces a score per closed candle.
+// accumulates within a 5-min candle (clock-aligned), and produces a score per closed candle.
 //
 // On-demand (untracked) stocks have no live tick stream, so we approximate:
 // for each historical minute candle, assume the entire candle volume was buyers if
@@ -11,6 +11,7 @@
 
 import type {
   Candle,
+  PressureCandle,
   PressureResult,
   PressureSignal,
   PressureTrend,
@@ -59,16 +60,16 @@ function scoreCandle(c: Candle, avgVolume: number): CandleScore {
 }
 
 /**
- * Approximate pressure from recent historical candles (1-min preferred, 5-min works).
+ * Approximate pressure from recent historical candles (5-min, to match the live engine).
  *
- * Takes the last 3 candles from the input (padding on the right matches the live
- * engine's "most recent has most weight" behaviour). Returns null if fewer than 3
+ * Takes the last 2 candles from the input (same as the live engine since
+ * 2026-11-09: previous × 0.3 + newest × 0.7). Returns null if fewer than 2
  * candles are provided or none have meaningful volume.
  */
 export function pressureFromCandles(candles: Candle[]): PressureResult | null {
-  if (candles.length < 3) return null;
+  if (candles.length < 2) return null;
 
-  const window = candles.slice(-3);
+  const window = candles.slice(-2);
 
   // Average volume across the window for the volumeStrength normalization.
   // Using window average (not 20-day avg) keeps this self-contained.
@@ -81,9 +82,9 @@ export function pressureFromCandles(candles: Candle[]): PressureResult | null {
   const scores = scored.map((s) => s.score);
 
   // Same weighted rolling average as the live engine: older < newer.
-  let value = scores[0] * 0.2 + scores[1] * 0.3 + scores[2] * 0.5;
+  let value = scores[0] * 0.3 + scores[1] * 0.7;
 
-  // Consistency boost when all 3 candles agree on direction.
+  // Consistency boost when both candles agree on direction.
   const allPositive = scores.every((s) => s > 0);
   const allNegative = scores.every((s) => s < 0);
   if (allPositive || allNegative) value *= 1.15;
@@ -111,4 +112,33 @@ export function pressureFromCandles(candles: Candle[]): PressureResult | null {
     trend,
     confidence: Math.abs(value),
   };
+}
+
+/**
+ * Per-candle pressure ESTIMATES for the last 2 candles, scored exactly like
+ * pressureFromCandles() (same window-average volume, same formula) — used to
+ * seed the live engine's rolling window after a restart. Each live 5-min
+ * candle that closes afterwards pushes the oldest estimate out.
+ */
+export function estimatePressureCandles(candles: Candle[]): PressureCandle[] {
+  const window = candles.slice(-2);
+  if (window.length === 0) return [];
+  const avgVolume = window.reduce((sum, c) => sum + (c.volume ?? 0), 0) / window.length;
+  return window.map((c) => {
+    const { score, delta } = scoreCandle(c, avgVolume);
+    const volume = c.volume ?? 0;
+    const deltaStrength = delta > 0 ? 1 : delta < 0 ? -1 : 0;
+    return {
+      time: c.time,
+      buyerVolume: delta > 0 ? volume : 0,
+      sellerVolume: delta < 0 ? volume : 0,
+      delta,
+      volume,
+      deltaStrength,
+      volumeStrength: avgVolume > 0 ? clamp(volume / avgVolume, 0, 1) : 0,
+      score,
+      bias: score > 0 ? "BUY" : score < 0 ? "SELL" : "NEUTRAL",
+      estimated: true,
+    };
+  });
 }

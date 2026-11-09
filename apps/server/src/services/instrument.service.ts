@@ -88,6 +88,19 @@ const INDEX_SYMBOLS = [
   "INDIA VIX",
 ];
 
+/**
+ * true for NSE listings that are not ordinary intraday shares: their symbol
+ * ends in a 2-character series code — -SG state govt bonds, -N0…/-YI company
+ * bonds (e.g. 903SFL28-YI), -GB gold bonds, -TB T-bills, -SM/-ST SME,
+ * -BE/-BZ trade-for-trade (no intraday/MIS). Real shares whose NAME has a
+ * dash keep a longer part after it (BAJAJ-AUTO, NAM-INDIA, HCL-INSYS,
+ * KLBRENG-B …) and are NOT matched. Verified against the full NSE list
+ * (2026-11-09): 7,205 matched, all non-share; 7 real dashed shares kept.
+ */
+export function isNonShareListing(tradingsymbol: string): boolean {
+  return /-[A-Z0-9]{2}$/.test(tradingsymbol);
+}
+
 export async function loadInstruments(
   apiKey: string,
   accessToken: string,
@@ -113,6 +126,14 @@ export async function loadInstruments(
     filtered = filtered.filter(
       (i: any) => i.instrument_type === modeConfig.instrumentType
     );
+  }
+
+  // Equity: plain shares only. On NSE, NON-share listings carry a 2-character
+  // series code even with instrument_type EQ (see isNonShareListing).
+  if (mode === "equity") {
+    const before = filtered.length;
+    filtered = filtered.filter((i: any) => !isNonShareListing(String(i.tradingsymbol)));
+    console.log(`[${mode}] Removed ${before - filtered.length} non-share listings (bonds, SME, trade-for-trade …)`);
   }
 
   console.log(`[${mode}] ${filtered.length} instruments after segment/type filter`);
@@ -204,6 +225,7 @@ export async function loadInstruments(
   const tokenToSymbol = new Map<number, string>();
   const symbolToToken = new Map<string, number>();
   const symbols: string[] = [];
+  const tickSizes = new Map<string, number>();
 
   for (const inst of final) {
     const token = Number(inst.instrument_token);
@@ -211,13 +233,15 @@ export async function loadInstruments(
     tokenToSymbol.set(token, symbol);
     symbolToToken.set(symbol, token);
     symbols.push(symbol);
+    const tick = Number(inst.tick_size);
+    if (tick > 0) tickSizes.set(symbol, tick);
   }
 
   console.log(
     `[${mode}] Selected ${symbols.length} instruments (${allInstruments.length} searchable): ${symbols.slice(0, 10).join(", ")}${symbols.length > 10 ? "..." : ""}`
   );
 
-  return { tokenToSymbol, symbolToToken, symbols, allInstruments };
+  return { tokenToSymbol, symbolToToken, symbols, allInstruments, tickSizes };
 }
 
 /**

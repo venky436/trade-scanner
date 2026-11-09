@@ -431,11 +431,11 @@ The Signal Engine itself has no warm-up, but it depends on engines that do:
 | Dependency | Warm-Up |
 |-----------|---------|
 | S/R Levels | Available after first HTTP fetch (~startup) |
-| Pressure | ~3 minutes (needs 3 candle closes) |
+| Pressure | ~15–20 minutes (needs 3 full 5-min candle closes) |
 | Momentum | ~15 minutes (needs 3 × 5-min candle closes) |
 | Pattern | ~15 minutes (needs 3 × 5-min candle closes) |
 
-In practice, the earliest a signal can fire is after the pressure engine warms up (~3 minutes), since pressure is a mandatory gate. BREAKOUT and BREAKDOWN signals require momentum, so they won't fire until ~15 minutes in.
+In practice, the earliest a signal can fire is after the pressure engine warms up (~15–20 minutes), since pressure is a mandatory gate. BREAKOUT and BREAKDOWN signals also require momentum, which warms up on the same 5-min candles.
 
 ---
 

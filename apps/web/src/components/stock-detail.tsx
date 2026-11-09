@@ -29,6 +29,9 @@ import { useMarketData } from "@/hooks/use-market-data";
 import { useAuth } from "@/context/auth-context";
 import { apiFetch } from "@/lib/api";
 import { AddToWatchZoneButton } from "./watch-zone";
+import { TradeButtons } from "./trading/trade-buttons";
+import { useActiveTradeLevels } from "./trading/use-active-trade";
+import type { TradePlan } from "@/lib/trading";
 import { AiAnalysisCard } from "./ai-analysis-card";
 import { useAiCall } from "@/hooks/use-ai-calls";
 import { useServerConfig } from "@/context/config-context";
@@ -153,7 +156,10 @@ export function StockDetail({ symbol }: StockDetailProps) {
   const { user } = useAuth();
   const [snapshot, setSnapshot] = useState<StockDetailSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [chartInterval, setChartInterval] = useState("5m");
+  // Intraday tool → chart is always 5-minute candles (same timeframe as the engines)
+  const chartInterval = "5m";
+  // Your active trade on this stock (if any) → entry / stop-loss / target lines on the chart
+  const tradeLevels = useActiveTradeLevels(symbol);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [, setNowTick] = useState(0);
 
@@ -337,6 +343,14 @@ export function StockDetail({ symbol }: StockDetailProps) {
                 {formatTimeAgo(intel.timestamp)}
               </span>
             </div>
+            <div className="mt-4 flex justify-end">
+              <TradeButtons
+                symbol={symbol}
+                plan={(intel as IntelligenceSnapshot & { tradePlan?: TradePlan | null }).tradePlan ?? null}
+                setup={intel.outlook}
+                confidence={intel.confidence}
+              />
+            </div>
           </div>
         </div>
         <div className="pointer-events-none absolute -bottom-20 -right-20 size-48 rounded-full blur-3xl bg-zinc-200/50 dark:bg-zinc-700/10" />
@@ -359,21 +373,9 @@ export function StockDetail({ symbol }: StockDetailProps) {
         <div className="mb-4 flex items-center justify-between">
           <SectionHeader Icon={BarChart3} title="Price Chart" iconColor="text-cyan-600 dark:text-cyan-400" iconBg="bg-cyan-500/10" />
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 p-1">
-              {(["1m", "5m", "15m", "1H", "1D"] as const).map((opt) => (
-                <button
-                  key={opt}
-                  onClick={() => setChartInterval(opt)}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-                    chartInterval === opt
-                      ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
-                      : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-                  }`}
-                >
-                  {opt}
-                </button>
-              ))}
-            </div>
+            <span className="rounded-md border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+              5 min
+            </span>
             <button
               onClick={() => setIsFullscreen(true)}
               className="flex size-8 items-center justify-center rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 text-zinc-500 transition-colors hover:text-zinc-900 dark:hover:text-zinc-100"
@@ -388,9 +390,10 @@ export function StockDetail({ symbol }: StockDetailProps) {
             symbol={symbol}
             interval={chartInterval}
             tick={chartTick}
-            days={chartInterval === "1D" ? 90 : 5}
+            days={5}
             supportLevel={supportLevel}
             resistanceLevel={resistanceLevel}
+            tradeLevels={tradeLevels}
           />
         </div>
       </section>
@@ -600,21 +603,9 @@ export function StockDetail({ symbol }: StockDetailProps) {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 rounded-lg border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 p-1">
-                {(["1m", "5m", "15m", "1H", "1D"] as const).map((opt) => (
-                  <button
-                    key={opt}
-                    onClick={() => setChartInterval(opt)}
-                    className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-                      chartInterval === opt
-                        ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
-                        : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-                    }`}
-                  >
-                    {opt}
-                  </button>
-                ))}
-              </div>
+              <span className="rounded-md border border-zinc-200 dark:border-zinc-800/80 bg-zinc-50 dark:bg-zinc-900/40 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                5 min
+              </span>
               <button
                 onClick={() => setIsFullscreen(false)}
                 className="flex size-8 items-center justify-center rounded-lg border border-zinc-200 dark:border-zinc-800/80 text-zinc-500 transition-colors hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
@@ -629,9 +620,10 @@ export function StockDetail({ symbol }: StockDetailProps) {
               symbol={symbol}
               interval={chartInterval}
               tick={chartTick}
-              days={chartInterval === "1D" ? 90 : 5}
+              days={5}
               supportLevel={supportLevel}
               resistanceLevel={resistanceLevel}
+              tradeLevels={tradeLevels}
             />
           </div>
         </div>
