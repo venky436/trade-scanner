@@ -21,6 +21,7 @@ import type { SignalAccuracyService } from "./services/signal-accuracy.service.j
 import type { SignalTrackingService } from "./services/signal-tracking.service.js";
 import type { AiCallService } from "./services/ai-call.service.js";
 import type { OrderExecutionService } from "./services/order-execution.service.js";
+import type { DayLevels } from "./lib/day-levels.js";
 
 interface ServerDeps {
   apiKey: string;
@@ -51,6 +52,9 @@ interface ServerDeps {
   // Order execution (Trade / Orders / P&L screens)
   getOrderExecution?: () => OrderExecutionService | null;
   getAutoTrader?: () => AutoTrader | null;
+  // Day levels (frozen S1–S3 / R1–R3 for today) + today's closed 5-min candles
+  getDayLevels?: (symbol: string) => DayLevels | null;
+  getSessionCandles?: (symbol: string) => Candle[];
 }
 
 export async function buildServer(deps: ServerDeps) {
@@ -78,6 +82,8 @@ export async function buildServer(deps: ServerDeps) {
     getCachedLevels: deps.getCachedLevels,
     getEodJob: deps.getEodJob,
     getMomentum: deps.getMomentum,
+    getDayLevels: deps.getDayLevels,
+    getSessionCandles: deps.getSessionCandles,
   });
 
   await server.register(userAuthRoute);
@@ -105,6 +111,8 @@ export async function buildServer(deps: ServerDeps) {
       getMomentum: deps.getMomentumSignal,
       getRecentCandles: deps.getRecentCandles,
       getAllSymbols: deps.getAllSymbols,
+      getDayLevels: deps.getDayLevels,
+      getSessionCandles: deps.getSessionCandles,
     });
   }
 
@@ -118,6 +126,8 @@ export async function buildServer(deps: ServerDeps) {
       getRecentCandles: deps.getRecentCandles,
       getAllSymbols: deps.getAllSymbols,
       getAutoTrader: deps.getAutoTrader,
+      getDayLevels: deps.getDayLevels,
+      getSessionCandles: deps.getSessionCandles,
     });
   }
 

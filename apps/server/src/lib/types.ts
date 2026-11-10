@@ -202,6 +202,8 @@ export interface IntelligenceContext {
   zone: Zone;
   distanceToLevel: number | null; // percent, e.g. 0.35
   level: number | null;           // the nearby S or R price
+  levelName?: "S1" | "S2" | "S3" | "R1" | "R2" | "R3"; // day-level path only: which frozen line
+  levelsDone?: boolean;            // day-level path only: price passed all lines on a side → no calls today
 }
 
 export interface IntelligenceMomentum {

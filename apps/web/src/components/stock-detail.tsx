@@ -228,6 +228,9 @@ export function StockDetail({ symbol }: StockDetailProps) {
       ? null
       : rawResistance;
 
+  // Today's frozen lines (S1–S3 / R1–R3) replace the single S/R once the day's lines exist
+  const hasDayLevels = !!snapshot?.dayLevels && snapshot.dayLevels.levels.length > 0;
+
   const chartTick: ChartTick | null = intel
     ? { price: intel.price, timestamp: intel.timestamp }
     : null;
@@ -391,9 +394,10 @@ export function StockDetail({ symbol }: StockDetailProps) {
             interval={chartInterval}
             tick={chartTick}
             days={5}
-            supportLevel={supportLevel}
-            resistanceLevel={resistanceLevel}
+            supportLevel={hasDayLevels ? null : supportLevel}
+            resistanceLevel={hasDayLevels ? null : resistanceLevel}
             tradeLevels={tradeLevels}
+            dayLevels={hasDayLevels ? snapshot?.dayLevels : null}
           />
         </div>
       </section>
@@ -423,7 +427,36 @@ export function StockDetail({ symbol }: StockDetailProps) {
               <div className="text-sm text-zinc-500">No level within 1% of current price</div>
             )}
 
-            {snapshot?.levels && (
+            {hasDayLevels && snapshot?.dayLevels ? (
+              <div className="space-y-2 border-t border-zinc-200 dark:border-zinc-800/80 pt-3">
+                <div className="text-[11px] text-zinc-500">Today&apos;s lines (fixed at the open)</div>
+                {[...snapshot.dayLevels.levels]
+                  .sort((a, b) => b.level - a.level)
+                  .map((l) => {
+                    const broken = snapshot.dayLevels!.broken.includes(l.name);
+                    const support = l.kind === "SUPPORT";
+                    return (
+                      <div key={l.name} className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+                          <Crosshair className={`size-3 ${support ? "text-emerald-500 dark:text-emerald-400/70" : "text-rose-500 dark:text-rose-400/70"}`} />
+                          <span>
+                            {l.name} · {support ? "Support" : "Resistance"}
+                            {broken ? " · broken" : ""}
+                          </span>
+                        </div>
+                        <span
+                          className={`font-mono font-semibold tabular-nums ${broken ? "text-zinc-400 line-through" : support ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}
+                        >
+                          ₹{l.level.toFixed(2)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                {snapshot.dayLevels.done && (
+                  <div className="text-[11px] text-amber-600 dark:text-amber-400">Passed all its lines on one side — no more calls on this stock today.</div>
+                )}
+              </div>
+            ) : snapshot?.levels && (
               <div className="space-y-2 border-t border-zinc-200 dark:border-zinc-800/80 pt-3">
                 <div className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
@@ -621,9 +654,10 @@ export function StockDetail({ symbol }: StockDetailProps) {
               interval={chartInterval}
               tick={chartTick}
               days={5}
-              supportLevel={supportLevel}
-              resistanceLevel={resistanceLevel}
+              supportLevel={hasDayLevels ? null : supportLevel}
+              resistanceLevel={hasDayLevels ? null : resistanceLevel}
               tradeLevels={tradeLevels}
+              dayLevels={hasDayLevels ? snapshot?.dayLevels : null}
             />
           </div>
         </div>

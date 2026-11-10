@@ -44,6 +44,7 @@ import type {
   VolatileRecentCandle,
   VolatileNearestLevel,
 } from "../lib/types.js";
+import type { DayLevels } from "../lib/day-levels.js";
 
 interface SectionsRouteDeps {
   getCachedLevels: () => Record<string, SupportResistanceResult>;
@@ -51,6 +52,10 @@ interface SectionsRouteDeps {
   getMomentum: (symbol: string) => MomentumResult | null;
   getRecentCandles: (symbol: string, n: number) => Candle[];
   getAllSymbols: () => string[];
+  // Day levels: when today's lines exist, the near-support / near-resistance
+  // lanes use them (same lines as the Ready list); otherwise the old S/R.
+  getDayLevels?: (symbol: string) => DayLevels | null;
+  getSessionCandles?: (symbol: string) => Candle[];
 }
 
 // Public sections endpoint — single source of truth for which stocks appear
@@ -68,6 +73,7 @@ export async function sectionsRoute(fastify: FastifyInstance, deps: SectionsRout
       const quote = marketDataService.getQuote(sym);
       if (!quote || quote.lastPrice <= 0) continue;
       const sr = deps.getCachedLevels()[sym] ?? null;
+      const dayLevels = deps.getDayLevels?.(sym) ?? null;
       const intel = toIntelligence({
         symbol: sym,
         price: quote.lastPrice,
@@ -80,6 +86,7 @@ export async function sectionsRoute(fastify: FastifyInstance, deps: SectionsRout
         momentum: deps.getMomentum(sym),
         sr,
         recentCandles: deps.getRecentCandles(sym, 24),
+        ...(dayLevels ? { dayLevels, sessionCandles: deps.getSessionCandles?.(sym) } : {}),
       });
       pool.push(intel);
     }

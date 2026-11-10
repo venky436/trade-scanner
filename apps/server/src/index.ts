@@ -27,6 +27,7 @@ import { marketDataService } from "./services/market-data.service.js";
 import { createOrderExecutionService } from "./services/order-execution.service.js";
 import { createAutoTrader } from "./services/auto-trader.service.js";
 import { buildTradeSetups, inCallWindow, CALL_WINDOW_LABEL } from "./lib/trade-setups.js";
+import { istDate, type DayLevels } from "./lib/day-levels.js";
 import { db } from "./db/index.js";
 import { users } from "./db/schema/users.js";
 import { eq } from "drizzle-orm";
@@ -88,7 +89,8 @@ async function main() {
   });
 
   // Auto-trader: PAPER only (pauses while the switch is on Real).
-  // ≥90% confidence, max 3 active trades, 100 shares each. See auto-trader.service.ts.
+  // ≥90% confidence, max 5 active trades, ₹500 risk per trade (quantity =
+  // ₹500 ÷ stop distance, capped by margin). See auto-trader.service.ts.
   let adminUserId: string | null = null;
   const autoTrader = createAutoTrader({
     getMode: () => orderExecution.mode,
@@ -107,9 +109,12 @@ async function main() {
           getMomentum: (s) => currentMomentumMap?.get(s) ?? null,
           getRecentCandles: (s, n) => currentCandleTracker?.getRecentCandles(s, n) ?? [],
           getAllSymbols: () => currentInstrumentMaps?.symbols ?? [],
+          getDayLevels: todayDayLevels,
+          getSessionCandles: (s) => currentCandleTracker?.getSessionCandles(s) ?? [],
         },
         20,
       ).ready,
+    getMaxQuantity: async (symbol, side) => (await orderExecution.quoteMargin(symbol, side)).maxQty,
     getTodayTrades: async (userId) => {
       const [today, active] = await Promise.all([
         orderExecution.listTrades(userId, { range: "today" }),
@@ -125,6 +130,13 @@ async function main() {
 
   // Shared S/R levels cache (populated by levels-worker, read by signal-worker + broadcast)
   let cachedLevels: Record<string, SupportResistanceResult> = {};
+  // DAY LEVELS — today's frozen S1–S3 / R1–R3 per stock (levels-worker computes
+  // them once per day after the open). Only today's are ever returned.
+  const cachedDayLevels: Record<string, DayLevels> = {};
+  function todayDayLevels(symbol: string): DayLevels | null {
+    const d = cachedDayLevels[symbol];
+    return d && d.date === istDate(Date.now()) ? d : null;
+  }
   // Intraday S/R levels (computed from 5-min session candles)
   const intradayLevels: Record<string, SupportResistanceResult> = {};
   // Per-symbol counter for throttling intraday S/R recompute. Recomputes
@@ -284,6 +296,8 @@ async function main() {
       getAccessToken: () => currentAccessToken,
       getInstrumentMaps: () => currentInstrumentMaps,
       onLevelsUpdate: (symbol, result) => { cachedLevels[symbol] = result; redisService.setLevel(symbol, result); },
+      onDayLevels: (symbol, levels) => { cachedDayLevels[symbol] = levels; },
+      getDayLevelsDate: (symbol) => cachedDayLevels[symbol]?.date ?? null,
     });
     levelsWorkerInstance = levelsWorker;
 
@@ -295,6 +309,8 @@ async function main() {
       getMomentum: (s) => momentumMap.get(s) ?? null,
       getLevels: (s) => cachedLevels[s] ?? null,
       getRecentCandles: (s) => candleTrackerRef?.getRecentCandles(s, 21) ?? [],
+      getDayLevels: todayDayLevels,
+      getSessionCandles: (s) => candleTrackerRef?.getSessionCandles(s) ?? [],
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
     });
     wsManager.attach(server.server);
@@ -378,6 +394,8 @@ async function main() {
       getMomentum: (s) => momentumMap.get(s) ?? null,
       getLevels: (s) => cachedLevels[s] ?? null,
       getRecentCandles: (s) => candleTrackerRef?.getRecentCandles(s, 21) ?? [],
+      getDayLevels: todayDayLevels,
+      getSessionCandles: (s) => candleTrackerRef?.getSessionCandles(s) ?? [],
       getEligibleSymbols: () => stockFilter.getEligibleSymbols(),
       onIntelligenceComputed: (symbol, intel, price) => {
         trackingService.recordSignal(symbol, intel, price);
@@ -536,6 +554,8 @@ async function main() {
     getAllSymbols: () => currentInstrumentMaps?.symbols ?? [],
     getOrderExecution: () => orderExecution,
     getAutoTrader: () => autoTrader,
+    getDayLevels: todayDayLevels,
+    getSessionCandles: (s) => currentCandleTracker?.getSessionCandles(s) ?? [],
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });

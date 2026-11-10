@@ -7,11 +7,13 @@
  *   a READY setup (09:30–14:00, volume ≥ 1.2× — see lib/trade-setups.ts)
  *   confidence ≥ 90% + a trade plan (stop-loss + target)
  *   → no active trade on that stock
- *   → fewer than 3 trades active right now (any trade, manual or auto)
+ *   → fewer than 5 trades active right now (any trade, manual or auto)
  *   → stock not traded in the last 30 min (no instant re-entry after an exit)
- *   → place 100 shares with the plan's stop-loss and target
+ *   → place a FIXED-RISK quantity (2026-11-10): shares = ₹500 ÷ (entry − SL),
+ *     so a stop-loss hit loses ≈ ₹500 whatever the stock's price; capped to
+ *     what the (paper) margin allows. riskPerTrade 0 → fixed `quantity`.
  *
- * When 3 trades are active it waits; as soon as one closes, the next strong
+ * When 5 trades are active it waits; as soon as one closes, the next strong
  * setup can be taken. Placing goes through orderExecution.placeTrade, so all
  * the normal checks still apply (09:15–entry cutoff, SL/target sides, margin).
  *
@@ -24,18 +26,27 @@ import type { IntelligenceSnapshot } from "../lib/types.js";
 
 export const AUTO_SETUP_PREFIX = "AUTO:";
 
+/** Shares so that a stop-loss hit loses ≈ `risk` ₹: floor(risk ÷ |entry − stopLoss|), 0 if invalid. */
+export function riskQuantity(risk: number, entry: number, stopLoss: number): number {
+  const perShare = Math.abs(entry - stopLoss);
+  if (!(risk > 0) || !(perShare > 0) || !Number.isFinite(perShare)) return 0;
+  return Math.floor(risk / perShare);
+}
+
 export interface AutoTraderConfig {
   minConfidence: number; // 0..1
   maxActive: number;
-  quantity: number;
+  quantity: number; // used only when riskPerTrade is 0
+  riskPerTrade: number; // ₹ lost if the stop-loss is hit (0 = use `quantity`)
   cooldownMs: number;
   intervalMs: number;
 }
 
 export const DEFAULT_AUTO_CONFIG: AutoTraderConfig = {
   minConfidence: 0.9,
-  maxActive: 3,
+  maxActive: 5, // raised from 3 (2026-11-10, user)
   quantity: 100,
+  riskPerTrade: 500, // 1 % of a ₹50,000 account (user, 2026-11-10)
   cooldownMs: 30 * 60_000,
   intervalMs: 5_000,
 };
@@ -61,6 +72,8 @@ export interface AutoTraderDeps {
     userId: string,
     input: { symbol: string; side: "BUY" | "SELL"; quantity: number; stopLoss: number; target: number; setup: string; confidence: number },
   ) => Promise<{ id: number }>;
+  /** Most shares the account's margin allows for this order (fixed-risk sizing is capped to it). */
+  getMaxQuantity?: (symbol: string, side: "BUY" | "SELL") => Promise<number>;
   now?: () => number;
   /** Where the on/off switch is remembered across restarts (null = memory only). */
   stateFile?: string | null;
@@ -147,11 +160,23 @@ export function createAutoTrader(deps: AutoTraderDeps) {
         if (t - lastTouched(s.symbol) < cfg.cooldownMs) continue;
         const plan = s.tradePlan!;
         lastAttempt.set(s.symbol, t);
+        let quantity = cfg.riskPerTrade > 0 ? riskQuantity(cfg.riskPerTrade, plan.entry, plan.stopLoss) : cfg.quantity;
+        if (cfg.riskPerTrade > 0 && deps.getMaxQuantity) {
+          try {
+            quantity = Math.min(quantity, await deps.getMaxQuantity(s.symbol, plan.action));
+          } catch {
+            /* margin check failed — placeTrade still checks margin itself */
+          }
+        }
+        if (!(quantity >= 1)) {
+          log(s.symbol, "FAILED", `Skipped — quantity 0 (risk ₹${cfg.riskPerTrade}, SL ${plan.stopLoss}, entry ${plan.entry} — or no margin)`);
+          continue;
+        }
         try {
           const trade = await deps.placeTrade(userId, {
             symbol: s.symbol,
             side: plan.action,
-            quantity: cfg.quantity,
+            quantity,
             stopLoss: plan.stopLoss,
             target: plan.target,
             setup: `${AUTO_SETUP_PREFIX}${s.outlook}`.slice(0, 30),
@@ -160,7 +185,7 @@ export function createAutoTrader(deps: AutoTraderDeps) {
           placed.push(trade.id);
           activeSymbols.add(s.symbol);
           slots--;
-          log(s.symbol, "PLACED", `${plan.action} ${cfg.quantity} · ${Math.round(s.confidence * 100)}% · SL ${plan.stopLoss} · target ${plan.target} (trade #${trade.id})`);
+          log(s.symbol, "PLACED", `${plan.action} ${quantity} · ${Math.round(s.confidence * 100)}% · SL ${plan.stopLoss} · target ${plan.target} (trade #${trade.id})`);
         } catch (e) {
           log(s.symbol, "FAILED", (e as Error).message);
         }
@@ -182,7 +207,7 @@ export function createAutoTrader(deps: AutoTraderDeps) {
       if (timer) return;
       timer = setInterval(() => void runOnce(), cfg.intervalMs);
       timer.unref?.();
-      console.log(`[Auto] started — ${enabled ? "ON" : "OFF"}, paper only, ≥${Math.round(cfg.minConfidence * 100)}%, max ${cfg.maxActive} active, ${cfg.quantity} qty`);
+      console.log(`[Auto] started — ${enabled ? "ON" : "OFF"}, paper only, ≥${Math.round(cfg.minConfidence * 100)}%, max ${cfg.maxActive} active, ${cfg.riskPerTrade > 0 ? `₹${cfg.riskPerTrade} risk per trade` : `${cfg.quantity} qty`}`);
     },
     stop() {
       if (timer) clearInterval(timer);
@@ -203,6 +228,7 @@ export function createAutoTrader(deps: AutoTraderDeps) {
         minConfidence: cfg.minConfidence,
         maxActive: cfg.maxActive,
         quantity: cfg.quantity,
+        riskPerTrade: cfg.riskPerTrade,
         cooldownMinutes: Math.round(cfg.cooldownMs / 60_000),
         lastRunAt,
         note: lastNote,

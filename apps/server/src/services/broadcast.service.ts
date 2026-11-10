@@ -1,4 +1,5 @@
 import type { WsManager } from "../ws/ws-server.js";
+import type { DayLevels } from "../lib/day-levels.js";
 import type {
   Candle,
   IntelligenceSnapshot,
@@ -19,6 +20,9 @@ interface BroadcastConfig {
   getMomentum?: (symbol: string) => MomentumResult | null;
   getLevels?: (symbol: string) => SupportResistanceResult | null;
   getRecentCandles?: (symbol: string) => Candle[];
+  /** Today's frozen S1–S3 / R1–R3 (null = not ready → old S/R display). */
+  getDayLevels?: (symbol: string) => DayLevels | null;
+  getSessionCandles?: (symbol: string) => Candle[];
   getEligibleSymbols?: () => string[];
   onIntelligenceComputed?: (symbol: string, intel: IntelligenceSnapshot, price: number) => void;
 }
@@ -27,6 +31,11 @@ const NIFTY_SYMBOL = "NIFTY 50";
 const BANK_NIFTY_SYMBOL = "NIFTY BANK";
 
 export function createBroadcastEngine(config: BroadcastConfig) {
+  // Day-level path only when today's lines exist (same lines as the Ready list)
+  const dayLevelInput = (symbol: string) => {
+    const dayLevels = config.getDayLevels?.(symbol) ?? null;
+    return dayLevels ? { dayLevels, sessionCandles: config.getSessionCandles?.(symbol) } : {};
+  };
   const { wsManager, intervalMs = 500, maxPerBroadcast = 150 } = config;
   let timer: ReturnType<typeof setInterval> | null = null;
   let broadcastCount = 0;
@@ -69,6 +78,7 @@ export function createBroadcastEngine(config: BroadcastConfig) {
         momentum: config.getMomentum?.(symbol) ?? null,
         sr: config.getLevels?.(symbol) ?? null,
         recentCandles: config.getRecentCandles?.(symbol),
+        ...dayLevelInput(symbol),
       });
       if (hasClients) candidates.push(intel);
 

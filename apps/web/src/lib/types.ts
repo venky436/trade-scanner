@@ -24,6 +24,29 @@ export interface IntelligenceContext {
   zone: Zone;
   distanceToLevel: number | null;
   level: number | null;
+  /** Day-level path: which frozen line (S1–S3 / R1–R3) the stock is at */
+  levelName?: DayLevelName;
+  /** Day-level path: price passed all lines on one side → no calls today */
+  levelsDone?: boolean;
+}
+
+// ── Day levels: the frozen support / resistance lines for today ──
+export type DayLevelName = "S1" | "S2" | "S3" | "R1" | "R2" | "R3";
+export interface DayLevel {
+  name: DayLevelName;
+  kind: "SUPPORT" | "RESISTANCE";
+  level: number;
+  min: number;
+  max: number;
+  strength: number;
+  days: number;
+}
+export interface DayLevelsView {
+  date: string;
+  open: number;
+  levels: DayLevel[];
+  broken: DayLevelName[];
+  done: boolean;
 }
 
 export interface IntelligenceMomentum {
@@ -154,6 +177,8 @@ export interface StockDetailSnapshot extends IntelligenceSnapshot {
   close: number;
   volume: number;
   levels: SROnlyLevels;
+  /** Today's frozen S1–S3 / R1–R3 (null before the open / on holidays) */
+  dayLevels?: DayLevelsView | null;
   dataSource: "live" | "on-demand";
   computedAt: number;
 }

@@ -1,6 +1,7 @@
 import { KiteConnect } from "kiteconnect";
 import type { Candle, InstrumentMaps, SupportResistanceResult } from "../lib/types.js";
 import { getSupportResistance } from "./levels.service.js";
+import { computeDayLevels, istDate, type DayLevels } from "../lib/day-levels.js";
 import { marketDataService } from "./market-data.service.js";
 
 interface LevelsWorkerConfig {
@@ -10,6 +11,14 @@ interface LevelsWorkerConfig {
   getAccessToken: () => string | null;
   getInstrumentMaps: () => InstrumentMaps | null;
   onLevelsUpdate: (symbol: string, result: SupportResistanceResult) => void;
+  /**
+   * DAY LEVELS (2026-11-10): called ONCE per stock per trading day, as soon as
+   * today's daily candle exists (i.e. after the 09:15 open) — the frozen
+   * S1–S3 / R1–R3 lines. `getDayLevelsDate` tells the worker which day a stock
+   * already has, so it never recomputes the same day.
+   */
+  onDayLevels?: (symbol: string, levels: DayLevels) => void;
+  getDayLevelsDate?: (symbol: string) => string | null;
 }
 
 function formatDate(d: Date): string {
@@ -49,7 +58,10 @@ export function createLevelsWorker(config: LevelsWorkerConfig) {
 
       const to = new Date();
       const from = new Date();
-      from.setDate(from.getDate() - 15);
+      // 25 calendar days → ≥ 10 trading days BEFORE today even across holidays
+      // (day levels need 10; the old S/R still uses only its last 10 candles)
+      from.setDate(from.getDate() - 25);
+      const today = istDate(Date.now());
 
       const end = Math.min(queueIndex + config.batchSize, symbolQueue.length);
       const batch = symbolQueue.slice(queueIndex, end);
@@ -84,6 +96,17 @@ export function createLevelsWorker(config: LevelsWorkerConfig) {
             const result = getSupportResistance(candles, price);
             config.onLevelsUpdate(symbol, result);
             computedCount++;
+          }
+
+          // Day levels: once per trading day, from the days BEFORE today,
+          // around today's official open. No candle for today yet (before
+          // 09:15, holiday, weekend) → nothing; tried again next cycle.
+          if (config.onDayLevels && config.getDayLevelsDate?.(symbol) !== today) {
+            const todayCandle = candles.find((c) => istDate(c.time * 1000) === today);
+            if (todayCandle && todayCandle.open > 0) {
+              const before = candles.filter((c) => istDate(c.time * 1000) < today);
+              config.onDayLevels(symbol, computeDayLevels(before, todayCandle.open, today));
+            }
           }
         } catch {
           // Symbol will be retried next cycle

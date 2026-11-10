@@ -5,6 +5,7 @@ import { buildTradeSetups } from "../lib/trade-setups.js";
 import type { AutoTrader } from "../services/auto-trader.service.js";
 import { TradeError, type OrderExecutionService, type TradeSide } from "../services/order-execution.service.js";
 import type { Candle, MomentumResult, PressureResult, SupportResistanceResult } from "../lib/types.js";
+import type { DayLevels } from "../lib/day-levels.js";
 
 interface TradeRouteDeps {
   getOrderExecution: () => OrderExecutionService | null;
@@ -14,6 +15,8 @@ interface TradeRouteDeps {
   getRecentCandles: (symbol: string, n: number) => Candle[];
   getAllSymbols: () => string[];
   getAutoTrader?: () => AutoTrader | null;
+  getDayLevels?: (symbol: string) => DayLevels | null;
+  getSessionCandles?: (symbol: string) => Candle[];
 }
 
 // Trading endpoints — ADMIN only (this is your own account's money).

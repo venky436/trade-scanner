@@ -23,6 +23,7 @@ import type {
 import { isIndexSymbol } from "./index-symbols.js";
 import { computeATR } from "./atr.js";
 import { getFutureDisplayName } from "../services/instrument.service.js";
+import { evaluateDayLevels, type DayLevel, type DayLevels, type DayLevelSetup } from "./day-levels.js";
 
 export interface IntelligenceInput {
   symbol: string;
@@ -38,6 +39,14 @@ export interface IntelligenceInput {
   // Optional rolling-window OHLC (last N five-min candles) for "current chaos"
   // volatility. When ≥ 3 candles supplied, used instead of session high/low.
   recentCandles?: Candle[];
+  // DAY LEVELS (2026-11-10): the frozen S1–S3 / R1–R3 lines for today.
+  //   undefined → old behaviour (single nearest S/R from `sr`) — callers that
+  //               have not opted in (sections, AI, …) are unchanged.
+  //   null      → opted in but today's lines are not ready yet → no call.
+  dayLevels?: DayLevels | null;
+  // Today's CLOSED 5-min candles, oldest first (needed with dayLevels to know
+  // which lines are already broken). Falls back to recentCandles.
+  sessionCandles?: Candle[];
 }
 
 const NEAR_ZONE_PERCENT = 1.0; // ≤ 1% from a level counts as "near"
@@ -349,7 +358,8 @@ function buildTradePlan(
   confidence: number,
   recentCandles: Candle[] | undefined,
   volatilityScore: number,
-  srZone: SRZone | null,
+  srZone: Pick<SRZone, "level" | "min" | "max"> | null,
+  nearMaxAtr: number = NEAR_LEVEL_MAX_ATR,
 ): TradePlan | null {
   const action = outlookToAction(outlook);
   if (!action) return null;
@@ -360,7 +370,7 @@ function buildTradePlan(
   if (atr <= 0) return null;
 
   // Fix 1 — too far from the level → the move already happened, no call
-  if (Math.abs(price - srZone.level) > NEAR_LEVEL_MAX_ATR * atr) return null;
+  if (Math.abs(price - srZone.level) > nearMaxAtr * atr) return null;
 
   // Fix 3 — stop just beyond the level zone, target 2 × risk
   const stopLoss = action === "BUY" ? srZone.min - LEVEL_SL_BUFFER_ATR * atr : srZone.max + LEVEL_SL_BUFFER_ATR * atr;
@@ -388,7 +398,42 @@ function buildBias(momentumLabel: IntelligenceMomentumLabel, pressureLabel: Inte
   return "NEUTRAL";
 }
 
+// ── Day-level path (frozen S1–S3 / R1–R3, user decision 2026-11-10) ─────────
+// The LINE decides WHAT happened (lib/day-levels.ts: bounce / rejection /
+// breakout / breakdown on the last closed candle, broken lines, stock done).
+// CONFIDENCE only measures how strong the move is (aligned momentum +
+// pressure, as before) — distance from the line is NOT part of it.
+// A separate "too late" rule: price must still be within DAY_LEVEL_LATE_ATR
+// typical 5-min candles (ATR) of the line, otherwise no plan.
+export const DAY_LEVEL_LATE_ATR = 1.0;
+
+const SETUP_OUTLOOK: Record<DayLevelSetup, Outlook> = {
+  BOUNCE: "BOUNCE_EXPECTED",
+  REJECTION: "REJECTION_POSSIBLE",
+  BREAKOUT: "BREAKOUT_LIKELY",
+  BREAKDOWN: "BREAKDOWN_RISK",
+};
+
+function dayLevelView(input: IntelligenceInput, dayLevels: DayLevels | null) {
+  const empty = { zone: "MID_RANGE" as Zone, distanceToLevel: null as number | null, level: null as DayLevel | null, setup: null as DayLevelSetup | null, side: null as "BUY" | "SELL" | null, done: false };
+  if (!dayLevels || dayLevels.levels.length === 0 || input.price <= 0) return empty;
+  const state = evaluateDayLevels(dayLevels, input.sessionCandles ?? input.recentCandles ?? []);
+  const zoneOf = (l: DayLevel): Zone => (l.kind === "SUPPORT" ? "NEAR_SUPPORT" : "NEAR_RESISTANCE");
+  const dist = (l: DayLevel) => round2((Math.abs(input.price - l.level) / input.price) * 100);
+  if (state.event) {
+    const l = state.event.level;
+    return { zone: zoneOf(l), distanceToLevel: dist(l), level: l, setup: state.event.setup, side: state.event.side, done: state.done };
+  }
+  if (state.done) return { ...empty, done: true };
+  // no event: show the nearest UNBROKEN line within 1 % (for the watch list)
+  const near = dayLevels.levels
+    .filter((l) => !state.broken.includes(l.name) && dist(l) <= NEAR_ZONE_PERCENT)
+    .sort((a, b) => dist(a) - dist(b))[0];
+  return near ? { ...empty, zone: zoneOf(near), distanceToLevel: dist(near), level: near } : empty;
+}
+
 export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
+  if (input.dayLevels !== undefined) return toIntelligenceDayLevels(input, input.dayLevels);
   const isIndex = isIndexSymbol(input.symbol);
   const { zone, distanceToLevel, level, srZone } = computeZone(input.price, input.sr);
   const momentum = buildMomentum(input.momentum);
@@ -426,6 +471,59 @@ export function toIntelligence(input: IntelligenceInput): IntelligenceSnapshot {
     change: round2(change),
     timestamp: input.timestamp,
     context: { zone, distanceToLevel, level },
+    momentum,
+    pressure,
+    volatility,
+    outlook,
+    bias,
+    confidence,
+    confidenceLabel,
+    tradePlan,
+  };
+}
+
+function toIntelligenceDayLevels(input: IntelligenceInput, dayLevels: DayLevels | null): IntelligenceSnapshot {
+  const isIndex = isIndexSymbol(input.symbol);
+  const view = dayLevelView(input, dayLevels);
+  const momentum = buildMomentum(input.momentum);
+  const pressure: IntelligencePressure = isIndex ? { label: "NOT_APPLICABLE", score: 0 } : buildPressure(input.pressure);
+  const volatility = buildVolatility(input.price, input.high, input.low, input.recentCandles, isIndex);
+
+  // direction: the event's side; otherwise (watching a line) the momentum's
+  const direction: ImpliedDirection = view.side ?? getImpliedDirection(view.zone, input.momentum?.value ?? 0);
+  const { confidence, confidenceLabel } = buildConfidence(input.momentum?.value ?? 0, input.pressure?.value ?? 0, volatility.score, direction);
+
+  let outlook: Outlook = "NO_CLEAR_EDGE";
+  if (view.setup && confidenceLabel === "HIGH") {
+    const up = momentum.label === "STRONG_UP" || momentum.label === "WEAK_UP";
+    const down = momentum.label === "STRONG_DOWN" || momentum.label === "WEAK_DOWN";
+    const buyers = pressure.label === "BUY";
+    const sellers = pressure.label === "SELL";
+    const ok =
+      view.setup === "BOUNCE" ? up && buyers
+      : view.setup === "REJECTION" ? down && sellers
+      : view.setup === "BREAKOUT" ? !isIndex && up && buyers && passesVolumeGate(input.recentCandles)
+      : !isIndex && down && sellers && passesVolumeGate(input.recentCandles); // BREAKDOWN
+    if (ok) outlook = SETUP_OUTLOOK[view.setup];
+  }
+  const bias = buildBias(momentum.label, pressure.label);
+  const tradePlan = buildTradePlan(input.price, outlook, confidence, input.recentCandles, volatility.score, view.level, DAY_LEVEL_LATE_ATR);
+
+  const change = input.close !== 0 ? ((input.price - input.close) / input.close) * 100 : 0;
+  const displayName = getFutureDisplayName(input.symbol);
+  return {
+    symbol: input.symbol,
+    ...(displayName ? { displayName } : {}),
+    price: input.price,
+    change: round2(change),
+    timestamp: input.timestamp,
+    context: {
+      zone: view.zone,
+      distanceToLevel: view.distanceToLevel,
+      level: view.level?.level ?? null,
+      ...(view.level ? { levelName: view.level.name } : {}),
+      ...(view.done ? { levelsDone: true } : {}),
+    },
     momentum,
     pressure,
     volatility,

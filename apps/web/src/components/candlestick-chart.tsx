@@ -19,7 +19,7 @@ import {
   type IPriceLine,
   type AutoscaleInfo,
 } from "lightweight-charts";
-import type { CandleData } from "@/lib/types";
+import type { CandleData, DayLevelsView } from "@/lib/types";
 
 // Minimal tick shape for live chart updates — kept narrow so the chart doesn't
 // depend on the full IntelligenceSnapshot (volume isn't part of the public payload).
@@ -104,6 +104,8 @@ interface CandlestickChartProps {
   resistanceTouches?: number;
   /** Your ACTIVE trade on this stock → entry / stop-loss / target lines. null = none. */
   tradeLevels?: TradeLevels | null;
+  /** Today's frozen lines (S1–S3 green, R1–R3 red). When given, drawn instead of the single S/R lines. */
+  dayLevels?: DayLevelsView | null;
   className?: string;
 }
 
@@ -124,6 +126,7 @@ export function CandlestickChart({
   supportTouches,
   resistanceTouches,
   tradeLevels,
+  dayLevels,
   className,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -136,6 +139,7 @@ export function CandlestickChart({
   const intervalSecondsRef = useRef(60);
   const supportLineRef = useRef<IPriceLine | null>(null);
   const resistanceLineRef = useRef<IPriceLine | null>(null);
+  const dayLineRefs = useRef<IPriceLine[]>([]);
   const [chartReady, setChartReady] = useState(false);
 
   const { resolvedTheme } = useTheme();
@@ -236,6 +240,7 @@ export function CandlestickChart({
       ma50SeriesRef.current = null;
       supportLineRef.current = null;
       resistanceLineRef.current = null;
+      dayLineRefs.current = [];
       setChartReady(false);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -366,6 +371,34 @@ export function CandlestickChart({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supportLevel, resistanceLevel, supportTouches, resistanceTouches, chartReady, tick?.price]);
+
+  // Today's frozen lines: S1–S3 (green), R1–R3 (red), fixed at the open.
+  // A line already closed through today is drawn dotted and faded ("broken").
+  const dayLevelsKey = dayLevels
+    ? `${dayLevels.date}|${dayLevels.levels.map((l) => `${l.name}:${l.level}`).join(",")}|${dayLevels.broken.join(",")}`
+    : "";
+  useEffect(() => {
+    if (!chartReady || !candleSeriesRef.current) return;
+    const series = candleSeriesRef.current;
+    for (const line of dayLineRefs.current) series.removePriceLine(line);
+    dayLineRefs.current = [];
+    if (!dayLevels) return;
+    for (const l of dayLevels.levels) {
+      const broken = dayLevels.broken.includes(l.name);
+      const support = l.kind === "SUPPORT";
+      dayLineRefs.current.push(
+        series.createPriceLine({
+          price: l.level,
+          color: support ? (broken ? "rgba(34,197,94,0.45)" : "#22c55e") : broken ? "rgba(239,68,68,0.45)" : "#ef4444",
+          lineWidth: broken ? 1 : 2,
+          lineStyle: broken ? LineStyle.Dotted : LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: broken ? `${l.name} (broken)` : l.name,
+        }),
+      );
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayLevelsKey, chartReady]);
 
   // Fetch candle data + compute MAs
   const fetchCandles = useCallback(async () => {

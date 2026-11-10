@@ -40,7 +40,7 @@ export interface SetupsResponse {
   poolSize: number;
   timestamp: number;
   /** Call rules: new calls only inside the window, confirmation candle volume ≥ volumeMult × average */
-  rules?: { window: string; inWindow: boolean; volumeMult: number };
+  rules?: { window: string; inWindow: boolean; volumeMult: number; dayLevels?: boolean; inPlay?: string };
 }
 
 export interface AutoTraderStatus {
@@ -51,6 +51,8 @@ export interface AutoTraderStatus {
   minConfidence: number;
   maxActive: number;
   quantity: number;
+  /** ₹ lost if the stop-loss is hit; quantity = risk ÷ stop distance (0 = fixed quantity) */
+  riskPerTrade?: number;
   cooldownMinutes: number;
   lastRunAt: number;
   note: string;
