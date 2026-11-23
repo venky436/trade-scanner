@@ -291,3 +291,111 @@ export interface DayMoversResponse {
     losersCount: number;
   };
 }
+
+// ── Trend Structure lane (GET /api/sections/trend) ──
+// Display only: today's 5-min swings labelled HH / HL / LH / LL.
+export type SwingLabel = "HH" | "LH" | "HL" | "LL";
+export interface TrendSwing {
+  price: number;
+  time: number; // epoch seconds
+  label: SwingLabel | null;
+}
+export interface TrendStock {
+  symbol: string;
+  price: number;
+  change: number; // % vs previous close
+  trend: "UP" | "DOWN";
+  stage: "CONFIRMED" | "EARLY"; // confirmed = 3+ swings & 1 %+, early = just forming & 0.5 %+
+  steps: number; // agreeing confirmed swings (1 = forming now)
+  movePct: number; // % moved since the trend began
+  sequence: SwingLabel[]; // labels since the trend began, oldest first
+  lastHigh: TrendSwing | null;
+  lastLow: TrendSwing | null;
+}
+export interface TrendResponse {
+  stocks: TrendStock[];
+  meta: {
+    poolSize: number;
+    upCount: number;
+    downCount: number;
+    confirmedMinSteps: number;
+    confirmedMinMovePct: number;
+    earlyMinMovePct: number;
+    computedAt: number;
+  };
+}
+export interface TrendFlag {
+  trend: "UP" | "DOWN";
+  stage: "CONFIRMED" | "EARLY";
+  steps: number;
+  sequence: SwingLabel[];
+  movePct: number;
+}
+export interface LevelPatternFlag {
+  pattern: string; // e.g. "HAMMER"
+  side: "BULLISH" | "BEARISH";
+  line: "S1" | "S2" | "S3" | "R1" | "R2" | "R3";
+  level: number;
+  time: number; // epoch seconds (candle that completed the pattern)
+}
+
+// ── Opening movers — BUY / SELL from the first 5-min candle, 09:15 (display only) ──
+export interface OpeningCandle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+export interface OpeningMover {
+  symbol: string;
+  side: "BUY" | "SELL";
+  prevClose: number;
+  c1: OpeningCandle;
+  movePct: number; // candle 1 close vs yesterday's close
+  volumeX: number; // candle 1 volume ÷ normal for that time
+  ltp: number | null;
+  sinceSignalPct: number | null; // live price vs candle 1 close
+}
+export type OpeningStatus = "WAITING_LOGIN" | "LOADING" | "WAITING" | "COMPUTING" | "READY" | "NO_SESSION";
+export interface OpeningMoversResponse {
+  date?: string;
+  status: OpeningStatus;
+  progress?: { done: number; total: number };
+  computedAt?: number | null;
+  checked?: number;
+  rule?: string;
+  stocks: OpeningMover[];
+}
+
+// ── Smart zones — FVGs + Order Blocks after a clear move: Reversal / Trend (display only) ──
+export type SmartZoneStatus = "IN_TRADE" | "STOPPED" | "CLOSED";
+export interface SmartZone {
+  id: string;
+  symbol: string;
+  type: "FVG" | "OB";
+  kind: "REVERSAL" | "TREND";
+  side: "BUY" | "SELL";
+  formedAt: number; // epoch s — pattern complete = entry time
+  patternStartAt: number; // FVG candle 1 / OB block candle (open time)
+  zoneTop: number;
+  zoneBottom: number;
+  entry: number; // close of the pattern's last candle
+  stop: number; // first candle's low (BUY) / high (SELL)
+  move: { fromAt: number; toAt: number; from: number; to: number; pct: number };
+  status: SmartZoneStatus;
+  exitAt: number | null;
+  exitPrice: number | null;
+  resultPct: number | null;
+  resultR: number | null;
+  ltp: number | null;
+  toEntryPct: number | null; // live price vs entry, % (in the trade's favour when positive is set by the card)
+}
+export interface SmartZonesResponse {
+  date?: string;
+  status: "WAITING_LOGIN" | "WAITING" | "SCANNING" | "LIVE" | "NO_SESSION";
+  lastScanAt?: number | null;
+  progress?: { done: number; total: number };
+  zones: SmartZone[];
+}

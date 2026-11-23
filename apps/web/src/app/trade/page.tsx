@@ -12,6 +12,7 @@ import { useMarketData } from "@/hooks/use-market-data";
 import { TRADE_PLACED_EVENT, useOrderWindow } from "@/components/trading/order-window";
 import { TradesTable } from "@/components/trading/trades-table";
 import { AutoTraderPanel } from "@/components/trading/auto-trader-panel";
+import { TrendFlagChip } from "@/components/trend-flag";
 import { AdminOnly, ModePill, SectionHeader, usePolling, useTradeConfig } from "@/components/trading/ui";
 import {
   SETUP_LABEL,
@@ -236,6 +237,7 @@ function SetupTable({ setups, compact = false, rankStart }: { setups: Setup[]; c
                     {s.displayName ?? s.symbol}
                   </Link>
                   <div className={`text-xs ${suggested ? SIDE_TONE[suggested].text : "text-muted-foreground"}`}>{setup.label}</div>
+                  <TrendFlagChip symbol={s.symbol} confidence={s.confidence} className="mt-1" />
                 </td>
                 <td className="py-3 pr-3 text-right whitespace-nowrap">
                   <div className="text-foreground">{inr(price)}</div>

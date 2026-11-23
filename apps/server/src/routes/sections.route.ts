@@ -45,6 +45,16 @@ import type {
   VolatileNearestLevel,
 } from "../lib/types.js";
 import type { DayLevels } from "../lib/day-levels.js";
+import { patternAtLine, type LevelPattern } from "../lib/level-patterns.js";
+import {
+  marketStructure,
+  trendStage,
+  CONFIRMED_MIN_STEPS,
+  CONFIRMED_MIN_MOVE_PCT,
+  EARLY_MIN_MOVE_PCT,
+  type SwingLabel,
+  type TrendStage,
+} from "../lib/market-structure.js";
 
 interface SectionsRouteDeps {
   getCachedLevels: () => Record<string, SupportResistanceResult>;
@@ -196,6 +206,86 @@ export async function sectionsRoute(fastify: FastifyInstance, deps: SectionsRout
   // open. Sibling to /api/sections/volatile — different mental model
   // (reversal-hunt vs momentum-scalp). Independent filter, so a stock can
   // appear in one, both, or neither.
+  // ── Trend Structure lane (display only — feeds no engine / score / call) ──
+  // Today's 5-min swings → HH / HL / LH / LL (lib/market-structure.ts), read
+  // as a stage (trendStage): CONFIRMED (3+ agreeing swings, moved ≥ 1 %) or
+  // EARLY (first HH + HL / LH + LL, or a higher low with price breaking the
+  // last high — mirror for down — moved ≥ 0.5 %). Confirmed trends first,
+  // then early ones; each group ranked by the move since the trend began.
+  fastify.get("/api/sections/trend", async (request) => {
+    const q = request.query as { limit?: string };
+    const limit = Math.min(10, Math.max(1, Number(q.limit) || 10));
+    const out: {
+      symbol: string;
+      price: number;
+      change: number;
+      trend: "UP" | "DOWN";
+      stage: TrendStage;
+      steps: number;
+      movePct: number;
+      sequence: SwingLabel[];
+      lastHigh: { price: number; time: number; label: SwingLabel | null } | null;
+      lastLow: { price: number; time: number; label: SwingLabel | null } | null;
+    }[] = [];
+    let pool = 0, up = 0, down = 0;
+    for (const sym of deps.getAllSymbols()) {
+      if (isIndexSymbol(sym)) continue;
+      const quote = marketDataService.getQuote(sym);
+      if (!quote || quote.lastPrice <= 0) continue;
+      const session = deps.getSessionCandles?.(sym) ?? [];
+      if (session.length < 8) continue;
+      pool++;
+      const m = marketStructure(session);
+      const read = trendStage(m, quote.lastPrice);
+      if (!read) continue;
+      if (read.trend === "UP") up++; else down++;
+      const seq = m.swings.slice(m.swings.indexOf(read.start)).map((x) => x.label).filter((l): l is SwingLabel => !!l);
+      out.push({
+        symbol: sym,
+        price: quote.lastPrice,
+        change: quote.close > 0 ? Math.round(((quote.lastPrice - quote.close) / quote.close) * 10000) / 100 : 0,
+        trend: read.trend,
+        stage: read.stage,
+        steps: read.steps,
+        movePct: Math.round(read.movePct * 100) / 100,
+        sequence: seq.slice(-6),
+        lastHigh: m.lastHigh ? { price: m.lastHigh.price, time: m.lastHigh.time, label: m.lastHigh.label ?? null } : null,
+        lastLow: m.lastLow ? { price: m.lastLow.price, time: m.lastLow.time, label: m.lastLow.label ?? null } : null,
+      });
+    }
+    out.sort((a, b) => (a.stage === b.stage ? b.movePct - a.movePct : a.stage === "CONFIRMED" ? -1 : 1));
+    return {
+      stocks: out.slice(0, limit),
+      meta: { poolSize: pool, upCount: up, downCount: down, confirmedMinSteps: CONFIRMED_MIN_STEPS, confirmedMinMovePct: CONFIRMED_MIN_MOVE_PCT, earlyMinMovePct: EARLY_MIN_MOVE_PCT, computedAt: Date.now() },
+    };
+  });
+
+  // ── Trend flags for every stock (display only) ──
+  // { SYMBOL: { trend, stage, steps, sequence } } for stocks whose structure
+  // reads as an EARLY or CONFIRMED trend right now (same rules as the lane
+  // above). The UI shows a small "trend forming" flag on cards with ≥ 75 %
+  // confidence. Feeds no engine, score or call.
+  fastify.get("/api/sections/trend-map", async () => {
+    const trends: Record<string, { trend: "UP" | "DOWN"; stage: TrendStage; steps: number; sequence: SwingLabel[]; movePct: number }> = {};
+    // candlestick reversal pattern at one of today's S/R lines in the last 15 min (lib/level-patterns.ts)
+    const patterns: Record<string, LevelPattern> = {};
+    for (const sym of deps.getAllSymbols()) {
+      if (isIndexSymbol(sym)) continue;
+      const quote = marketDataService.getQuote(sym);
+      if (!quote || quote.lastPrice <= 0) continue;
+      const session = deps.getSessionCandles?.(sym) ?? [];
+      if (session.length < 8) continue;
+      const pat = patternAtLine(deps.getDayLevels?.(sym) ?? null, session);
+      if (pat) patterns[sym] = pat;
+      const m = marketStructure(session);
+      const read = trendStage(m, quote.lastPrice);
+      if (!read) continue;
+      const seq = m.swings.slice(m.swings.indexOf(read.start)).map((x) => x.label).filter((l): l is SwingLabel => !!l);
+      trends[sym] = { trend: read.trend, stage: read.stage, steps: read.steps, sequence: seq.slice(-4), movePct: Math.round(read.movePct * 100) / 100 };
+    }
+    return { trends, patterns, computedAt: Date.now() };
+  });
+
   fastify.get("/api/sections/day-movers", async (request) => {
     const q = (request.query ?? {}) as {
       direction?: string;

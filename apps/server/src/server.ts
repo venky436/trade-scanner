@@ -10,6 +10,10 @@ import { configRoute } from "./routes/config.route.js";
 import { aiRoute } from "./routes/ai.route.js";
 import { adminAiRoute } from "./routes/admin-ai.route.js";
 import { sectionsRoute } from "./routes/sections.route.js";
+import { openingMoversRoute } from "./routes/opening-movers.route.js";
+import { smartZonesRoute } from "./routes/smart-zones.route.js";
+import type { SmartZonesState } from "./services/smart-zones.service.js";
+import type { OpeningMoversState } from "./services/opening-movers.service.js";
 import { userAuthRoute } from "./modules/auth/auth.routes.js";
 import { tradeRoute } from "./routes/trade.route.js";
 import type { AutoTrader } from "./services/auto-trader.service.js";
@@ -55,6 +59,10 @@ interface ServerDeps {
   // Day levels (frozen S1–S3 / R1–R3 for today) + today's closed 5-min candles
   getDayLevels?: (symbol: string) => DayLevels | null;
   getSessionCandles?: (symbol: string) => Candle[];
+  // Opening movers (first two 5-min candles, standalone)
+  getOpeningMovers?: () => OpeningMoversState | null;
+  // Smart zones (FVG + Order Blocks, standalone)
+  getSmartZones?: () => SmartZonesState | null;
 }
 
 export async function buildServer(deps: ServerDeps) {
@@ -115,6 +123,9 @@ export async function buildServer(deps: ServerDeps) {
       getSessionCandles: deps.getSessionCandles,
     });
   }
+
+  await server.register(openingMoversRoute, { getState: deps.getOpeningMovers ?? (() => null) });
+  await server.register(smartZonesRoute, { getState: deps.getSmartZones ?? (() => null) });
 
   // Trading endpoints (admin only) — Trade desk, order window, Orders, P&L
   if (deps.getOrderExecution && deps.getCachedLevelsMap && deps.getPressureSignal && deps.getMomentumSignal && deps.getRecentCandles && deps.getAllSymbols) {

@@ -8,6 +8,7 @@
 import { useAccount } from "@/components/trading/account-chip";
 import { AdminOnly, ModePill, SectionHeader, useTradeConfig } from "@/components/trading/ui";
 import { SIDE_TONE, inr, pnlTone, signedInr, timeIst } from "@/lib/trading";
+import { positionCharges } from "@/lib/charges";
 
 export default function AccountPage() {
   return (
@@ -20,6 +21,11 @@ export default function AccountPage() {
 function Account() {
   const config = useTradeConfig();
   const { account, error } = useAccount(10_000);
+  // Zerodha's P&L is before charges; paper P&L already has charges taken off.
+  const live = account?.mode === "LIVE";
+  const chargesOf = (p: NonNullable<typeof account>["positions"][number]) => (live ? positionCharges(p) : 0);
+  const charges = account ? Math.round(account.positions.reduce((s, p) => s + chargesOf(p), 0) * 100) / 100 : 0;
+  const netPnl = account ? Math.round((account.totals.pnl - charges) * 100) / 100 : 0;
 
   return (
     <main className="max-w-[1400px] mx-auto px-4 py-6 space-y-5">
@@ -70,7 +76,15 @@ function Account() {
                     <Metric label="Started with" value={inr(config?.paperCapital, true)} />
                   </>
                 )}
-                <Metric label="Today's P&L" value={signedInr(account.totals.pnl)} tone={pnlTone(account.totals.pnl)} />
+                {live ? (
+                  <>
+                    <Metric label="Today's P&L after charges" value={signedInr(netPnl)} tone={pnlTone(netPnl)} />
+                    <Metric label="Before charges" value={signedInr(account.totals.pnl)} tone={pnlTone(account.totals.pnl)} />
+                    <Metric label="Charges (estimated)" value={charges > 0 ? `−${inr(charges)}` : inr(0)} />
+                  </>
+                ) : (
+                  <Metric label="Today's P&L" value={signedInr(account.totals.pnl)} tone={pnlTone(account.totals.pnl)} />
+                )}
                 <Metric label="Booked" value={signedInr(account.totals.realised)} tone={pnlTone(account.totals.realised)} />
                 <Metric label="On open positions" value={signedInr(account.totals.unrealised)} tone={pnlTone(account.totals.unrealised)} />
                 <Metric label="Open positions" value={String(account.totals.openPositions)} />
@@ -81,7 +95,7 @@ function Account() {
           <section className="rounded-xl border border-border bg-card">
             <SectionHeader
               title="Positions today"
-              note={account.mode === "PAPER" ? "Paper trades. P&L is after estimated charges." : "From Zerodha. P&L is gross, before charges."}
+              note={account.mode === "PAPER" ? "Paper trades. P&L is after estimated charges." : "From Zerodha. Charges are estimated (brokerage, STT, fees, GST, stamp)."}
             />
             {account.positions.length === 0 ? (
               <p className="px-4 pb-8 pt-2 text-sm text-muted-foreground">No positions today.</p>
@@ -97,7 +111,9 @@ function Account() {
                       <th className="py-2 pr-3 font-normal text-right">LTP</th>
                       <th className="py-2 pr-3 font-normal text-right">Bought</th>
                       <th className="py-2 pr-3 font-normal text-right">Sold</th>
-                      <th className="py-2 pr-4 font-normal text-right">P&amp;L</th>
+                      <th className={`py-2 font-normal text-right ${live ? "pr-3" : "pr-4"}`}>P&amp;L{live ? " before charges" : ""}</th>
+                      {live && <th className="py-2 pr-3 font-normal text-right">Charges</th>}
+                      {live && <th className="py-2 pr-4 font-normal text-right">After charges</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -117,7 +133,11 @@ function Account() {
                           <td className="py-2.5 pr-3 text-right">{inr(p.ltp)}</td>
                           <td className="py-2.5 pr-3 text-right text-muted-foreground">{p.buyQty}</td>
                           <td className="py-2.5 pr-3 text-right text-muted-foreground">{p.sellQty}</td>
-                          <td className={`py-2.5 pr-4 text-right font-medium ${pnlTone(p.pnl)}`}>{signedInr(p.pnl)}</td>
+                          <td className={`py-2.5 text-right ${live ? "pr-3" : "pr-4 font-medium"} ${pnlTone(p.pnl)}`}>{signedInr(p.pnl)}</td>
+                          {live && <td className="py-2.5 pr-3 text-right text-muted-foreground">−{inr(chargesOf(p))}</td>}
+                          {live && (
+                            <td className={`py-2.5 pr-4 text-right font-medium ${pnlTone(p.pnl - chargesOf(p))}`}>{signedInr(p.pnl - chargesOf(p))}</td>
+                          )}
                         </tr>
                       );
                     })}

@@ -35,6 +35,7 @@ import type { TradePlan } from "@/lib/trading";
 import { AiAnalysisCard } from "./ai-analysis-card";
 import { useAiCall } from "@/hooks/use-ai-calls";
 import { useServerConfig } from "@/context/config-context";
+import { TrendFlagChip } from "./trend-flag";
 import type { IntelligenceSnapshot, Outlook, StockDetailSnapshot, Zone } from "@/lib/types";
 
 // Map the outlook (already derived from all factors — zone, momentum,
@@ -318,6 +319,8 @@ export function StockDetail({ symbol }: StockDetailProps) {
                 Real-time market activity overview
               </p>
               <DetailActionBadge intel={intel} />
+              {/* Trend flag (display only): ≥ 75 % confidence + HH/HL or LH/LL forming */}
+              <TrendFlagChip symbol={symbol} confidence={intel.confidence} className="mt-2" />
             </div>
           </div>
           <div className="text-right">
@@ -393,7 +396,7 @@ export function StockDetail({ symbol }: StockDetailProps) {
             symbol={symbol}
             interval={chartInterval}
             tick={chartTick}
-            days={5}
+            days={14} // ≈10 trading days = the same period the S/R lines are calculated from
             supportLevel={hasDayLevels ? null : supportLevel}
             resistanceLevel={hasDayLevels ? null : resistanceLevel}
             tradeLevels={tradeLevels}
@@ -653,7 +656,7 @@ export function StockDetail({ symbol }: StockDetailProps) {
               symbol={symbol}
               interval={chartInterval}
               tick={chartTick}
-              days={5}
+              days={14} // ≈10 trading days = the same period the S/R lines are calculated from
               supportLevel={hasDayLevels ? null : supportLevel}
               resistanceLevel={hasDayLevels ? null : resistanceLevel}
               tradeLevels={tradeLevels}

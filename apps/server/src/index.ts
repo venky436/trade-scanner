@@ -31,6 +31,9 @@ import { istDate, type DayLevels } from "./lib/day-levels.js";
 import { db } from "./db/index.js";
 import { users } from "./db/schema/users.js";
 import { eq } from "drizzle-orm";
+import { KiteConnect } from "kiteconnect";
+import { createOpeningMoversService, type OpeningKite } from "./services/opening-movers.service.js";
+import { createSmartZonesService, type ZoneKite } from "./services/smart-zones.service.js";
 
 const PORT = Number(process.env.PORT) || 4002;
 
@@ -126,6 +129,42 @@ async function main() {
     placeTrade: (userId, input) => orderExecution.placeTrade(userId, input),
     callWindow: { isOpen: () => inCallWindow(Date.now()), label: CALL_WINDOW_LABEL },
     stateFile: "data/auto-trade.json",
+  });
+
+  // Opening movers — BUY / SELL from the first two 5-min candles. Standalone:
+  // reads Zerodha directly, uses no engine; display only. See the service file.
+  let openingKite: { token: string; kc: OpeningKite } | null = null;
+  function openingKiteFor(): OpeningKite | null {
+    if (!currentAccessToken) return null;
+    if (openingKite?.token !== currentAccessToken) {
+      const kc = new KiteConnect({ api_key: apiKey });
+      kc.setAccessToken(currentAccessToken);
+      openingKite = { token: currentAccessToken, kc: kc as unknown as OpeningKite };
+    }
+    return openingKite.kc;
+  }
+  const openingMovers = createOpeningMoversService({
+    getKite: () => openingKiteFor(),
+    getStocks: () => {
+      const maps = currentInstrumentMaps;
+      if (!maps) return [];
+      return maps.symbols
+        .filter((s) => !isIndexLikeSymbol(s) && maps.symbolToToken.has(s))
+        .map((s) => ({ symbol: s, token: maps.symbolToToken.get(s)! }));
+    },
+  });
+
+  // Smart zones — today's Fair Value Gaps + Order Blocks from official 5-min
+  // candles. Standalone, display only. Same stock list as Opening Movers.
+  const smartZones = createSmartZonesService({
+    getKite: () => openingKiteFor() as unknown as ZoneKite | null,
+    getStocks: () => {
+      const maps = currentInstrumentMaps;
+      if (!maps) return [];
+      return maps.symbols
+        .filter((s) => !isIndexLikeSymbol(s) && maps.symbolToToken.has(s))
+        .map((s) => ({ symbol: s, token: maps.symbolToToken.get(s)! }));
+    },
   });
 
   // Shared S/R levels cache (populated by levels-worker, read by signal-worker + broadcast)
@@ -556,11 +595,15 @@ async function main() {
     getAutoTrader: () => autoTrader,
     getDayLevels: todayDayLevels,
     getSessionCandles: (s) => currentCandleTracker?.getSessionCandles(s) ?? [],
+    getOpeningMovers: () => openingMovers.getState(),
+    getSmartZones: () => smartZones.getState(),
   });
 
   await server.listen({ port: PORT, host: "0.0.0.0" });
   orderExecution.start();
   autoTrader.start();
+  openingMovers.start();
+  smartZones.start();
   console.log(`Server running on http://localhost:${PORT}`);
 
   // If we already have an access token from env, start immediately
@@ -587,6 +630,8 @@ async function main() {
     if (aiOutcomeServiceInstance) aiOutcomeServiceInstance.stop();
     orderExecution.stop();
     autoTrader.stop();
+    openingMovers.stop();
+    smartZones.stop();
     if (historyBackfillInstance) historyBackfillInstance.stop();
     if (broadcastStop) broadcastStop();
     if (tickerDisconnect) tickerDisconnect();

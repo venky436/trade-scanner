@@ -138,6 +138,10 @@ export interface TradeStats {
   range: string;
   mode: string;
   netPnl: number;
+  /** Before charges (older servers may not send it) */
+  grossPnl?: number;
+  /** Estimated Zerodha charges on these trades */
+  charges?: number;
   closedTrades: number;
   wins: number;
   losses: number;
