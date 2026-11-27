@@ -1348,6 +1348,9 @@ export function createOrderExecutionService(config: OrderExecutionConfig) {
       range: opts.range ?? "30d",
       mode: opts.mode ?? "ALL",
       netPnl: Number(net.toFixed(2)),
+      /** Same trades before charges, and the estimated charges (net = gross − charges). */
+      grossPnl: Number(closed.reduce((s, t) => s + (t.grossPnl ?? t.pnl!), 0).toFixed(2)),
+      charges: Number(closed.reduce((s, t) => s + (t.charges ?? 0), 0).toFixed(2)),
       closedTrades: closed.length,
       wins: wins.length,
       losses: losses.length,

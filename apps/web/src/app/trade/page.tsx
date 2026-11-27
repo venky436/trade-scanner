@@ -12,6 +12,7 @@ import { useMarketData } from "@/hooks/use-market-data";
 import { TRADE_PLACED_EVENT, useOrderWindow } from "@/components/trading/order-window";
 import { TradesTable } from "@/components/trading/trades-table";
 import { AutoTraderPanel } from "@/components/trading/auto-trader-panel";
+import { TrendFlagChip } from "@/components/trend-flag";
 import { AdminOnly, ModePill, SectionHeader, usePolling, useTradeConfig } from "@/components/trading/ui";
 import {
   SETUP_LABEL,
@@ -122,7 +123,11 @@ function TradeDesk() {
       <section className="rounded-xl border border-border bg-card">
         <SectionHeader
           title="Ready to trade"
-          note={`At support or resistance, the level has answered (bounce / rejection / break), momentum and pressure agree, confidence 70%+, confirmation candle volume ≥ ${setups?.rules?.volumeMult ?? 1.2}× average, price still within 1.5 typical candles of the level. Stop-loss just beyond the level, target 2× the risk. New calls ${setups?.rules?.window ?? "09:30–14:00"} IST only. Highest confidence first.`}
+          note={
+            setups?.rules?.dayLevels
+              ? `At one of today's lines (S1–S3 support, R1–R3 resistance — fixed at the open), the line has answered (bounce / rejection / breakout / breakdown), momentum and pressure agree, confidence 70%+, confirmation candle volume ≥ ${setups.rules.volumeMult}× average, price still within 1 typical candle of the line. Only stocks in play today (${setups.rules.inPlay}). A stock that has passed all its lines on a side is left for the day. Stop-loss just beyond the line, target 2× the risk. New calls ${setups.rules.window} IST only. Highest confidence first.`
+              : `At support or resistance, the level has answered (bounce / rejection / break), momentum and pressure agree, confidence 70%+, confirmation candle volume ≥ ${setups?.rules?.volumeMult ?? 1.2}× average, price still within 1.5 typical candles of the level. Stop-loss just beyond the level, target 2× the risk. New calls ${setups?.rules?.window ?? "09:30–14:00"} IST only. Highest confidence first.`
+          }
           right={
             <button
               onClick={() => void loadSetups()}
@@ -232,6 +237,7 @@ function SetupTable({ setups, compact = false, rankStart }: { setups: Setup[]; c
                     {s.displayName ?? s.symbol}
                   </Link>
                   <div className={`text-xs ${suggested ? SIDE_TONE[suggested].text : "text-muted-foreground"}`}>{setup.label}</div>
+                  <TrendFlagChip symbol={s.symbol} confidence={s.confidence} className="mt-1" />
                 </td>
                 <td className="py-3 pr-3 text-right whitespace-nowrap">
                   <div className="text-foreground">{inr(price)}</div>

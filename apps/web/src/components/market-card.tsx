@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Minus, Pause } from "lucide-react";
 import type { IntelligenceSnapshot, Outlook } from "@/lib/types";
 import { AiVerdictChip } from "./ai-verdict-chip";
+import { TrendFlagChip } from "./trend-flag";
 import { useServerConfig } from "@/context/config-context";
 import {
   formatTimeAgo,
@@ -176,6 +177,8 @@ export function MarketCard({ data }: MarketCardProps) {
           Single source of truth for "what's the call on this stock" so the
           user is never seeing two competing verdicts. */}
       <VerdictSlot data={data} />
+      {/* Trend flag (display only): ≥ 75 % confidence + HH/HL or LH/LL forming */}
+      <TrendFlagChip symbol={data.symbol} confidence={data.confidence} className="mt-2" />
 
       {/* Metric rows: Momentum / Pressure / Volatility */}
       <div className="mt-5 space-y-3">

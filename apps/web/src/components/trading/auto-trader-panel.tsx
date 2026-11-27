@@ -58,7 +58,7 @@ export function AutoTraderPanel() {
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {status
-                ? `Takes ready setups (09:30–14:00, volume ≥ 1.2× average) at ${Math.round(status.minConfidence * 100)}%+ confidence with their stop-loss and target, ${status.quantity} shares each. At most ${status.maxActive} trades open at once; waits for one to close before the next. Won't re-enter a stock for ${status.cooldownMinutes} min.`
+                ? `Takes ready setups (09:30–14:00, volume ≥ 1.2× average) at ${Math.round(status.minConfidence * 100)}%+ confidence with their stop-loss and target, ${status.riskPerTrade ? `sized so a stop-loss loses about ₹${status.riskPerTrade} (shares = ₹${status.riskPerTrade} ÷ stop distance, capped by margin)` : `${status.quantity} shares each`}. At most ${status.maxActive} trades open at once; waits for one to close before the next. Won't re-enter a stock for ${status.cooldownMinutes} min.`
                 : "Loading…"}
             </p>
           </div>

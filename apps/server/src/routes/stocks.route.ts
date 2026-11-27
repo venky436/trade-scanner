@@ -11,6 +11,7 @@ import { getMomentum } from "../lib/momentum-engine.js";
 import { isIndexSymbol, isIndexLikeSymbol } from "../lib/index-symbols.js";
 import { pressureFromCandles } from "../lib/pressure-from-candles.js";
 import { toIntelligence } from "../lib/intelligence-transformer.js";
+import { computeDayLevels, evaluateDayLevels, istDate, type DayLevels } from "../lib/day-levels.js";
 import { authMiddleware, adminGuard } from "../modules/auth/auth.middleware.js";
 
 const VALID_INTERVALS = [
@@ -34,6 +35,10 @@ interface StocksRouteOpts {
   getCachedLevels?: () => Record<string, SupportResistanceResult>;
   getEodJob?: () => EodJob | null;
   getMomentum?: (symbol: string) => MomentumResult | null;
+  /** Today's frozen S1–S3 / R1–R3 for tracked stocks (null = not ready). */
+  getDayLevels?: (symbol: string) => DayLevels | null;
+  /** Today's closed 5-min candles for tracked stocks. */
+  getSessionCandles?: (symbol: string) => Candle[];
 }
 
 // Format date in IST for Kite API (production servers may run in UTC)
@@ -367,6 +372,11 @@ export async function stocksRoute(
     let onDemandMomentum: MomentumResult | null = null;
     let onDemandPressure: PressureResult | null = null;
     let onDemandRecentCandles: Candle[] | undefined;
+    // Day levels: tracked stocks → the worker's frozen lines; untracked →
+    // computed below from the same daily candles (same function, same rules).
+    const today = istDate(Date.now());
+    let dayLevels: DayLevels | null = opts.getDayLevels?.(symbol) ?? null;
+    let sessionCandles: Candle[] = opts.getSessionCandles?.(symbol) ?? [];
 
     // Price from live quote
     let price = quote?.lastPrice ?? 0;
@@ -422,6 +432,14 @@ export async function stocksRoute(
               if (!sr && price > 0) {
                 sr = getSupportResistance(dailyCandles, price);
               }
+
+              // Day levels (only once today's candle exists, i.e. after the open)
+              if (!dayLevels) {
+                const todayCandle = dailyCandles.find((c) => istDate(c.time * 1000) === today);
+                if (todayCandle && todayCandle.open > 0) {
+                  dayLevels = computeDayLevels(dailyCandles.filter((c) => istDate(c.time * 1000) < today), todayCandle.open, today);
+                }
+              }
             }
           }
 
@@ -431,6 +449,11 @@ export async function stocksRoute(
               time: Math.floor(new Date(d.date).getTime() / 1000),
               open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume,
             }));
+
+            // today's CLOSED candles (Kite's last candle may still be forming)
+            if (sessionCandles.length === 0) {
+              sessionCandles = intradayCandles.filter((c) => istDate(c.time * 1000) === today && (c.time + 300) * 1000 <= Date.now());
+            }
 
             if (intradayCandles.length >= 3) {
               // Momentum: last 3 × 5-min candles — matches the live candle-tracker feed
@@ -467,6 +490,8 @@ export async function stocksRoute(
       momentum,
       sr,
       recentCandles: onDemandRecentCandles,
+      // day-level path when today's lines exist (same rules as the Ready list)
+      ...(dayLevels ? { dayLevels, sessionCandles, recentCandles: sessionCandles.length >= 6 ? sessionCandles.slice(-24) : onDemandRecentCandles } : {}),
     });
 
     // Chart-helper levels (kept outside intelligence so the frontend chart can draw both lines).
@@ -483,6 +508,13 @@ export async function stocksRoute(
       low,
       close,
       levels: chartLevels,
+      // Frozen lines for the chart (S1–S3 green, R1–R3 red) + which are broken
+      dayLevels: dayLevels
+        ? (() => {
+            const st = evaluateDayLevels(dayLevels, sessionCandles);
+            return { date: dayLevels.date, open: dayLevels.open, levels: dayLevels.levels, broken: st.broken, done: st.done };
+          })()
+        : null,
       dataSource: isTracked ? "live" : "on-demand",
       computedAt: Date.now(),
     };

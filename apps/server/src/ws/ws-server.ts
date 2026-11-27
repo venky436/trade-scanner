@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
+import type { DayLevels } from "../lib/day-levels.js";
 import type {
   Candle,
   IntelligenceSnapshot,
@@ -19,6 +20,9 @@ interface WsManagerConfig {
   getMomentum?: (symbol: string) => MomentumResult | null;
   getLevels?: (symbol: string) => SupportResistanceResult | null;
   getRecentCandles?: (symbol: string) => Candle[];
+  /** Today's frozen S1–S3 / R1–R3 (null = not ready → old S/R display). */
+  getDayLevels?: (symbol: string) => DayLevels | null;
+  getSessionCandles?: (symbol: string) => Candle[];
   getEligibleSymbols?: () => string[];
 }
 
@@ -28,6 +32,11 @@ const BANK_NIFTY_SYMBOL = "NIFTY BANK";
 type UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
 
 export function createWsManager(config: WsManagerConfig) {
+  // Day-level path only when today's lines exist (same lines as the Ready list)
+  const dayLevelInput = (symbol: string) => {
+    const dayLevels = config.getDayLevels?.(symbol) ?? null;
+    return dayLevels ? { dayLevels, sessionCandles: config.getSessionCandles?.(symbol) } : {};
+  };
   const { symbols } = config;
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
@@ -63,6 +72,7 @@ export function createWsManager(config: WsManagerConfig) {
           momentum: config.getMomentum?.(symbol) ?? null,
           sr: config.getLevels?.(symbol) ?? null,
           recentCandles: config.getRecentCandles?.(symbol),
+        ...dayLevelInput(symbol),
         }),
       );
     }

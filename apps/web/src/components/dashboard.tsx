@@ -13,6 +13,8 @@ import {
   Sparkles,
   TrendingDown,
   TrendingUp,
+  Sunrise,
+  Magnet,
 } from "lucide-react";
 import { MarketContextBanner } from "./market-context-banner";
 import { MarketCard } from "./market-card";
@@ -22,6 +24,12 @@ import { VolatileCard } from "./volatile-card";
 import { VolatileFilterBar } from "./volatile-filter-bar";
 import { DayMoverCard } from "./day-mover-card";
 import { DayMoversFilterBar } from "./day-movers-filter-bar";
+import { TrendCard } from "./trend-card";
+import { useTrendStocks } from "@/hooks/use-trend-stocks";
+import { OpeningMoverCard } from "./opening-mover-card";
+import { useOpeningMovers } from "@/hooks/use-opening-movers";
+import { SmartZoneCard } from "./smart-zone-card";
+import { useSmartZones } from "@/hooks/use-smart-zones";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useVolatileStocks } from "@/hooks/use-volatile-stocks";
 import { useDayMovers } from "@/hooks/use-day-movers";
@@ -361,6 +369,15 @@ export function Dashboard() {
                   )}
                 </section>
 
+                {/* Opening Movers — BUY / SELL from the first two 5-min candles (display only) */}
+                <OpeningMoversSection />
+
+                {/* Smart Zones — FVGs + Order Blocks after a clear move: Reversal / Trend (display only) */}
+                <SmartZonesSection />
+
+                {/* Trend Structure — higher highs / higher lows (display only) */}
+                <TrendSection />
+
                 {/* Section 3 — Near Support Zones */}
                 <section>
                   <SectionHeader
@@ -436,6 +453,178 @@ export function Dashboard() {
         )}
       </div>
     </main>
+  );
+}
+
+// Trend Structure — the stocks with the clearest intraday trend right now,
+// from today's 5-min swing highs / lows (HH + HL = uptrend, LH + LL =
+// downtrend, at least 3 agreeing swings, not broken). Display only: it does
+// not change any engine, confidence score or call.
+const OPENING_WAIT_TEXT: Record<string, string> = {
+  WAITING_LOGIN: "Connect Kite to build today's list.",
+  LOADING: "Getting each stock's normal opening volume from Zerodha…",
+  WAITING: "The list is built at 09:20, after the first 5-minute candle closes.",
+  COMPUTING: "Checking the 09:15 candle…",
+  NO_SESSION: "No trading today.",
+  READY: "No stock passed today. The 09:15 candle must close beyond yesterday's close with at least 2× normal volume.",
+};
+
+function OpeningMoversSection() {
+  const { data, isLoading } = useOpeningMovers();
+  const stocks = data?.stocks ?? [];
+  const buys = stocks.filter((s) => s.side === "BUY").length;
+  const sells = stocks.length - buys;
+  const progress = data?.status === "LOADING" && data.progress?.total ? ` (${data.progress.done}/${data.progress.total})` : "";
+  return (
+    <section>
+      <SectionHeader
+        Icon={Sunrise}
+        title="Opening Movers"
+        subtitle={
+          stocks.length > 0
+            ? `${buys} BUY · ${sells} SELL, from the 09:15 candle. Fixed for the day.`
+            : "BUY / SELL from the first 5-minute candle, built at 09:20 and fixed for the day."
+        }
+        count={stocks.length}
+        iconBg="bg-gradient-to-br from-amber-500/25 to-rose-500/20"
+        iconRing="ring-amber-400/40"
+        iconColor="text-amber-600 dark:text-amber-300"
+      />
+      {isLoading && !data ? (
+        <StockTableSkeleton />
+      ) : stocks.length === 0 ? (
+        <EmptyState
+          Icon={Sunrise}
+          heading={data?.status === "READY" ? "No opening movers today" : "Not built yet"}
+          subtext={(OPENING_WAIT_TEXT[data?.status ?? "WAITING"] ?? OPENING_WAIT_TEXT.WAITING) + progress}
+          iconBg="bg-gradient-to-br from-amber-500/20 to-rose-500/15"
+          iconRing="ring-amber-400/40"
+          iconColor="text-amber-500 dark:text-amber-300"
+          glow="bg-amber-400/15"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {stocks.map((s) => (
+            <OpeningMoverCard key={s.symbol} data={s} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+const ZONE_WAIT_TEXT: Record<string, string> = {
+  WAITING_LOGIN: "Connect Kite to start finding setups.",
+  WAITING: "The first check is at 09:35, then every 5 minutes after each candle closes.",
+  SCANNING: "Checking every stock's 5-minute candles…",
+  NO_SESSION: "No trading today.",
+  LIVE: "No Fair Value Gap or Order Block after a clear move yet today.",
+};
+const ZONE_ORDER = { IN_TRADE: 0, CLOSED: 1, STOPPED: 2 } as const;
+type ZoneFilter = "ACTIVE" | "REVERSAL" | "TREND" | "ALL";
+
+function SmartZonesSection() {
+  const { data, isLoading } = useSmartZones();
+  const [filter, setFilter] = useState<ZoneFilter>("ALL");
+  const all = data?.zones ?? [];
+  const active = all.filter((z) => z.status === "IN_TRADE");
+  const rev = all.filter((z) => z.kind === "REVERSAL");
+  const shown = (filter === "ACTIVE" ? active : filter === "ALL" ? all : all.filter((z) => z.kind === filter))
+    .slice()
+    .sort((a, b) => ZONE_ORDER[a.status] - ZONE_ORDER[b.status] || b.formedAt - a.formedAt)
+    .slice(0, 30);
+  const progress = data?.status === "SCANNING" && data.progress?.total ? ` (${data.progress.done}/${data.progress.total})` : "";
+  const chips: [ZoneFilter, string][] = [["ALL", `All ${all.length}`], ["REVERSAL", `Reversal ${rev.length}`], ["TREND", `Trend ${all.length - rev.length}`], ["ACTIVE", `In trade ${active.length}`]];
+  return (
+    <section>
+      <SectionHeader
+        Icon={Magnet}
+        title="Smart Zones"
+        subtitle={
+          all.length > 0
+            ? `${rev.length} reversal · ${all.length - rev.length} trend setups today. Fair Value Gaps and Order Blocks after a clear move, updated every 5 minutes.`
+            : "Fair Value Gaps and Order Blocks after a clear fall or rise, from official 5-minute candles."
+        }
+        count={all.length}
+        iconBg="bg-gradient-to-br from-violet-500/25 to-sky-500/20"
+        iconRing="ring-violet-400/40"
+        iconColor="text-violet-600 dark:text-violet-300"
+      />
+      {all.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {chips.map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setFilter(k)}
+              aria-pressed={filter === k}
+              className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 ${filter === k ? "bg-violet-600 text-white ring-violet-600" : "text-zinc-600 dark:text-zinc-300 ring-zinc-300 dark:ring-zinc-700 hover:ring-violet-400"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {isLoading && !data ? (
+        <StockTableSkeleton />
+      ) : shown.length === 0 ? (
+        <EmptyState
+          Icon={Magnet}
+          heading={all.length > 0 ? "No setups in this view" : data?.status === "LIVE" ? "No setups yet today" : "Not started yet"}
+          subtext={all.length > 0 ? "Pick another filter above." : (ZONE_WAIT_TEXT[data?.status ?? "WAITING"] ?? ZONE_WAIT_TEXT.WAITING) + progress}
+          iconBg="bg-gradient-to-br from-violet-500/20 to-sky-500/15"
+          iconRing="ring-violet-400/40"
+          iconColor="text-violet-500 dark:text-violet-300"
+          glow="bg-violet-400/15"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {shown.map((z) => (
+            <SmartZoneCard key={z.id} data={z} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TrendSection() {
+  const { stocks, meta, isLoading } = useTrendStocks(10);
+  return (
+    <section>
+      <SectionHeader
+        Icon={LineChart}
+        title="Trend Structure"
+        subtitle="Trends forming today — higher highs & higher lows, or lower highs & lower lows. Confirmed first, then early."
+        count={stocks.length}
+        iconBg="bg-gradient-to-br from-sky-500/25 to-indigo-500/20"
+        iconRing="ring-sky-400/40"
+        iconColor="text-sky-600 dark:text-sky-300"
+      />
+      {isLoading && stocks.length === 0 ? (
+        <StockTableSkeleton />
+      ) : stocks.length === 0 ? (
+        <EmptyState
+          Icon={LineChart}
+          heading="No clear trend yet"
+          subtext={
+            meta && meta.poolSize > 0
+              ? `Watching ${meta.poolSize} stocks. A stock appears as "Early" once its first higher high + higher low (or lower high + lower low) forms and it has moved ${meta.earlyMinMovePct}%+, usually from about 10:15; "Confirmed" after ${meta.confirmedMinSteps}+ swings and ${meta.confirmedMinMovePct}%+.`
+              : "Trends are read from today's 5-minute candles, so this fills in after the market opens."
+          }
+          iconBg="bg-gradient-to-br from-sky-500/20 to-indigo-500/15"
+          iconRing="ring-sky-400/40"
+          iconColor="text-sky-500 dark:text-sky-300"
+          glow="bg-sky-400/15"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {stocks.map((s) => (
+            <TrendCard key={s.symbol} data={s} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

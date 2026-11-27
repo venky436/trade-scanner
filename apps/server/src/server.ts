@@ -10,6 +10,10 @@ import { configRoute } from "./routes/config.route.js";
 import { aiRoute } from "./routes/ai.route.js";
 import { adminAiRoute } from "./routes/admin-ai.route.js";
 import { sectionsRoute } from "./routes/sections.route.js";
+import { openingMoversRoute } from "./routes/opening-movers.route.js";
+import { smartZonesRoute } from "./routes/smart-zones.route.js";
+import type { SmartZonesState } from "./services/smart-zones.service.js";
+import type { OpeningMoversState } from "./services/opening-movers.service.js";
 import { userAuthRoute } from "./modules/auth/auth.routes.js";
 import { tradeRoute } from "./routes/trade.route.js";
 import type { AutoTrader } from "./services/auto-trader.service.js";
@@ -21,6 +25,7 @@ import type { SignalAccuracyService } from "./services/signal-accuracy.service.j
 import type { SignalTrackingService } from "./services/signal-tracking.service.js";
 import type { AiCallService } from "./services/ai-call.service.js";
 import type { OrderExecutionService } from "./services/order-execution.service.js";
+import type { DayLevels } from "./lib/day-levels.js";
 
 interface ServerDeps {
   apiKey: string;
@@ -51,6 +56,13 @@ interface ServerDeps {
   // Order execution (Trade / Orders / P&L screens)
   getOrderExecution?: () => OrderExecutionService | null;
   getAutoTrader?: () => AutoTrader | null;
+  // Day levels (frozen S1–S3 / R1–R3 for today) + today's closed 5-min candles
+  getDayLevels?: (symbol: string) => DayLevels | null;
+  getSessionCandles?: (symbol: string) => Candle[];
+  // Opening movers (first two 5-min candles, standalone)
+  getOpeningMovers?: () => OpeningMoversState | null;
+  // Smart zones (FVG + Order Blocks, standalone)
+  getSmartZones?: () => SmartZonesState | null;
 }
 
 export async function buildServer(deps: ServerDeps) {
@@ -78,6 +90,8 @@ export async function buildServer(deps: ServerDeps) {
     getCachedLevels: deps.getCachedLevels,
     getEodJob: deps.getEodJob,
     getMomentum: deps.getMomentum,
+    getDayLevels: deps.getDayLevels,
+    getSessionCandles: deps.getSessionCandles,
   });
 
   await server.register(userAuthRoute);
@@ -105,8 +119,13 @@ export async function buildServer(deps: ServerDeps) {
       getMomentum: deps.getMomentumSignal,
       getRecentCandles: deps.getRecentCandles,
       getAllSymbols: deps.getAllSymbols,
+      getDayLevels: deps.getDayLevels,
+      getSessionCandles: deps.getSessionCandles,
     });
   }
+
+  await server.register(openingMoversRoute, { getState: deps.getOpeningMovers ?? (() => null) });
+  await server.register(smartZonesRoute, { getState: deps.getSmartZones ?? (() => null) });
 
   // Trading endpoints (admin only) — Trade desk, order window, Orders, P&L
   if (deps.getOrderExecution && deps.getCachedLevelsMap && deps.getPressureSignal && deps.getMomentumSignal && deps.getRecentCandles && deps.getAllSymbols) {
@@ -118,6 +137,8 @@ export async function buildServer(deps: ServerDeps) {
       getRecentCandles: deps.getRecentCandles,
       getAllSymbols: deps.getAllSymbols,
       getAutoTrader: deps.getAutoTrader,
+      getDayLevels: deps.getDayLevels,
+      getSessionCandles: deps.getSessionCandles,
     });
   }
 

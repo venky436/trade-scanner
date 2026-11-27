@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useMarketData } from "@/hooks/use-market-data";
 import { useAuth } from "@/context/auth-context";
+import { WatchZoneSheet } from "./watch-zone";
 import { AccountChip } from "./trading/account-chip";
 import { TradeModeSwitch } from "./trading/trade-mode";
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -26,6 +27,7 @@ export function GlobalNav() {
   const router = useRouter();
   const pathname = usePathname();
   const [kiteConnected, setKiteConnected] = useState(false);
+  const [kiteExpired, setKiteExpired] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [showResults, setShowResults] = useState(false);
@@ -41,7 +43,10 @@ export function GlobalNav() {
       try {
         const res = await apiFetch("/api/auth/status");
         const data = await res.json();
-        if (active) setKiteConnected(data.connected);
+        if (active) {
+          setKiteConnected(data.connected);
+          setKiteExpired(!!data.expired);
+        }
       } catch { /* ignore */ }
     }
     check();
@@ -291,8 +296,8 @@ export function GlobalNav() {
           {/* Admin only: Re-login + admin tools */}
           {user?.role === "ADMIN" && (
             <>
-              {kiteConnected && (
-                <a href={`${API_URL}/api/auth/login`}>
+              {kiteConnected && kiteExpired && (
+                <a href={`${API_URL}/api/auth/login`} title="Your Kite login expired at 6:00 AM — log in again">
                   <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground hover:text-foreground">
                     Re-login
                   </Button>
@@ -301,6 +306,9 @@ export function GlobalNav() {
               {/* Docs / Admin / Signal tracking links hidden — pages still reachable at /docs, /admin, /admin/tracking */}
             </>
           )}
+
+          {/* Watch Zone — eye icon + count, opens the right-side sheet of bookmarked stocks */}
+          <WatchZoneSheet stockMap={stockMap} isLoggedIn={!!user} />
 
           {/* User + Logout */}
           <div className="flex items-center gap-2 pl-1 border-l border-border/30">

@@ -12,10 +12,17 @@
 // Why the window + volume rule (replay, 154 stocks × 15 days, 2026-11-09):
 // calls before 09:30 lost heavily (opening noise, esp. SELL); the volume
 // rule kept fewer calls with a better average. Indices are never traded.
+//
+// DAY LEVELS + STOCKS IN PLAY (2026-11-10, when deps.getDayLevels is given):
+//   the call is about today's frozen S1–S3 / R1–R3 lines (lib/day-levels.ts),
+//   and READY also needs the stock to be "in play" today: gap ≥ 0.7 % at the
+//   open OR first-15-min volume ≥ 2× normal. A stock whose lines are not
+//   computed yet gives no call.
 import { marketDataService } from "../services/market-data.service.js";
 import { toIntelligence } from "./intelligence-transformer.js";
 import { DIRECTIONAL_OUTLOOKS } from "./section-selector.js";
 import { isIndexSymbol } from "./index-symbols.js";
+import { stockInPlay, IN_PLAY_GAP_PCT, IN_PLAY_VOLUME_MULT, type DayLevels } from "./day-levels.js";
 import type { Candle, IntelligenceSnapshot, MomentumResult, PressureResult, SupportResistanceResult } from "./types.js";
 
 export interface SetupDeps {
@@ -24,6 +31,10 @@ export interface SetupDeps {
   getMomentum: (symbol: string) => MomentumResult | null;
   getRecentCandles: (symbol: string, n: number) => Candle[];
   getAllSymbols: () => string[];
+  /** Today's frozen lines (null = not computed yet). Omit → old single-S/R rules. */
+  getDayLevels?: (symbol: string) => DayLevels | null;
+  /** Today's closed 5-min candles, oldest first (needed with getDayLevels). */
+  getSessionCandles?: (symbol: string) => Candle[];
 }
 
 /** New calls only inside this IST window (minutes since midnight). */
@@ -61,13 +72,15 @@ export interface TradeSetups {
   watch: IntelligenceSnapshot[];
   poolSize: number;
   timestamp: number;
-  rules: { window: string; inWindow: boolean; volumeMult: number };
+  rules: { window: string; inWindow: boolean; volumeMult: number; dayLevels?: boolean; inPlay?: string };
 }
 
 export function buildTradeSetups(deps: SetupDeps, limit = 10, nowMs = Date.now()): TradeSetups {
   const levels = deps.getCachedLevels();
   const pool: IntelligenceSnapshot[] = [];
   const volumeOk = new Set<string>();
+  const useDayLevels = typeof deps.getDayLevels === "function";
+  const inPlayOk = new Set<string>();
   const inWindow = inCallWindow(nowMs);
   for (const sym of deps.getAllSymbols()) {
     if (isIndexSymbol(sym)) continue;
@@ -75,6 +88,9 @@ export function buildTradeSetups(deps: SetupDeps, limit = 10, nowMs = Date.now()
     if (!quote || quote.lastPrice <= 0) continue;
     const recentCandles = deps.getRecentCandles(sym, 24);
     if (passesCallVolume(recentCandles)) volumeOk.add(sym);
+    const dayLevels = useDayLevels ? (deps.getDayLevels!(sym) ?? null) : undefined;
+    const sessionCandles = useDayLevels ? (deps.getSessionCandles?.(sym) ?? recentCandles) : undefined;
+    if (dayLevels && sessionCandles && stockInPlay(dayLevels, sessionCandles).inPlay) inPlayOk.add(sym);
     pool.push(
       toIntelligence({
         symbol: sym,
@@ -88,6 +104,7 @@ export function buildTradeSetups(deps: SetupDeps, limit = 10, nowMs = Date.now()
         momentum: deps.getMomentum(sym),
         sr: levels[sym] ?? null,
         recentCandles,
+        ...(useDayLevels ? { dayLevels, sessionCandles } : {}),
       }),
     );
   }
@@ -95,7 +112,7 @@ export function buildTradeSetups(deps: SetupDeps, limit = 10, nowMs = Date.now()
   const byConfidence = (a: IntelligenceSnapshot, b: IntelligenceSnapshot) => b.confidence - a.confidence;
   const ready = inWindow
     ? nearZone
-        .filter((s) => DIRECTIONAL_OUTLOOKS.has(s.outlook) && s.tradePlan && volumeOk.has(s.symbol))
+        .filter((s) => DIRECTIONAL_OUTLOOKS.has(s.outlook) && s.tradePlan && volumeOk.has(s.symbol) && (!useDayLevels || inPlayOk.has(s.symbol)))
         .sort(byConfidence)
         .slice(0, limit)
     : [];
@@ -109,6 +126,11 @@ export function buildTradeSetups(deps: SetupDeps, limit = 10, nowMs = Date.now()
     watch,
     poolSize: pool.length,
     timestamp: nowMs,
-    rules: { window: CALL_WINDOW_LABEL, inWindow, volumeMult: CALL_VOLUME_MULT },
+    rules: {
+      window: CALL_WINDOW_LABEL,
+      inWindow,
+      volumeMult: CALL_VOLUME_MULT,
+      ...(useDayLevels ? { dayLevels: true, inPlay: `gap ≥ ${IN_PLAY_GAP_PCT}% or first-15-min volume ≥ ${IN_PLAY_VOLUME_MULT}× normal` } : {}),
+    },
   };
 }

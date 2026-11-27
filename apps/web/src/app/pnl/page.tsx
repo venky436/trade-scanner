@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { EquityChart } from "@/components/trading/equity-chart";
 import { AdminOnly, ModePill, Segmented, usePolling, useTradeConfig } from "@/components/trading/ui";
-import { EXIT_REASON_LABEL, pnlTone, signedInr, tradingApi, type Range, type TradeStats } from "@/lib/trading";
+import { EXIT_REASON_LABEL, inr, pnlTone, signedInr, tradingApi, type Range, type TradeStats } from "@/lib/trading";
 
 export default function PnlPage() {
   return (
@@ -75,6 +75,14 @@ function Pnl() {
               <div>
                 <div className="text-sm text-muted-foreground">Net P&amp;L {rangeLabel}</div>
                 <div className={`mt-1 text-4xl font-semibold tracking-tight tabular-nums ${pnlTone(stats.netPnl)}`}>{signedInr(stats.netPnl)}</div>
+                {stats.grossPnl != null && stats.charges != null && (
+                  <dl className="mt-3 grid grid-cols-[auto_auto] justify-start gap-x-4 gap-y-1 text-sm tabular-nums">
+                    <dt className="text-muted-foreground">Before charges</dt>
+                    <dd className={pnlTone(stats.grossPnl)}>{signedInr(stats.grossPnl)}</dd>
+                    <dt className="text-muted-foreground">Charges</dt>
+                    <dd className="text-foreground">{stats.charges > 0 ? `−${inr(stats.charges)}` : inr(0)}</dd>
+                  </dl>
+                )}
                 <div className="mt-2 text-sm text-muted-foreground">
                   {stats.closedTrades} closed {stats.closedTrades === 1 ? "trade" : "trades"}
                   {stats.closedTrades > 0 && (

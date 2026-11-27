@@ -4,6 +4,7 @@
  * Trades table — used by the Trade screen (today's positions) and the Orders page.
  * One row per trade; click a row to see its Zerodha orders and every status change.
  */
+import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { useMarketData } from "@/hooks/use-market-data";
@@ -115,7 +116,15 @@ export function TradesTable({
                     {showDate ? `${dateIst(t.createdAt)} ${timeIst(t.createdAt).slice(0, 5)}` : timeIst(t.createdAt)}
                   </td>
                   <td className="py-2.5 pr-3 whitespace-nowrap">
-                    <span className="font-medium text-foreground">{t.symbol}</span>
+                    {/* stock name → stock detail page (doesn't expand/collapse the row) */}
+                    <Link
+                      href={`/stock/${encodeURIComponent(t.symbol)}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-medium text-foreground hover:underline"
+                      title={`Open ${t.symbol}`}
+                    >
+                      {t.symbol}
+                    </Link>
                     {t.mode === "PAPER" && <span className="ml-1.5 rounded px-1 py-px text-[10px] text-amber-400 bg-amber-400/10">Paper</span>}
                     {isAutoTrade(t) && <span className="ml-1 rounded px-1 py-px text-[10px] text-sky-400 bg-sky-400/10">Auto</span>}
                   </td>

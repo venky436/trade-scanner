@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { KiteConnect } from "kiteconnect";
-import { saveSession } from "../lib/session-store.js";
+import { saveSession, isSessionExpired } from "../lib/session-store.js";
 
 interface AuthRouteOpts {
   apiKey: string;
@@ -51,8 +51,10 @@ export async function authRoute(fastify: FastifyInstance, opts: AuthRouteOpts) {
     }
   });
 
-  // GET /api/auth/status → is Kite connected?
+  // GET /api/auth/status → is Kite connected? expired = the token was saved
+  // before the latest 06:00 IST (Kite's daily reset) → the UI asks to re-login.
   fastify.get("/api/auth/status", async () => {
-    return { connected: isConnected() };
+    const connected = isConnected();
+    return { connected, expired: connected && isSessionExpired() };
   });
 }
